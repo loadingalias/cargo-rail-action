@@ -1,5 +1,5 @@
 name: "cargo-rail"
-description: "graph-aware change detection for rust monorepos."
+description: "Graph-aware change detection for Rust monorepos. Only test what changed."
 author: "loadingalias"
 
 branding:
@@ -13,80 +13,181 @@ inputs:
     default: "latest"
 
   base:
-    description: "git ref to compare against (auto-detects PR base or origin/main)"
+    description: "Git ref to compare against (auto-detects PR base or origin/main)"
     required: false
 
   all:
-    description: "analyze all crates, ignoring changes"
+    description: "Analyze all crates, ignoring changes"
     required: false
     default: "false"
 
   working-directory:
-    description: "working directory (default: repo root)"
+    description: "Working directory (default: repo root)"
     required: false
     default: "."
 
+  token:
+    description: "GitHub token for downloading releases (default: github.token)"
+    required: false
+    default: ${{ github.token }}
+
 outputs:
-  # Primary Outputs for Workflow Logic
+  # Primary outputs for workflow logic
   crates:
-    description: "space-separated list of affected crates"
+    description: "Space-separated list of affected crates"
     value: ${{ steps.affected.outputs.crates }}
 
   count:
-    description: "number of affected crates"
+    description: "Number of affected crates"
     value: ${{ steps.affected.outputs.affected_count }}
 
   matrix:
-    description: "json for strategy.matrix (use with fromJson)"
+    description: "JSON array for strategy.matrix (use with fromJson)"
     value: ${{ steps.affected.outputs.test_matrix }}
 
-  # Classification for Conditional Jobs
+  # Classification for conditional jobs
   docs-only:
-    description: "true if only docs changed"
+    description: "true if only documentation changed"
     value: ${{ steps.affected.outputs.docs_only }}
 
   rebuild-all:
-    description: "true if infrastructure changed"
+    description: "true if infrastructure files changed"
     value: ${{ steps.affected.outputs.rebuild_all }}
 
-  # Detailed Breakdown
+  # Detailed breakdown
   direct:
-    description: "crates with direct file changes"
+    description: "Crates with direct file changes"
     value: ${{ steps.affected.outputs.direct }}
 
   transitive:
-    description: "crates affected via dependencies"
+    description: "Crates affected via dependencies"
     value: ${{ steps.affected.outputs.transitive }}
 
   changed-files:
-    description: "number of changed files"
+    description: "Number of changed files"
     value: ${{ steps.affected.outputs.changed_files_count }}
 
-  # Advanced: Infra & Custom Categories
+  # Advanced: Infrastructure & custom categories
   infrastructure-files:
-    description: "json array of infrastructure files that changed"
+    description: "JSON array of infrastructure files that changed"
     value: ${{ steps.affected.outputs.infrastructure_files }}
 
   custom-categories:
-    description: "json object of custom category matches from rail.toml"
+    description: "JSON object of custom category matches from rail.toml"
     value: ${{ steps.affected.outputs.custom_categories }}
 
 runs:
   using: "composite"
   steps:
-    - name: Install Cargo-Rail
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Install cargo-rail (fast path: binary download, fallback: cargo install)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Install cargo-rail
+      id: install
       shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VERSION: ${{ inputs.version }}
       run: |
+        set -euo pipefail
+
+        # Check if already installed
         if command -v cargo-rail &>/dev/null; then
-          echo "cargo-rail already installed"
-          cargo-rail --version
-        elif [[ "${{ inputs.version }}" == "latest" ]]; then
-          cargo install cargo-rail --locked
-        else
-          cargo install cargo-rail --version "${{ inputs.version }}" --locked
+          INSTALLED=$(cargo-rail --version 2>/dev/null | head -1 || echo "unknown")
+          echo "cargo-rail already installed: $INSTALLED"
+          echo "method=cached" >> $GITHUB_OUTPUT
+          exit 0
         fi
 
-    - name: Detect Base Ref
+        # Determine target triple
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64)   TARGET="x86_64-unknown-linux-gnu" ;;
+          Linux-ARM64) TARGET="aarch64-unknown-linux-gnu" ;;
+          macOS-X64)   TARGET="x86_64-apple-darwin" ;;
+          macOS-ARM64) TARGET="aarch64-apple-darwin" ;;
+          Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
+          *)
+            echo "::warning::Unknown platform $RUNNER_OS-$RUNNER_ARCH, falling back to cargo install"
+            TARGET=""
+            ;;
+        esac
+
+        # Determine version to install
+        if [[ "$VERSION" == "latest" ]]; then
+          # Get latest release tag
+          RELEASE_TAG=$(gh api repos/loadingalias/cargo-rail/releases/latest --jq '.tag_name' 2>/dev/null || echo "")
+          if [[ -z "$RELEASE_TAG" ]]; then
+            echo "::warning::Could not determine latest version, falling back to cargo install"
+            TARGET=""
+          else
+            VERSION="${RELEASE_TAG#v}"  # Strip 'v' prefix if present
+          fi
+        fi
+
+        # Try binary download first (fast path)
+        if [[ -n "$TARGET" && -n "$VERSION" ]]; then
+          echo "Attempting binary download for $TARGET v$VERSION..."
+
+          # Construct download URL
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            ARCHIVE="cargo-rail-v${VERSION}-${TARGET}.zip"
+          else
+            ARCHIVE="cargo-rail-v${VERSION}-${TARGET}.tar.gz"
+          fi
+          URL="https://github.com/loadingalias/cargo-rail/releases/download/v${VERSION}/${ARCHIVE}"
+
+          # Download and extract
+          INSTALL_DIR="$HOME/.cargo/bin"
+          mkdir -p "$INSTALL_DIR"
+
+          if curl -fsSL "$URL" -o "/tmp/$ARCHIVE" 2>/dev/null; then
+            echo "Downloaded $ARCHIVE"
+
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              unzip -q "/tmp/$ARCHIVE" -d "/tmp/cargo-rail-extract"
+              mv /tmp/cargo-rail-extract/cargo-rail.exe "$INSTALL_DIR/"
+            else
+              tar -xzf "/tmp/$ARCHIVE" -C "/tmp"
+              mv /tmp/cargo-rail "$INSTALL_DIR/"
+              chmod +x "$INSTALL_DIR/cargo-rail"
+            fi
+
+            rm -rf "/tmp/$ARCHIVE" "/tmp/cargo-rail-extract" "/tmp/cargo-rail" 2>/dev/null || true
+
+            echo "Installed cargo-rail v$VERSION from binary"
+            echo "method=binary" >> $GITHUB_OUTPUT
+            cargo-rail --version
+            exit 0
+          else
+            echo "::warning::Binary download failed, trying cargo-binstall..."
+          fi
+        fi
+
+        # Try cargo-binstall (medium path)
+        if command -v cargo-binstall &>/dev/null; then
+          echo "Trying cargo-binstall..."
+          if cargo binstall cargo-rail --no-confirm --force ${VERSION:+--version "$VERSION"} 2>/dev/null; then
+            echo "Installed via cargo-binstall"
+            echo "method=binstall" >> $GITHUB_OUTPUT
+            cargo-rail --version
+            exit 0
+          fi
+        fi
+
+        # Fallback to cargo install (slow path)
+        echo "::warning::Falling back to cargo install (this may take 2-5 minutes)"
+        if [[ "$VERSION" == "latest" || -z "$VERSION" ]]; then
+          cargo install cargo-rail --locked
+        else
+          cargo install cargo-rail --version "$VERSION" --locked
+        fi
+        echo "method=cargo-install" >> $GITHUB_OUTPUT
+        cargo-rail --version
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Detect base reference
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Detect base ref
       id: base
       shell: bash
       run: |
@@ -107,7 +208,10 @@ runs:
           echo "Fallback: HEAD~1"
         fi
 
-    - name: Run Cargo-Rail Affected
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Run change detection
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    - name: Detect affected crates
       id: affected
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -118,16 +222,34 @@ runs:
           cargo rail affected --since "${{ steps.base.outputs.ref }}" --format github -o "$GITHUB_OUTPUT"
         fi
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Summary
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     - name: Summary
       shell: bash
       run: |
-        echo "### cargo-rail Change Detection" >> $GITHUB_STEP_SUMMARY
+        echo "### 🚂 cargo-rail" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Installation method
+        case "${{ steps.install.outputs.method }}" in
+          binary)    INSTALL_NOTE="✓ Binary (fast)" ;;
+          binstall)  INSTALL_NOTE="✓ Binstall" ;;
+          cached)    INSTALL_NOTE="✓ Cached" ;;
+          *)         INSTALL_NOTE="⚠ Compiled from source" ;;
+        esac
+
         echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
         echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Install | $INSTALL_NOTE |" >> $GITHUB_STEP_SUMMARY
+        echo "| Base | \`${{ steps.base.outputs.ref }}\` |" >> $GITHUB_STEP_SUMMARY
         echo "| Changed Files | ${{ steps.affected.outputs.changed_files_count }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Affected Crates | ${{ steps.affected.outputs.affected_count }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Direct | ${{ steps.affected.outputs.direct }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Transitive | ${{ steps.affected.outputs.transitive }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Affected Crates | **${{ steps.affected.outputs.affected_count }}** |" >> $GITHUB_STEP_SUMMARY
         echo "| Docs Only | ${{ steps.affected.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Rebuild All | ${{ steps.affected.outputs.rebuild_all }} |" >> $GITHUB_STEP_SUMMARY
+
+        # Show affected crates if any
+        if [[ "${{ steps.affected.outputs.affected_count }}" != "0" ]]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Affected:** \`${{ steps.affected.outputs.crates }}\`" >> $GITHUB_STEP_SUMMARY
+        fi
