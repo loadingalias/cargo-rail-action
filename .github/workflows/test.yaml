@@ -1,0 +1,101 @@
+name: Test Action
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Test against a real Rust monorepo
+  test-monorepo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone test repo (tokio)
+        run: |
+          git clone --depth 100 https://github.com/tokio-rs/tokio.git test-repo
+          cd test-repo
+          git log --oneline -5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run action
+        id: rail
+        uses: ./
+        with:
+          base: HEAD~10
+          working-directory: test-repo
+
+      - name: Verify outputs
+        run: |
+          echo "=== Outputs ==="
+          echo "count: ${{ steps.rail.outputs.count }}"
+          echo "crates: ${{ steps.rail.outputs.crates }}"
+          echo "matrix: ${{ steps.rail.outputs.matrix }}"
+          echo "docs-only: ${{ steps.rail.outputs.docs-only }}"
+          echo "rebuild-all: ${{ steps.rail.outputs.rebuild-all }}"
+          echo "direct: ${{ steps.rail.outputs.direct }}"
+          echo "transitive: ${{ steps.rail.outputs.transitive }}"
+          echo "changed-files: ${{ steps.rail.outputs.changed-files }}"
+
+          # Verify count is a number
+          [[ "${{ steps.rail.outputs.count }}" =~ ^[0-9]+$ ]] || { echo "count not a number"; exit 1; }
+
+          # Verify matrix is valid JSON
+          echo '${{ steps.rail.outputs.matrix }}' | jq . || { echo "matrix not valid JSON"; exit 1; }
+
+          echo "All checks passed!"
+
+  # Test --all mode
+  test-all-mode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone test repo
+        run: git clone --depth 1 https://github.com/tokio-rs/tokio.git test-repo
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run action with --all
+        id: rail
+        uses: ./
+        with:
+          all: true
+          working-directory: test-repo
+
+      - name: Verify all crates returned
+        run: |
+          COUNT="${{ steps.rail.outputs.count }}"
+          echo "All crates count: $COUNT"
+          [[ "$COUNT" -gt 5 ]] || { echo "Expected more than 5 crates"; exit 1; }
+
+  # Test on multiple platforms
+  test-platforms:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone test repo
+        shell: bash
+        run: git clone --depth 50 https://github.com/tokio-rs/tokio.git test-repo
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run action
+        id: rail
+        uses: ./
+        with:
+          base: HEAD~5
+          working-directory: test-repo
+
+      - name: Verify
+        shell: bash
+        run: |
+          echo "Platform: ${{ matrix.os }}"
+          echo "Count: ${{ steps.rail.outputs.count }}"
+          [[ -n "${{ steps.rail.outputs.count }}" ]] || exit 1

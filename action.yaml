@@ -1,0 +1,133 @@
+name: "cargo-rail"
+description: "graph-aware change detection for rust monorepos."
+author: "loadingalias"
+
+branding:
+  icon: "git-branch"
+  color: "orange"
+
+inputs:
+  version:
+    description: "cargo-rail version (default: latest)"
+    required: false
+    default: "latest"
+
+  base:
+    description: "git ref to compare against (auto-detects PR base or origin/main)"
+    required: false
+
+  all:
+    description: "analyze all crates, ignoring changes"
+    required: false
+    default: "false"
+
+  working-directory:
+    description: "working directory (default: repo root)"
+    required: false
+    default: "."
+
+outputs:
+  # Primary Outputs for Workflow Logic
+  crates:
+    description: "space-separated list of affected crates"
+    value: ${{ steps.affected.outputs.crates }}
+
+  count:
+    description: "number of affected crates"
+    value: ${{ steps.affected.outputs.affected_count }}
+
+  matrix:
+    description: "json for strategy.matrix (use with fromJson)"
+    value: ${{ steps.affected.outputs.test_matrix }}
+
+  # Classification for Conditional Jobs
+  docs-only:
+    description: "true if only docs changed"
+    value: ${{ steps.affected.outputs.docs_only }}
+
+  rebuild-all:
+    description: "true if infrastructure changed"
+    value: ${{ steps.affected.outputs.rebuild_all }}
+
+  # Detailed Breakdown
+  direct:
+    description: "crates with direct file changes"
+    value: ${{ steps.affected.outputs.direct }}
+
+  transitive:
+    description: "crates affected via dependencies"
+    value: ${{ steps.affected.outputs.transitive }}
+
+  changed-files:
+    description: "number of changed files"
+    value: ${{ steps.affected.outputs.changed_files_count }}
+
+  # Advanced: Infra & Custom Categories
+  infrastructure-files:
+    description: "json array of infrastructure files that changed"
+    value: ${{ steps.affected.outputs.infrastructure_files }}
+
+  custom-categories:
+    description: "json object of custom category matches from rail.toml"
+    value: ${{ steps.affected.outputs.custom_categories }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Cargo-Rail
+      shell: bash
+      run: |
+        if command -v cargo-rail &>/dev/null; then
+          echo "cargo-rail already installed"
+          cargo-rail --version
+        elif [[ "${{ inputs.version }}" == "latest" ]]; then
+          cargo install cargo-rail --locked
+        else
+          cargo install cargo-rail --version "${{ inputs.version }}" --locked
+        fi
+
+    - name: Detect Base Ref
+      id: base
+      shell: bash
+      run: |
+        if [[ -n "${{ inputs.base }}" ]]; then
+          echo "ref=${{ inputs.base }}" >> $GITHUB_OUTPUT
+          echo "Using provided base: ${{ inputs.base }}"
+        elif [[ -n "$GITHUB_BASE_REF" ]]; then
+          echo "ref=origin/$GITHUB_BASE_REF" >> $GITHUB_OUTPUT
+          echo "PR detected, using: origin/$GITHUB_BASE_REF"
+        elif git rev-parse --verify origin/main &>/dev/null; then
+          echo "ref=origin/main" >> $GITHUB_OUTPUT
+          echo "Using: origin/main"
+        elif git rev-parse --verify origin/master &>/dev/null; then
+          echo "ref=origin/master" >> $GITHUB_OUTPUT
+          echo "Using: origin/master"
+        else
+          echo "ref=HEAD~1" >> $GITHUB_OUTPUT
+          echo "Fallback: HEAD~1"
+        fi
+
+    - name: Run Cargo-Rail Affected
+      id: affected
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [[ "${{ inputs.all }}" == "true" ]]; then
+          cargo rail affected --all --format github -o "$GITHUB_OUTPUT"
+        else
+          cargo rail affected --since "${{ steps.base.outputs.ref }}" --format github -o "$GITHUB_OUTPUT"
+        fi
+
+    - name: Summary
+      shell: bash
+      run: |
+        echo "### cargo-rail Change Detection" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Changed Files | ${{ steps.affected.outputs.changed_files_count }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Affected Crates | ${{ steps.affected.outputs.affected_count }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Direct | ${{ steps.affected.outputs.direct }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Transitive | ${{ steps.affected.outputs.transitive }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Docs Only | ${{ steps.affected.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Rebuild All | ${{ steps.affected.outputs.rebuild_all }} |" >> $GITHUB_STEP_SUMMARY
