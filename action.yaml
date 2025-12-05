@@ -160,8 +160,9 @@ runs:
           INSTALL_DIR="$HOME/.cargo/bin"
           mkdir -p "$INSTALL_DIR"
 
-          if curl -fsSL --retry 3 "$URL" -o "/tmp/$ARCHIVE" 2>/dev/null; then
+          if curl -fsSL --retry 3 "$URL" -o "/tmp/$ARCHIVE"; then
             echo "Downloaded $ARCHIVE"
+            echo "Extracting to $INSTALL_DIR..."
 
             if [[ "$RUNNER_OS" == "Windows" ]]; then
               unzip -q "/tmp/$ARCHIVE" -d "/tmp/cargo-rail-extract"
@@ -173,13 +174,30 @@ runs:
                 mv /tmp/cargo-rail "$INSTALL_DIR/"
               elif [[ -f "/tmp/cargo-rail-${TARGET}/cargo-rail" ]]; then
                 mv "/tmp/cargo-rail-${TARGET}/cargo-rail" "$INSTALL_DIR/"
+              else
+                echo "::error::Binary not found after extraction. Contents of /tmp:"
+                ls -la /tmp/cargo-rail* 2>/dev/null || echo "No cargo-rail files found"
+                exit 1
               fi
               chmod +x "$INSTALL_DIR/cargo-rail"
+              echo "Binary installed to $INSTALL_DIR/cargo-rail"
             fi
 
             rm -rf "/tmp/$ARCHIVE" "/tmp/cargo-rail-extract" "/tmp/cargo-rail" "/tmp/cargo-rail-v"* 2>/dev/null || true
 
-            INSTALLED_VERSION=$(cargo-rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            # Add cargo bin to PATH for this and subsequent steps
+            echo "$INSTALL_DIR" >> "$GITHUB_PATH"
+            export PATH="$INSTALL_DIR:$PATH"
+
+            # Verify binary works
+            if ! "$INSTALL_DIR/cargo-rail" --version; then
+              echo "::error::cargo-rail binary failed to execute"
+              file "$INSTALL_DIR/cargo-rail" || true
+              ldd "$INSTALL_DIR/cargo-rail" 2>/dev/null || true
+              exit 1
+            fi
+
+            INSTALLED_VERSION=$("$INSTALL_DIR/cargo-rail" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             echo "Installed cargo-rail v$INSTALLED_VERSION from binary"
             echo "method=binary" >> "$GITHUB_OUTPUT"
             echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
