@@ -242,9 +242,18 @@ runs:
       id: base
       shell: bash
       run: |
-        if [[ -n "${{ inputs.since }}" ]]; then
-          echo "ref=${{ inputs.since }}" >> "$GITHUB_OUTPUT"
-          echo "Using provided base: ${{ inputs.since }}"
+        INPUT_SINCE="${{ inputs.since }}"
+
+        # Handle null SHA (first push on new branch or force push)
+        # GitHub sets before to 0000...0000 in these cases
+        if [[ "$INPUT_SINCE" =~ ^0+$ ]]; then
+          echo "Null SHA detected (first push or force push), falling back to auto-detect"
+          INPUT_SINCE=""
+        fi
+
+        if [[ -n "$INPUT_SINCE" ]]; then
+          echo "ref=$INPUT_SINCE" >> "$GITHUB_OUTPUT"
+          echo "Using provided base: $INPUT_SINCE"
         elif [[ -n "$GITHUB_BASE_REF" ]]; then
           echo "ref=origin/$GITHUB_BASE_REF" >> "$GITHUB_OUTPUT"
           echo "PR detected, using: origin/$GITHUB_BASE_REF"
