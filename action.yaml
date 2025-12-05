@@ -115,7 +115,7 @@ runs:
 
         # Check if already installed and meets version requirement
         if command -v cargo-rail &>/dev/null; then
-          INSTALLED_VERSION=$(cargo-rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+          INSTALLED_VERSION=$(cargo-rail rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
           if [[ "$REQUESTED_VERSION" == "latest" || "$INSTALLED_VERSION" == "$REQUESTED_VERSION" ]]; then
             echo "cargo-rail $INSTALLED_VERSION already installed"
             echo "method=cached" >> "$GITHUB_OUTPUT"
@@ -189,15 +189,15 @@ runs:
             echo "$INSTALL_DIR" >> "$GITHUB_PATH"
             export PATH="$INSTALL_DIR:$PATH"
 
-            # Verify binary works
-            if ! "$INSTALL_DIR/cargo-rail" --version; then
+            # Verify binary works (cargo-rail is a cargo subcommand, use "rail --version")
+            if ! "$INSTALL_DIR/cargo-rail" rail --version; then
               echo "::error::cargo-rail binary failed to execute"
               file "$INSTALL_DIR/cargo-rail" || true
               ldd "$INSTALL_DIR/cargo-rail" 2>/dev/null || true
               exit 1
             fi
 
-            INSTALLED_VERSION=$("$INSTALL_DIR/cargo-rail" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            INSTALLED_VERSION=$("$INSTALL_DIR/cargo-rail" rail --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             echo "Installed cargo-rail v$INSTALLED_VERSION from binary"
             echo "method=binary" >> "$GITHUB_OUTPUT"
             echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
@@ -214,7 +214,7 @@ runs:
           [[ -n "$VERSION" && "$VERSION" != "latest" ]] && BINSTALL_ARGS="$BINSTALL_ARGS --version $VERSION"
 
           if cargo binstall cargo-rail $BINSTALL_ARGS 2>/dev/null; then
-            INSTALLED_VERSION=$(cargo-rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            INSTALLED_VERSION=$(cargo-rail rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
             echo "Installed cargo-rail v$INSTALLED_VERSION via cargo-binstall"
             echo "method=binstall" >> "$GITHUB_OUTPUT"
             echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
@@ -229,7 +229,7 @@ runs:
 
         cargo install cargo-rail $INSTALL_ARGS
 
-        INSTALLED_VERSION=$(cargo-rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        INSTALLED_VERSION=$(cargo-rail rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         echo "Installed cargo-rail v$INSTALLED_VERSION via cargo install"
         echo "method=cargo-install" >> "$GITHUB_OUTPUT"
         echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
