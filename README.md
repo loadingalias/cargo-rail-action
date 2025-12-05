@@ -1,5 +1,8 @@
 # cargo-rail-action
 
+[![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Graph-aware change detection for Rust monorepos. **Test only what changed.**
 
 ```yaml
@@ -155,7 +158,7 @@ benchmarks = ["benches/**"]
 ```yaml
 - uses: loadingalias/cargo-rail-action@v1
   with:
-    version: "0.5.0"
+    version: "0.1.0"
     since: origin/develop
     working-directory: rust/
 ```

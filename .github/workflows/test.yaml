@@ -6,11 +6,110 @@ on:
   pull_request:
 
 jobs:
-  # Test against a real Rust monorepo
+  # ============================================================================
+  # Self-test: Create minimal workspace, no external dependencies
+  # ============================================================================
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Create test workspace
+        run: |
+          mkdir -p test-workspace/crates/{core,api,cli}
+
+          # Root Cargo.toml
+          cat > test-workspace/Cargo.toml << 'EOF'
+          [workspace]
+          members = ["crates/*"]
+          resolver = "2"
+          EOF
+
+          # Core crate
+          cat > test-workspace/crates/core/Cargo.toml << 'EOF'
+          [package]
+          name = "test-core"
+          version = "0.1.0"
+          edition = "2021"
+          EOF
+          mkdir -p test-workspace/crates/core/src
+          echo 'pub fn core() {}' > test-workspace/crates/core/src/lib.rs
+
+          # API crate (depends on core)
+          cat > test-workspace/crates/api/Cargo.toml << 'EOF'
+          [package]
+          name = "test-api"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          test-core = { path = "../core" }
+          EOF
+          mkdir -p test-workspace/crates/api/src
+          echo 'pub fn api() { test_core::core(); }' > test-workspace/crates/api/src/lib.rs
+
+          # CLI crate (depends on api)
+          cat > test-workspace/crates/cli/Cargo.toml << 'EOF'
+          [package]
+          name = "test-cli"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          test-api = { path = "../api" }
+          EOF
+          mkdir -p test-workspace/crates/cli/src
+          echo 'fn main() { test_api::api(); }' > test-workspace/crates/cli/src/main.rs
+
+          # Initialize git
+          cd test-workspace
+          git init
+          git config user.email "test@test.com"
+          git config user.name "Test"
+          git add -A
+          git commit -m "initial"
+
+          # Make a change to core
+          echo '// change' >> crates/core/src/lib.rs
+          git add -A
+          git commit -m "modify core"
+
+      - name: Run action
+        id: rail
+        uses: ./
+        with:
+          since: HEAD~1
+          working-directory: test-workspace
+
+      - name: Verify outputs
+        run: |
+          echo "=== Outputs ==="
+          echo "count: ${{ steps.rail.outputs.count }}"
+          echo "crates: ${{ steps.rail.outputs.crates }}"
+          echo "matrix: ${{ steps.rail.outputs.matrix }}"
+          echo "install-method: ${{ steps.rail.outputs.install-method }}"
+          echo "cargo-rail-version: ${{ steps.rail.outputs.cargo-rail-version }}"
+
+          # Verify binary was downloaded (not compiled)
+          METHOD="${{ steps.rail.outputs.install-method }}"
+          [[ "$METHOD" == "binary" ]] || { echo "Expected binary install, got: $METHOD"; exit 1; }
+
+          # Verify count (should detect core + transitive deps api, cli)
+          COUNT="${{ steps.rail.outputs.count }}"
+          [[ "$COUNT" -ge 1 ]] || { echo "Expected at least 1 affected crate"; exit 1; }
+
+          # Verify matrix is valid JSON
+          echo '${{ steps.rail.outputs.matrix }}' | jq . || { echo "matrix not valid JSON"; exit 1; }
+
+          echo "Self-test passed!"
+
+  # ============================================================================
+  # Real monorepo test: tokio
+  # ============================================================================
   test-monorepo:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Clone test repo (tokio)
         run: |
@@ -18,13 +117,11 @@ jobs:
           cd test-repo
           git log --oneline -5
 
-      - uses: dtolnay/rust-toolchain@stable
-
       - name: Run action
         id: rail
         uses: ./
         with:
-          base: HEAD~10
+          since: HEAD~10
           working-directory: test-repo
 
       - name: Verify outputs
@@ -35,9 +132,6 @@ jobs:
           echo "matrix: ${{ steps.rail.outputs.matrix }}"
           echo "docs-only: ${{ steps.rail.outputs.docs-only }}"
           echo "rebuild-all: ${{ steps.rail.outputs.rebuild-all }}"
-          echo "direct: ${{ steps.rail.outputs.direct }}"
-          echo "transitive: ${{ steps.rail.outputs.transitive }}"
-          echo "changed-files: ${{ steps.rail.outputs.changed-files }}"
 
           # Verify count is a number
           [[ "${{ steps.rail.outputs.count }}" =~ ^[0-9]+$ ]] || { echo "count not a number"; exit 1; }
@@ -45,24 +139,24 @@ jobs:
           # Verify matrix is valid JSON
           echo '${{ steps.rail.outputs.matrix }}' | jq . || { echo "matrix not valid JSON"; exit 1; }
 
-          echo "All checks passed!"
+          echo "Monorepo test passed!"
 
-  # Test --all mode
+  # ============================================================================
+  # Test --all flag
+  # ============================================================================
   test-all-mode:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Clone test repo
         run: git clone --depth 1 https://github.com/tokio-rs/tokio.git test-repo
-
-      - uses: dtolnay/rust-toolchain@stable
 
       - name: Run action with --all
         id: rail
         uses: ./
         with:
-          all: true
+          args: "--all"
           working-directory: test-repo
 
       - name: Verify all crates returned
@@ -71,26 +165,27 @@ jobs:
           echo "All crates count: $COUNT"
           [[ "$COUNT" -gt 5 ]] || { echo "Expected more than 5 crates"; exit 1; }
 
-  # Test on multiple platforms
+  # ============================================================================
+  # Multi-platform test
+  # ============================================================================
   test-platforms:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Clone test repo
         shell: bash
         run: git clone --depth 50 https://github.com/tokio-rs/tokio.git test-repo
 
-      - uses: dtolnay/rust-toolchain@stable
-
       - name: Run action
         id: rail
         uses: ./
         with:
-          base: HEAD~5
+          since: HEAD~5
           working-directory: test-repo
 
       - name: Verify
@@ -98,4 +193,12 @@ jobs:
         run: |
           echo "Platform: ${{ matrix.os }}"
           echo "Count: ${{ steps.rail.outputs.count }}"
+          echo "Install method: ${{ steps.rail.outputs.install-method }}"
+
+          # Verify binary download worked
+          [[ "${{ steps.rail.outputs.install-method }}" == "binary" ]] || {
+            echo "Warning: Expected binary install on ${{ matrix.os }}"
+          }
+
           [[ -n "${{ steps.rail.outputs.count }}" ]] || exit 1
+          echo "Platform test passed!"

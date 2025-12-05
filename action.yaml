@@ -151,9 +151,9 @@ runs:
           echo "Attempting binary download: cargo-rail v$VERSION for $TARGET"
 
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            ARCHIVE="cargo-rail-v${VERSION}-${TARGET}.zip"
+            ARCHIVE="cargo-rail-${TARGET}.zip"
           else
-            ARCHIVE="cargo-rail-v${VERSION}-${TARGET}.tar.gz"
+            ARCHIVE="cargo-rail-${TARGET}.tar.gz"
           fi
 
           URL="https://github.com/loadingalias/cargo-rail/releases/download/v${VERSION}/${ARCHIVE}"
@@ -171,8 +171,8 @@ runs:
               # Handle both flat and nested archive structures
               if [[ -f "/tmp/cargo-rail" ]]; then
                 mv /tmp/cargo-rail "$INSTALL_DIR/"
-              elif [[ -f "/tmp/cargo-rail-v${VERSION}-${TARGET}/cargo-rail" ]]; then
-                mv "/tmp/cargo-rail-v${VERSION}-${TARGET}/cargo-rail" "$INSTALL_DIR/"
+              elif [[ -f "/tmp/cargo-rail-${TARGET}/cargo-rail" ]]; then
+                mv "/tmp/cargo-rail-${TARGET}/cargo-rail" "$INSTALL_DIR/"
               fi
               chmod +x "$INSTALL_DIR/cargo-rail"
             fi
