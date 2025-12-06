@@ -1,5 +1,5 @@
 name: "cargo-rail"
-description: "Graph-aware change detection for Rust monorepos. Test only what changed."
+description: "Graph-aware change detection for Rust monorepos. Check/Test/Bench/Profile only what actually changed."
 author: "loadingalias"
 
 branding:
@@ -17,7 +17,7 @@ inputs:
     required: false
 
   command:
-    description: "Command to run: affected, test, unify (default: affected)"
+    description: "Command to run: affected/test (default: affected)"
     required: false
     default: "affected"
 
@@ -37,9 +37,7 @@ inputs:
     default: ${{ github.token }}
 
 outputs:
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Primary outputs - most commonly used in workflow logic
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Primary Outputs
   crates:
     description: "Space-separated list of affected crates"
     value: ${{ steps.affected.outputs.crates }}
@@ -52,9 +50,7 @@ outputs:
     description: "JSON array for strategy.matrix.crate (use with fromJson)"
     value: ${{ steps.affected.outputs.test_matrix }}
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Classification flags - for conditional job execution
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Classification Flags
   docs-only:
     description: "'true' if only documentation files changed (skip tests)"
     value: ${{ steps.affected.outputs.docs_only }}
@@ -63,9 +59,7 @@ outputs:
     description: "'true' if infrastructure files changed (test everything)"
     value: ${{ steps.affected.outputs.rebuild_all }}
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Detailed breakdown - for advanced workflows
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Detailed Breakdown
   direct:
     description: "Space-separated crates with direct file changes"
     value: ${{ steps.affected.outputs.direct }}
@@ -86,9 +80,7 @@ outputs:
     description: "JSON object of custom category matches from rail.toml"
     value: ${{ steps.affected.outputs.custom_categories }}
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Installation metadata
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # Installation Metadata
   install-method:
     description: "How cargo-rail was installed (binary, binstall, cargo-install, cached)"
     value: ${{ steps.install.outputs.method }}
@@ -100,10 +92,7 @@ outputs:
 runs:
   using: "composite"
   steps:
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Step 1: Install cargo-rail
-    # Priority: cached > binary download > cargo-binstall > cargo install
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Install; Cached > Binary Download > Cargo-Binstall > Cargo Install
     - name: Install cargo-rail
       id: install
       shell: bash
@@ -234,10 +223,7 @@ runs:
         echo "method=cargo-install" >> "$GITHUB_OUTPUT"
         echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Step 2: Detect base reference for comparison
-    # Priority: explicit input > PR base > origin/main > origin/master > HEAD~1
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Detect Base Reference for Comparison; Explicit Input > PR Base > Origin/Main > Origin/Master > HEAD~1
     - name: Detect base ref
       id: base
       shell: bash
@@ -268,9 +254,7 @@ runs:
           echo "::warning::No remote branch found, using HEAD~1"
         fi
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Step 3: Run cargo-rail command
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Run Cargo-Rail Command
     - name: Run cargo-rail
       id: affected
       shell: bash
@@ -298,9 +282,7 @@ runs:
             ;;
         esac
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Step 4: Generate job summary
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Generate Job Summary
     - name: Summary
       if: always()
       shell: bash

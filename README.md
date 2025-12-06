@@ -5,13 +5,15 @@
 
 Graph-aware change detection for Rust monorepos. **Test only what changed.**
 
+- Detects which crates are affected by your changes (including transitive dependencies)
+- Installs in ~3 seconds (pre-built binaries, no Rust toolchain needed)
+- Works with PRs, push events, and manual runs
+
 ```yaml
 - uses: loadingalias/cargo-rail-action@v1
 ```
 
 ## Quick Start
-
-### Minimal Setup
 
 ```yaml
 name: CI
@@ -26,46 +28,43 @@ jobs:
           fetch-depth: 0  # Required for change detection
 
       - uses: loadingalias/cargo-rail-action@v1
-        id: rail
+        id: affected
 
       - name: Test affected crates
-        if: steps.rail.outputs.docs-only != 'true'
-        run: |
-          for crate in ${{ steps.rail.outputs.crates }}; do
-            cargo test -p "$crate"
-          done
+        if: steps.affected.outputs.count != '0'
+        run: cargo test -p ${{ steps.affected.outputs.crates }}
+
+      - name: Test all (infrastructure changed)
+        if: steps.affected.outputs.rebuild-all == 'true'
+        run: cargo test --workspace
 ```
 
-### Matrix Strategy (Parallel Testing)
+## Parallel Testing (Matrix Strategy)
+
+For large monorepos, run each crate in parallel:
 
 ```yaml
-name: CI
-on: [push, pull_request]
-
 jobs:
   detect:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.rail.outputs.matrix }}
-      count: ${{ steps.rail.outputs.count }}
-      docs-only: ${{ steps.rail.outputs.docs-only }}
-      rebuild-all: ${{ steps.rail.outputs.rebuild-all }}
+      matrix: ${{ steps.affected.outputs.matrix }}
+      count: ${{ steps.affected.outputs.count }}
+      rebuild-all: ${{ steps.affected.outputs.rebuild-all }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: loadingalias/cargo-rail-action@v1
-        id: rail
+        id: affected
 
   test:
     needs: detect
-    if: needs.detect.outputs.docs-only != 'true' && needs.detect.outputs.count != '0'
-    runs-on: ubuntu-latest
+    if: needs.detect.outputs.count != '0' && needs.detect.outputs.rebuild-all != 'true'
     strategy:
-      fail-fast: false
       matrix:
         crate: ${{ fromJson(needs.detect.outputs.matrix) }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -85,42 +84,43 @@ jobs:
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `latest` | cargo-rail version |
-| `since` | auto | Base ref (auto-detects PR base or `origin/main`) |
-| `command` | `affected` | `affected`, `test`, or `unify` |
-| `args` | | Additional CLI arguments |
-| `working-directory` | `.` | Path to Cargo.toml |
+| `version` | `latest` | cargo-rail version to install |
+| `since` | auto | Git ref to compare against (auto-detects PR base or `origin/main`) |
+| `command` | `affected` | Command: `affected`, `test`, or `unify` |
+| `args` | | Additional arguments passed to cargo-rail |
+| `working-directory` | `.` | Directory containing Cargo.toml |
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
-| `crates` | Space-separated list: `core api cli` |
-| `matrix` | JSON array for matrix strategy: `["core","api","cli"]` |
+| `crates` | Space-separated affected crates: `core api cli` |
+| `matrix` | JSON array for strategy.matrix: `["core","api","cli"]` |
 | `count` | Number of affected crates |
-| `docs-only` | `true` if only docs changed (skip tests) |
-| `rebuild-all` | `true` if infrastructure changed (test everything) |
+| `rebuild-all` | `true` if infrastructure files changed (Cargo.lock, CI, etc.) |
+| `docs-only` | `true` if only documentation changed |
 
 <details>
-<summary>All outputs</summary>
+<summary>Additional outputs</summary>
 
 | Output | Description |
 |--------|-------------|
-| `direct` | Crates with direct changes |
-| `transitive` | Crates affected via dependencies |
+| `direct` | Crates with direct file changes |
+| `transitive` | Crates affected through dependency graph |
 | `changed-files` | Number of files changed |
-| `infrastructure-files` | Files that triggered rebuild-all |
-| `custom-categories` | Custom category matches |
-| `install-method` | How cargo-rail was installed |
+| `infrastructure-files` | Files that triggered `rebuild-all` |
+| `custom-categories` | Custom category matches from config |
+| `install-method` | Installation method used (`binary`, `binstall`, `cargo-install`) |
 | `cargo-rail-version` | Installed version |
 
 </details>
 
 ## Configuration
 
-Optional `rail.toml` for custom behavior (generate with `cargo rail init`):
+Optional. Generate with `cargo rail init`:
 
 ```toml
+# .config/rail.toml
 [change-detection]
 infrastructure = [".github/**", "Cargo.lock", "rust-toolchain.toml"]
 
@@ -131,7 +131,7 @@ benchmarks = ["benches/**"]
 ## More Examples
 
 <details>
-<summary>Run tests directly in action</summary>
+<summary>Run tests directly</summary>
 
 ```yaml
 - uses: loadingalias/cargo-rail-action@v1
@@ -153,7 +153,7 @@ benchmarks = ["benches/**"]
 </details>
 
 <details>
-<summary>Pin version / custom base ref / subdirectory</summary>
+<summary>Custom base ref / subdirectory / pinned version</summary>
 
 ```yaml
 - uses: loadingalias/cargo-rail-action@v1
@@ -165,15 +165,11 @@ benchmarks = ["benches/**"]
 
 </details>
 
-## Requirements
-
-`fetch-depth: 0` on checkout. No Rust toolchain needed (pre-built binaries).
-
 ## Links
 
-- [cargo-rail repository](https://github.com/loadingalias/cargo-rail)
-- [Configuration reference](https://github.com/loadingalias/cargo-rail/blob/main/docs/config.md)
-- [Command reference](https://github.com/loadingalias/cargo-rail/blob/main/docs/commands.md)
+- [cargo-rail](https://github.com/loadingalias/cargo-rail) — CLI tool
+- [Configuration](https://github.com/loadingalias/cargo-rail/blob/main/docs/config.md)
+- [Commands](https://github.com/loadingalias/cargo-rail/blob/main/docs/commands.md)
 
 ## License
 
