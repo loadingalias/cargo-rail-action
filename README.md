@@ -15,6 +15,14 @@
 
 ---
 
+## Why This vs Hand-Rolled Filters
+
+- Graph-aware, not path-only: uses `cargo-rail`’s workspace graph instead of hard-coded `paths-filter` rules.
+- Single source of truth: CI classification rules live in `rail.toml`, shared with the CLI.
+- Shared engine: same logic as `cargo rail affected`/`cargo rail test`, so local runs match CI.
+
+If this action saves you CI time or complexity, consider starring the main project: [cargo-rail](https://github.com/loadingalias/cargo-rail).
+
 ## What It Does
 
 - Detects which crates are affected by your changes (including transitive dependencies)
@@ -245,6 +253,39 @@ When infrastructure files change, `rebuild-all` is set to `true`. Use this to tr
   with:
     version: "0.2.0"
 ```
+
+</details>
+
+<details>
+<summary>Migration from dorny/paths-filter</summary>
+
+Before (hand-maintained paths):
+
+```yaml
+- uses: dorny/paths-filter@v3
+  id: changes
+  with:
+    filters: |
+      core:
+        - "crates/core/**"
+      api:
+        - "crates/api/**"
+      cli:
+        - "crates/cli/**"
+```
+
+After (graph-aware, config in `rail.toml`):
+
+```yaml
+- uses: loadingalias/cargo-rail-action@v1
+  id: affected
+
+- name: Test affected crates
+  if: steps.affected.outputs.count != '0' && steps.affected.outputs.docs-only != 'true'
+  run: cargo test -p ${{ steps.affected.outputs.crates }}
+```
+
+This moves change classification into `rail.toml` and lets the dependency graph, not hand-written path lists, decide which crates are affected.
 
 </details>
 
