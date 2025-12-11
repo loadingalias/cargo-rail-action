@@ -55,7 +55,7 @@ jobs:
 
       - name: Test affected crates
         if: steps.affected.outputs.count != '0' && steps.affected.outputs.docs-only != 'true'
-        run: cargo test -p ${{ steps.affected.outputs.crates }}
+        run: cargo test ${{ steps.affected.outputs.cargo-args }}
 
       - name: Test all (infrastructure changed)
         if: steps.affected.outputs.rebuild-all == 'true'
@@ -132,6 +132,7 @@ jobs:
 | Output | Description |
 |--------|-------------|
 | `crates` | Space-separated affected crates: `core api cli` |
+| `cargo-args` | Cargo -p flags for direct use: `-p core -p api -p cli` |
 | `matrix` | JSON array for strategy.matrix: `["core","api","cli"]` |
 | `count` | Number of affected crates |
 
@@ -189,7 +190,7 @@ When infrastructure files change, `rebuild-all` is set to `true`. Use this to tr
 
 - name: Run tests
   if: steps.affected.outputs.docs-only != 'true'
-  run: cargo test -p ${{ steps.affected.outputs.crates }}
+  run: cargo test ${{ steps.affected.outputs.cargo-args }}
 ```
 
 </details>
@@ -218,7 +219,7 @@ When infrastructure files change, `rebuild-all` is set to `true`. Use this to tr
 
 - name: Test affected
   if: steps.affected.outputs.count != '0' && steps.affected.outputs.docs-only != 'true'
-  run: cargo nextest run -p ${{ steps.affected.outputs.crates }}
+  run: cargo nextest run ${{ steps.affected.outputs.cargo-args }}
 ```
 
 </details>
@@ -282,7 +283,7 @@ After (graph-aware, config in `rail.toml`):
 
 - name: Test affected crates
   if: steps.affected.outputs.count != '0' && steps.affected.outputs.docs-only != 'true'
-  run: cargo test -p ${{ steps.affected.outputs.crates }}
+  run: cargo test ${{ steps.affected.outputs.cargo-args }}
 ```
 
 This moves change classification into `rail.toml` and lets the dependency graph, not hand-written path lists, decide which crates are affected.

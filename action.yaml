@@ -42,6 +42,10 @@ outputs:
     description: "Space-separated list of affected crates"
     value: ${{ steps.affected.outputs.crates }}
 
+  cargo-args:
+    description: "Cargo -p flags for direct use: -p crate1 -p crate2"
+    value: ${{ steps.affected.outputs.cargo_args }}
+
   count:
     description: "Number of affected crates"
     value: ${{ steps.affected.outputs.affected_count }}
@@ -281,6 +285,16 @@ runs:
             exit 1
             ;;
         esac
+
+        # Generate cargo_args from crates output (requires cargo-rail 0.2.3+)
+        # Transform "crate1 crate2 crate3" to "-p crate1 -p crate2 -p crate3"
+        CRATES=$(grep "^crates=" "$GITHUB_OUTPUT" 2>/dev/null | cut -d= -f2 || echo "")
+        if [[ -n "$CRATES" ]]; then
+          CARGO_ARGS=$(echo "$CRATES" | tr ' ' '\n' | sed 's/^/-p /' | tr '\n' ' ' | sed 's/ $//')
+          echo "cargo_args=$CARGO_ARGS" >> "$GITHUB_OUTPUT"
+        else
+          echo "cargo_args=" >> "$GITHUB_OUTPUT"
+        fi
 
     # Generate Job Summary
     - name: Summary
