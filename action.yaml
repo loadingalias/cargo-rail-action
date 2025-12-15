@@ -84,6 +84,11 @@ outputs:
     description: "JSON object of custom category matches from rail.toml"
     value: ${{ steps.affected.outputs.custom_categories }}
 
+  # Base Reference (for downstream jobs that need consistent change detection)
+  base-ref:
+    description: "Git ref used for comparison (set RAIL_SINCE env var for scripts)"
+    value: ${{ steps.base.outputs.ref }}
+
   # Installation Metadata
   install-method:
     description: "How cargo-rail was installed (binary, binstall, cargo-install, cached)"
