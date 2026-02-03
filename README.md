@@ -30,6 +30,11 @@ If this action saves you CI time or complexity, consider starring the main proje
 - Works with PRs, push events, and manual runs
 - Outputs `docs-only` and `rebuild-all` flags for smart CI skipping
 
+**Supported runners:** Linux (x86_64/ARM64), Windows (x86_64/ARM64), macOS (ARM64 only).\
+macOS x86_64 is not supported.
+
+**Integrity:** When downloading a pre-built binary, the action verifies the archive against the `SHA256SUMS` release asset by default (`checksum: required`). For older cargo-rail releases without `SHA256SUMS`, set `checksum: if-available` or `checksum: off`.
+
 ```yaml
 - uses: loadingalias/cargo-rail-action@v1
 ```
@@ -117,6 +122,7 @@ jobs:
 | Input | Default | Description |
 |-------|---------|-------------|
 | `version` | `latest` | cargo-rail version to install |
+| `checksum` | `required` | Checksum verification for downloaded binaries: `required`, `if-available`, or `off` |
 | `since` | auto | Git ref to compare against (auto-detects PR base or `origin/main`) |
 | `command` | `affected` | Command to run: `affected` or `test` |
 | `args` | | Additional arguments passed to cargo-rail |

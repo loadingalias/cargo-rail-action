@@ -12,6 +12,11 @@ inputs:
     required: false
     default: "latest"
 
+  checksum:
+    description: "Checksum verification mode for downloaded binaries: required/if-available/off"
+    required: false
+    default: "required"
+
   since:
     description: "Git ref to compare against (auto-detects PR base or origin/main)"
     required: false
@@ -108,6 +113,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token }}
         REQUESTED_VERSION: ${{ inputs.version }}
+        CHECKSUM_MODE: ${{ inputs.checksum }}
       run: |
         set -euo pipefail
 
@@ -126,9 +132,13 @@ runs:
         case "$RUNNER_OS-$RUNNER_ARCH" in
           Linux-X64)   TARGET="x86_64-unknown-linux-gnu" ;;
           Linux-ARM64) TARGET="aarch64-unknown-linux-gnu" ;;
-          macOS-X64)   TARGET="x86_64-apple-darwin" ;;
+          macOS-X64)
+            echo "::error::macOS x86_64 is not supported; use an Apple Silicon runner (e.g. macos-14)"
+            exit 1
+            ;;
           macOS-ARM64) TARGET="aarch64-apple-darwin" ;;
           Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
+          Windows-ARM64) TARGET="aarch64-pc-windows-msvc" ;;
           *)
             echo "::warning::Unknown platform $RUNNER_OS-$RUNNER_ARCH, will try cargo install"
             TARGET=""
@@ -157,16 +167,82 @@ runs:
           URL="https://github.com/loadingalias/cargo-rail/releases/download/v${VERSION}/${ARCHIVE}"
           INSTALL_DIR="$HOME/.cargo/bin"
           mkdir -p "$INSTALL_DIR"
+          calc_sha256 () {
+            local file="$1"
+            if command -v sha256sum &>/dev/null; then
+              sha256sum "$file" | awk '{print $1}'
+            elif command -v shasum &>/dev/null; then
+              shasum -a 256 "$file" | awk '{print $1}'
+            else
+              python3 - "$file" <<'PY_HASH'
+import hashlib, sys
+p = sys.argv[1]
+h = hashlib.sha256()
+with open(p, 'rb') as f:
+  for chunk in iter(lambda: f.read(1024*1024), b''):
+    h.update(chunk)
+print(h.hexdigest())
+PY_HASH
+            fi
+          }
+
+          verify_checksum () {
+            local archive_path="$1"
+            local archive_name="$2"
+            local mode="${CHECKSUM_MODE:-required}"
+          
+            case "$mode" in
+              off)
+                echo "Checksum verification disabled (checksum=off)"
+                return 0
+                ;;
+              required|if-available)
+                ;;
+              *)
+                echo "::error::Invalid checksum mode: $mode. Use required, if-available, or off"
+                exit 1
+                ;;
+            esac
+          
+            local sums_url="https://github.com/loadingalias/cargo-rail/releases/download/v${VERSION}/SHA256SUMS"
+            local sums_path="/tmp/SHA256SUMS-cargo-rail"
+          
+            if ! curl -fsSL --retry 3 "$sums_url" -o "$sums_path" 2>/dev/null; then
+              if [[ "$mode" == "required" ]]; then
+                echo "::error::SHA256SUMS not found for v$VERSION; set checksum: if-available or off to skip verification"
+                exit 1
+              fi
+              echo "::warning::SHA256SUMS not found for v$VERSION; skipping checksum verification"
+              return 0
+            fi
+          
+            local expected
+            expected="$(awk -v f="$archive_name" '$2==f || $2=="*"f {print $1; exit}' "$sums_path" 2>/dev/null || true)"
+            if [[ -z "$expected" ]]; then
+              echo "::error::SHA256SUMS is present for v$VERSION but has no entry for $archive_name"
+              exit 1
+            fi
+          
+            local actual
+            actual="$(calc_sha256 "$archive_path")"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::Checksum mismatch for $archive_name (expected $expected, got $actual)"
+              exit 1
+            fi
+          
+            echo "Checksum verified for $archive_name"
+          }
 
           if curl -fsSL --retry 3 "$URL" -o "/tmp/$ARCHIVE"; then
             echo "Downloaded $ARCHIVE"
+            verify_checksum "/tmp/$ARCHIVE" "$ARCHIVE"
             echo "Extracting to $INSTALL_DIR..."
 
             if [[ "$RUNNER_OS" == "Windows" ]]; then
               unzip -q "/tmp/$ARCHIVE" -d "/tmp/cargo-rail-extract"
               mv /tmp/cargo-rail-extract/cargo-rail.exe "$INSTALL_DIR/"
             else
-              tar -xzf "/tmp/$ARCHIVE" -C "/tmp"
+              tar -xf "/tmp/$ARCHIVE" -C "/tmp"
               # Handle both flat and nested archive structures
               if [[ -f "/tmp/cargo-rail" ]]; then
                 mv /tmp/cargo-rail "$INSTALL_DIR/"
@@ -282,11 +358,8 @@ runs:
             cargo rail affected --quiet --since "$BASE_REF" -f github $EXTRA_ARGS -o "$GITHUB_OUTPUT"
             cargo rail test --quiet --since "$BASE_REF" $EXTRA_ARGS
             ;;
-          unify)
-            cargo rail unify --quiet --check -f github $EXTRA_ARGS -o "$GITHUB_OUTPUT" || true
-            ;;
           *)
-            echo "::error::Unknown command: $COMMAND. Use 'affected', 'test', or 'unify'"
+            echo "::error::Unknown command: $COMMAND. Use 'affected' or 'test'"
             exit 1
             ;;
         esac
