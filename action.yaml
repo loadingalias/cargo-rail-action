@@ -173,16 +173,17 @@ runs:
               sha256sum "$file" | awk '{print $1}'
             elif command -v shasum &>/dev/null; then
               shasum -a 256 "$file" | awk '{print $1}'
+
             else
-              python3 - "$file" <<'PY_HASH'
-import hashlib, sys
-p = sys.argv[1]
-h = hashlib.sha256()
-with open(p, 'rb') as f:
-  for chunk in iter(lambda: f.read(1024*1024), b''):
-    h.update(chunk)
-print(h.hexdigest())
-PY_HASH
+              
+              if command -v python3 &>/dev/null; then
+                python3 -c 'import hashlib,sys; p=sys.argv[1]; h=hashlib.sha256(); f=open(p,"rb"); [h.update(b) for b in iter(lambda: f.read(1024*1024), b"")]; f.close(); print(h.hexdigest())' "$file"
+              elif command -v python &>/dev/null; then
+                python -c 'import hashlib,sys; p=sys.argv[1]; h=hashlib.sha256(); f=open(p,"rb"); [h.update(b) for b in iter(lambda: f.read(1024*1024), b"")]; f.close(); print(h.hexdigest())' "$file"
+              else
+                echo "::error::No sha256 tool found (sha256sum/shasum/python)"
+                exit 1
+              fi
             fi
           }
 

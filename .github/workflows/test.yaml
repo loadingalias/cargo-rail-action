@@ -7,10 +7,18 @@ on:
   workflow_call:  # Allow other workflows to call this
 
 jobs:
+  lint-action-yaml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Validate action.yaml
+        run: ruby -ryaml -e 'YAML.load_file("action.yaml")'
+
   # ============================================================================
   # Self-test: Create minimal workspace, no external dependencies
   # ============================================================================
   self-test:
+    needs: lint-action-yaml
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -109,6 +117,7 @@ jobs:
   # Real monorepo test: tokio
   # ============================================================================
   test-monorepo:
+    needs: lint-action-yaml
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -148,6 +157,7 @@ jobs:
   # Test --all flag
   # ============================================================================
   test-all-mode:
+    needs: lint-action-yaml
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -173,6 +183,7 @@ jobs:
   # Multi-platform test
   # ============================================================================
   test-platforms:
+    needs: lint-action-yaml
     strategy:
       fail-fast: false
       matrix:

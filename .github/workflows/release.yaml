@@ -78,7 +78,9 @@ jobs:
             --generate-notes \
             --latest
 
-          echo "## Released v$VERSION" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Tag: \`v$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Floating tag: \`$MAJOR\` → v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Released v$VERSION"
+            echo ""
+            echo "- Tag: \`v$VERSION\`"
+            echo "- Floating tag: \`$MAJOR\` → v$VERSION"
+          } >> "$GITHUB_STEP_SUMMARY"
