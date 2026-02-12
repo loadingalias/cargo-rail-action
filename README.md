@@ -9,37 +9,17 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
-<p align="center">
-  <strong>Graph-aware change detection for Rust monorepos. Test only what changed.</strong>
-</p>
+Planner-first GitHub Action for Rust monorepos.
 
----
+This action is a thin transport layer over:
 
-## Why This vs Hand-Rolled Filters
-
-- Graph-aware, not path-only: uses `cargo-rail`’s workspace graph instead of hard-coded `paths-filter` rules.
-- Single source of truth: CI classification rules live in `rail.toml`, shared with the CLI.
-- Shared engine: same logic as `cargo rail affected`/`cargo rail test`, so local runs match CI.
-
-If this action saves you CI time or complexity, consider starring the main project: [cargo-rail](https://github.com/loadingalias/cargo-rail).
-
-## What It Does
-
-- Detects which crates are affected by your changes (including transitive dependencies)
-- Installs in ~3 seconds (pre-built binaries, no Rust toolchain needed)
-- Works with PRs, push events, and manual runs
-- Outputs `docs-only` and `rebuild-all` flags for smart CI skipping
-
-**Supported runners:** Linux (x86_64/ARM64), Windows (x86_64/ARM64), macOS (ARM64 only).\
-macOS x86_64 is not supported.
-
-**Integrity:** When downloading a pre-built binary, the action verifies the archive against the `SHA256SUMS` release asset by default (`checksum: required`). For older cargo-rail releases without `SHA256SUMS`, set `checksum: if-available` or `checksum: off`.
-
-```yaml
-- uses: loadingalias/cargo-rail-action@v1
+```bash
+cargo rail plan --quiet --since "$BASE_REF" -f github
 ```
 
----
+No action-side planning policy. It forwards planner outputs and adds pure projections for common CI usage.
+
+Minimum supported planner contract: `cargo-rail >= 0.9.1` (enforced by the action).
 
 ## Quick Start
 
@@ -48,53 +28,113 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  test:
+  plan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Required for change detection
+          fetch-depth: 0
 
       - uses: loadingalias/cargo-rail-action@v1
-        id: affected
+        id: rail
 
-      - name: Test affected crates
-        if: steps.affected.outputs.count != '0' && steps.affected.outputs.docs-only != 'true'
-        run: cargo test ${{ steps.affected.outputs.cargo-args }}
+      - name: Run tests for selected crates
+        if: steps.rail.outputs.test == 'true'
+        run: cargo rail test --since "${{ steps.rail.outputs.base-ref }}"
 
-      - name: Test all (infrastructure changed)
-        if: steps.affected.outputs.rebuild-all == 'true'
-        run: cargo test --workspace
+      - name: Run docs pipeline
+        if: steps.rail.outputs.docs == 'true'
+        run: cargo doc --workspace --no-deps
 ```
 
----
+## Inputs
 
-## Parallel Testing (Matrix Strategy)
+| Input | Default | Description |
+|-------|---------|-------------|
+| `version` | `latest` | cargo-rail version to install |
+| `checksum` | `required` | Binary checksum mode: `required`, `if-available`, `off` |
+| `since` | auto | Git ref to compare against |
+| `args` | | Extra args passed to `cargo rail plan` |
+| `working-directory` | `.` | Directory containing workspace root |
+| `token` | `${{ github.token }}` | GitHub token for downloading releases |
 
-For large monorepos, run each crate in parallel:
+## Outputs
+
+### Planner-native
+
+| Output | Description |
+|--------|-------------|
+| `files` | JSON array of changed files |
+| `direct-crates` | Space-separated direct impacted crates |
+| `transitive-crates` | Space-separated transitive impacted crates |
+| `surfaces` | JSON object of surface decisions |
+| `plan-json` | Full compact planner payload |
+| `trace` | Planner trace payload |
+
+### Surface projections
+
+| Output | Description |
+|--------|-------------|
+| `build` | `true` when build surface is active |
+| `test` | `true` when test surface is active |
+| `bench` | `true` when bench surface is active |
+| `docs` | `true` when docs surface is active |
+| `infra` | `true` when infra surface is active |
+| `custom-surfaces` | JSON map of custom surface booleans |
+| `active-surfaces` | JSON array of active surfaces |
+
+### Crate projections
+
+| Output | Description |
+|--------|-------------|
+| `crates` | Space-separated impacted crates (direct + transitive) |
+| `cargo-args` | `-p` flags derived from impacted crates |
+| `count` | Impacted crate count |
+| `matrix` | JSON array of impacted crates |
+| `changed-files-count` | Number of changed files |
+
+### Operational metadata
+
+| Output | Description |
+|--------|-------------|
+| `base-ref` | Git ref used for comparison |
+| `install-method` | `binary`, `binstall`, `cargo-install`, `cached` |
+| `cargo-rail-version` | Installed cargo-rail version |
+
+## Planner-first CI patterns
+
+### Gate jobs by surface
+
+```yaml
+- uses: loadingalias/cargo-rail-action@v1
+  id: rail
+
+- name: Build
+  if: steps.rail.outputs.build == 'true'
+  run: cargo build --workspace
+
+- name: Bench
+  if: steps.rail.outputs.bench == 'true'
+  run: cargo bench --workspace
+```
+
+### Matrix over impacted crates
 
 ```yaml
 jobs:
   detect:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.affected.outputs.matrix }}
-      count: ${{ steps.affected.outputs.count }}
-      rebuild-all: ${{ steps.affected.outputs.rebuild-all }}
-      docs-only: ${{ steps.affected.outputs.docs-only }}
+      matrix: ${{ steps.rail.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: loadingalias/cargo-rail-action@v1
-        id: affected
+        id: rail
 
   test:
     needs: detect
-    if: |
-      needs.detect.outputs.count != '0' &&
-      needs.detect.outputs.rebuild-all != 'true' &&
-      needs.detect.outputs.docs-only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -102,220 +142,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p ${{ matrix.crate }}
-
-  test-all:
-    needs: detect
-    if: needs.detect.outputs.rebuild-all == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --workspace
+      - run: cargo test -p "${{ matrix.crate }}"
 ```
 
----
+## Migration from legacy coarse outputs
 
-## Inputs
+| Legacy | Planner-first replacement |
+|--------|---------------------------|
+| `docs-only` | `docs=true` and `test=false` |
+| `rebuild-all` | `infra=true` |
+| `custom-categories` | `custom-surfaces` |
+| `cargo-args` from `affected` | `cargo-args` projection from `plan` |
+| `command: affected|test` | Removed. Action always runs `plan`. |
 
-| Input | Default | Description |
-|-------|---------|-------------|
-| `version` | `latest` | cargo-rail version to install |
-| `checksum` | `required` | Checksum verification for downloaded binaries: `required`, `if-available`, or `off` |
-| `since` | auto | Git ref to compare against (auto-detects PR base or `origin/main`) |
-| `command` | `affected` | Command to run: `affected` or `test` |
-| `args` | | Additional arguments passed to cargo-rail |
-| `working-directory` | `.` | Directory containing Cargo.toml |
-| `token` | `${{ github.token }}` | GitHub token for downloading releases |
+## Supported runners
 
----
+- Linux: x86_64, ARM64
+- Windows: x86_64, ARM64
+- macOS: ARM64 (Intel not supported)
 
-## Outputs
+## Security
 
-### Primary
-
-| Output | Description |
-|--------|-------------|
-| `crates` | Space-separated affected crates: `core api cli` |
-| `cargo-args` | Cargo -p flags for direct use: `-p core -p api -p cli` |
-| `matrix` | JSON array for strategy.matrix: `["core","api","cli"]` |
-| `count` | Number of affected crates |
-
-### Classification Flags
-
-| Output | Description |
-|--------|-------------|
-| `rebuild-all` | `true` if infrastructure files changed (Cargo.lock, CI, etc.) |
-| `docs-only` | `true` if only documentation changed |
-
-### Detailed Breakdown
-
-<details>
-<summary>Additional outputs</summary>
-
-| Output | Description |
-|--------|-------------|
-| `direct` | Crates with direct file changes |
-| `transitive` | Crates affected through dependency graph |
-| `changed-files` | Number of files changed |
-| `infrastructure-files` | JSON array of files that triggered `rebuild-all` |
-| `custom-categories` | Custom category matches from rail.toml config |
-| `install-method` | How cargo-rail was installed (`binary`, `binstall`, `cargo-install`, `cached`) |
-| `cargo-rail-version` | Installed version |
-
-</details>
-
----
-
-## Configuration
-
-Optional. Generate with `cargo rail init`:
-
-```toml
-# .config/rail.toml
-[change-detection]
-infrastructure = [".github/**", "Cargo.lock", "rust-toolchain.toml"]
-
-[change-detection.custom]
-benchmarks = ["benches/**"]
-```
-
-When infrastructure files change, `rebuild-all` is set to `true`. Use this to trigger full workspace tests.
-
----
-
-## Examples
-
-<details>
-<summary>Skip CI on docs-only changes</summary>
-
-```yaml
-- uses: loadingalias/cargo-rail-action@v1
-  id: affected
-
-- name: Run tests
-  if: steps.affected.outputs.docs-only != 'true'
-  run: cargo test ${{ steps.affected.outputs.cargo-args }}
-```
-
-</details>
-
-<details>
-<summary>Run tests directly (let cargo-rail handle it)</summary>
-
-```yaml
-- uses: loadingalias/cargo-rail-action@v1
-  with:
-    command: test
-```
-
-</details>
-
-<details>
-<summary>With cargo-nextest</summary>
-
-```yaml
-- uses: loadingalias/cargo-rail-action@v1
-  id: affected
-
-- name: Install nextest
-  if: steps.affected.outputs.count != '0'
-  uses: taiki-e/install-action@nextest
-
-- name: Test affected
-  if: steps.affected.outputs.count != '0' && steps.affected.outputs.docs-only != 'true'
-  run: cargo nextest run ${{ steps.affected.outputs.cargo-args }}
-```
-
-</details>
-
-<details>
-<summary>Custom base ref</summary>
-
-```yaml
-- uses: loadingalias/cargo-rail-action@v1
-  with:
-    since: origin/develop
-```
-
-</details>
-
-<details>
-<summary>Monorepo with Rust in subdirectory</summary>
-
-```yaml
-- uses: loadingalias/cargo-rail-action@v1
-  with:
-    working-directory: rust/
-```
-
-</details>
-
-<details>
-<summary>Pin to specific version</summary>
-
-```yaml
-- uses: loadingalias/cargo-rail-action@v1
-  with:
-    version: "0.2.0"
-```
-
-</details>
-
-<details>
-<summary>Migration from dorny/paths-filter</summary>
-
-Before (hand-maintained paths):
-
-```yaml
-- uses: dorny/paths-filter@v3
-  id: changes
-  with:
-    filters: |
-      core:
-        - "crates/core/**"
-      api:
-        - "crates/api/**"
-      cli:
-        - "crates/cli/**"
-```
-
-After (graph-aware, config in `rail.toml`):
-
-```yaml
-- uses: loadingalias/cargo-rail-action@v1
-  id: affected
-
-- name: Test affected crates
-  if: steps.affected.outputs.count != '0' && steps.affected.outputs.docs-only != 'true'
-  run: cargo test ${{ steps.affected.outputs.cargo-args }}
-```
-
-This moves change classification into `rail.toml` and lets the dependency graph, not hand-written path lists, decide which crates are affected.
-
-</details>
-
----
-
-## How It Works
-
-1. **Installs cargo-rail** — Downloads pre-built binary (fast) or falls back to `cargo install`
-2. **Detects base ref** — Uses PR base, `origin/main`, or provided `since` input
-3. **Runs change detection** — Maps changed files to crates via dependency graph
-4. **Sets outputs** — Provides `crates`, `matrix`, `count`, `docs-only`, `rebuild-all`
-5. **Writes summary** — Adds a summary to the GitHub Actions job
-
----
-
-## Links
-
-- [cargo-rail](https://github.com/loadingalias/cargo-rail) — The CLI tool
-- [Configuration Reference](https://github.com/loadingalias/cargo-rail/blob/main/docs/config.md)
-- [Command Reference](https://github.com/loadingalias/cargo-rail/blob/main/docs/commands.md)
-
----
-
-## License
-
-MIT
+When downloading binaries, checksum validation is enabled by default (`checksum: required`) using release `SHA256SUMS`.

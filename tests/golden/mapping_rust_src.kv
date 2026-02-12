@@ -1,0 +1,9 @@
+files=["crates/lib-a/src/lib.rs"]
+changed_files_count=1
+surfaces={"bench":{"enabled":false,"reasons":[]},"build":{"enabled":true,"reasons":[2,3]},"docs":{"enabled":false,"reasons":[]},"infra":{"enabled":false,"reasons":[]},"test":{"enabled":true,"reasons":[2,3]}}
+trace=[{"id":1,"code":"FILE_OWNS_CRATE_DIRECT","file":"crates/lib-a/src/lib.rs","crate":"lib-a"},{"id":2,"code":"FILE_KIND_RUST_SRC","file":"crates/lib-a/src/lib.rs","surface":"build"},{"id":3,"code":"TRANSITIVE_DEPENDS_ON_DIRECT","crate":"lib-b","depends_on":"lib-a","surface":"build"}]
+crates=lib-a lib-b
+count=2
+cargo_args=-p lib-a -p lib-b
+matrix=["lib-a","lib-b"]
+active_surfaces=["build","test"]

@@ -1,5 +1,5 @@
 name: "cargo-rail"
-description: "Graph-aware change detection for Rust monorepos. Check/Test/Bench/Profile only what actually changed."
+description: "Planner-first CI transport for cargo rail plan surfaces and trace output."
 author: "loadingalias"
 
 branding:
@@ -21,11 +21,6 @@ inputs:
     description: "Git ref to compare against (auto-detects PR base or origin/main)"
     required: false
 
-  command:
-    description: "Command to run: affected/test (default: affected)"
-    required: false
-    default: "affected"
-
   args:
     description: "Additional arguments to pass to cargo-rail"
     required: false
@@ -42,52 +37,79 @@ inputs:
     default: ${{ github.token }}
 
 outputs:
-  # Primary Outputs
+  # Planner-native contract
+  files:
+    description: "JSON array of changed workspace-relative file paths"
+    value: ${{ steps.plan.outputs.files }}
+
+  direct-crates:
+    description: "Space-separated direct impacted crates"
+    value: ${{ steps.plan.outputs.direct_crates }}
+
+  transitive-crates:
+    description: "Space-separated transitive impacted crates"
+    value: ${{ steps.plan.outputs.transitive_crates }}
+
+  surfaces:
+    description: "JSON object of surface decisions (enabled + reasons)"
+    value: ${{ steps.plan.outputs.surfaces }}
+
+  plan-json:
+    description: "Compact planner payload"
+    value: ${{ steps.plan.outputs.plan_json }}
+
+  trace:
+    description: "Planner trace payload"
+    value: ${{ steps.plan.outputs.trace }}
+
+  # Convenience projections (pure projections of planner output)
+  build:
+    description: "'true' when build surface is active"
+    value: ${{ steps.plan.outputs.build }}
+
+  test:
+    description: "'true' when test surface is active"
+    value: ${{ steps.plan.outputs.test }}
+
+  bench:
+    description: "'true' when bench surface is active"
+    value: ${{ steps.plan.outputs.bench }}
+
+  docs:
+    description: "'true' when docs surface is active"
+    value: ${{ steps.plan.outputs.docs }}
+
+  infra:
+    description: "'true' when infra surface is active"
+    value: ${{ steps.plan.outputs.infra }}
+
+  custom-surfaces:
+    description: "JSON object of custom surface booleans"
+    value: ${{ steps.plan.outputs.custom_surfaces }}
+
   crates:
-    description: "Space-separated list of affected crates"
-    value: ${{ steps.affected.outputs.crates }}
+    description: "Space-separated impacted crates (direct + transitive)"
+    value: ${{ steps.plan.outputs.crates }}
 
   cargo-args:
-    description: "Cargo -p flags for direct use: -p crate1 -p crate2"
-    value: ${{ steps.affected.outputs.cargo_args }}
+    description: "Cargo -p flags derived from impacted crates"
+    value: ${{ steps.plan.outputs.cargo_args }}
 
   count:
-    description: "Number of affected crates"
-    value: ${{ steps.affected.outputs.affected_count }}
+    description: "Number of impacted crates"
+    value: ${{ steps.plan.outputs.count }}
 
   matrix:
-    description: "JSON array for strategy.matrix.crate (use with fromJson)"
-    value: ${{ steps.affected.outputs.test_matrix }}
+    description: "JSON array of impacted crates (for strategy.matrix)"
+    value: ${{ steps.plan.outputs.matrix }}
 
-  # Classification Flags
-  docs-only:
-    description: "'true' if only documentation files changed (skip tests)"
-    value: ${{ steps.affected.outputs.docs_only }}
-
-  rebuild-all:
-    description: "'true' if infrastructure files changed (test everything)"
-    value: ${{ steps.affected.outputs.rebuild_all }}
-
-  # Detailed Breakdown
-  direct:
-    description: "Space-separated crates with direct file changes"
-    value: ${{ steps.affected.outputs.direct }}
-
-  transitive:
-    description: "Space-separated crates affected via dependencies"
-    value: ${{ steps.affected.outputs.transitive }}
-
-  changed-files:
+  changed-files-count:
     description: "Number of changed files"
-    value: ${{ steps.affected.outputs.changed_files_count }}
+    value: ${{ steps.plan.outputs.changed_files_count }}
 
-  infrastructure-files:
-    description: "JSON array of infrastructure files that triggered rebuild_all"
-    value: ${{ steps.affected.outputs.infrastructure_files }}
-
-  custom-categories:
-    description: "JSON object of custom category matches from rail.toml"
-    value: ${{ steps.affected.outputs.custom_categories }}
+  active-surfaces:
+    description: "JSON array of active surfaces"
+    value: ${{ steps.plan.outputs.active_surfaces }}
 
   # Base Reference (for downstream jobs that need consistent change detection)
   base-ref:
@@ -116,12 +138,38 @@ runs:
         CHECKSUM_MODE: ${{ inputs.checksum }}
       run: |
         set -euo pipefail
+        MIN_CORE_VERSION="0.9.1"
+
+        require_min_version() {
+          local installed="$1"
+          local required="$2"
+          if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+            echo "::warning::Python not found; skipping cargo-rail minimum version check"
+            return 0
+          fi
+          local py_bin="python3"
+          command -v python3 >/dev/null 2>&1 || py_bin="python"
+          "$py_bin" - "$installed" "$required" << 'PY'
+          import sys
+          def parse(v: str):
+            try:
+              return tuple(int(x) for x in v.split("."))
+            except Exception:
+              return (0, 0, 0)
+          installed = parse(sys.argv[1])
+          required = parse(sys.argv[2])
+          if installed < required:
+            print(f"::error::cargo-rail {sys.argv[1]} is below required minimum {sys.argv[2]} for planner contract")
+            sys.exit(1)
+          PY
+        }
 
         # Check if already installed and meets version requirement
         if command -v cargo-rail &>/dev/null; then
           INSTALLED_VERSION=$(cargo-rail rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
           if [[ "$REQUESTED_VERSION" == "latest" || "$INSTALLED_VERSION" == "$REQUESTED_VERSION" ]]; then
             echo "cargo-rail $INSTALLED_VERSION already installed"
+            require_min_version "$INSTALLED_VERSION" "$MIN_CORE_VERSION"
             echo "method=cached" >> "$GITHUB_OUTPUT"
             echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
             exit 0
@@ -273,6 +321,7 @@ runs:
             fi
 
             INSTALLED_VERSION=$("$INSTALL_DIR/cargo-rail" rail --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            require_min_version "$INSTALLED_VERSION" "$MIN_CORE_VERSION"
             echo "Installed cargo-rail v$INSTALLED_VERSION from binary"
             echo "method=binary" >> "$GITHUB_OUTPUT"
             echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
@@ -290,6 +339,7 @@ runs:
 
           if cargo binstall cargo-rail $BINSTALL_ARGS 2>/dev/null; then
             INSTALLED_VERSION=$(cargo-rail rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            require_min_version "$INSTALLED_VERSION" "$MIN_CORE_VERSION"
             echo "Installed cargo-rail v$INSTALLED_VERSION via cargo-binstall"
             echo "method=binstall" >> "$GITHUB_OUTPUT"
             echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
@@ -305,6 +355,7 @@ runs:
         cargo install cargo-rail $INSTALL_ARGS
 
         INSTALLED_VERSION=$(cargo-rail rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        require_min_version "$INSTALLED_VERSION" "$MIN_CORE_VERSION"
         echo "Installed cargo-rail v$INSTALLED_VERSION via cargo install"
         echo "method=cargo-install" >> "$GITHUB_OUTPUT"
         echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
@@ -340,104 +391,73 @@ runs:
           echo "::warning::No remote branch found, using HEAD~1"
         fi
 
-    # Run Cargo-Rail Command
-    - name: Run cargo-rail
-      id: affected
+    # Run Planner and Map Outputs
+    - name: Run cargo-rail plan
+      id: plan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        COMMAND: ${{ inputs.command }}
         EXTRA_ARGS: ${{ inputs.args }}
         BASE_REF: ${{ steps.base.outputs.ref }}
       run: |
-        case "$COMMAND" in
-          affected)
-            cargo rail affected --quiet --since "$BASE_REF" -f github $EXTRA_ARGS -o "$GITHUB_OUTPUT"
-            ;;
-          test)
-            # For test command, run it but also output affected info
-            cargo rail affected --quiet --since "$BASE_REF" -f github $EXTRA_ARGS -o "$GITHUB_OUTPUT"
-            cargo rail test --quiet --since "$BASE_REF" $EXTRA_ARGS
-            ;;
-          *)
-            echo "::error::Unknown command: $COMMAND. Use 'affected' or 'test'"
-            exit 1
-            ;;
-        esac
+        set -euo pipefail
 
-        # Generate cargo_args from crates output (requires cargo-rail 0.2.3+)
-        # Transform "crate1 crate2 crate3" to "-p crate1 -p crate2 -p crate3"
-        CRATES=$(grep "^crates=" "$GITHUB_OUTPUT" 2>/dev/null | cut -d= -f2 || echo "")
-        if [[ -n "$CRATES" ]]; then
-          CARGO_ARGS=$(echo "$CRATES" | tr ' ' '\n' | sed 's/^/-p /' | tr '\n' ' ' | sed 's/ $//')
-          echo "cargo_args=$CARGO_ARGS" >> "$GITHUB_OUTPUT"
-        else
-          echo "cargo_args=" >> "$GITHUB_OUTPUT"
+        TMP_OUTPUT="$(mktemp)"
+        trap 'rm -f "$TMP_OUTPUT"' EXIT
+
+        cargo rail plan --quiet --since "$BASE_REF" -f github $EXTRA_ARGS -o "$TMP_OUTPUT"
+
+        read_kv() {
+          local key="$1"
+          grep "^${key}=" "$TMP_OUTPUT" | tail -n1 | cut -d= -f2- || true
+        }
+
+        BUILD="$(read_kv build)"
+        TEST="$(read_kv test)"
+        BENCH="$(read_kv bench)"
+        DOCS="$(read_kv docs)"
+        INFRA="$(read_kv infra)"
+        DIRECT_CRATES="$(read_kv direct_crates)"
+        TRANSITIVE_CRATES="$(read_kv transitive_crates)"
+        CUSTOM_SURFACES="$(read_kv custom_surfaces)"
+        PLAN_JSON="$(read_kv plan_json)"
+
+        if [[ -z "${PLAN_JSON:-}" ]]; then
+          echo "::error::planner output missing plan_json"
+          exit 1
         fi
+
+        {
+          echo "build=${BUILD:-false}"
+          echo "test=${TEST:-false}"
+          echo "bench=${BENCH:-false}"
+          echo "docs=${DOCS:-false}"
+          echo "infra=${INFRA:-false}"
+          echo "direct_crates=${DIRECT_CRATES}"
+          echo "transitive_crates=${TRANSITIVE_CRATES}"
+          echo "custom_surfaces=${CUSTOM_SURFACES:-{}}"
+          echo "plan_json=${PLAN_JSON}"
+        } >> "$GITHUB_OUTPUT"
+
+        PYTHON_BIN="python3"
+        command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
+        "$PYTHON_BIN" "${{ github.action_path }}/scripts/map_plan_outputs.py" --plan-json "$PLAN_JSON" --output "$GITHUB_OUTPUT"
 
     # Generate Job Summary
     - name: Summary
       if: always()
       shell: bash
+      env:
+        INSTALL_METHOD: ${{ steps.install.outputs.method }}
+        INSTALL_VERSION: ${{ steps.install.outputs.version }}
+        BASE_REF: ${{ steps.base.outputs.ref }}
+        PLAN_JSON: ${{ steps.plan.outputs.plan_json }}
       run: |
-        {
-          echo "## cargo-rail"
-          echo ""
-
-          # Installation info
-          case "${{ steps.install.outputs.method }}" in
-            binary)        INSTALL="Binary download" ;;
-            binstall)      INSTALL="cargo-binstall" ;;
-            cargo-install) INSTALL="cargo install (compiled)" ;;
-            cached)        INSTALL="Already installed" ;;
-            *)             INSTALL="Unknown" ;;
-          esac
-
-          echo "| | |"
-          echo "|---|---|"
-          echo "| **Version** | \`${{ steps.install.outputs.version }}\` |"
-          echo "| **Install** | $INSTALL |"
-          echo "| **Base** | \`${{ steps.base.outputs.ref }}\` |"
-          echo ""
-
-          # Results
-          DOCS_ONLY="${{ steps.affected.outputs.docs_only }}"
-          REBUILD_ALL="${{ steps.affected.outputs.rebuild_all }}"
-          COUNT="${{ steps.affected.outputs.affected_count }}"
-          CRATES="${{ steps.affected.outputs.crates }}"
-
-          if [[ "$DOCS_ONLY" == "true" ]]; then
-            echo "> **Documentation only** - no tests required"
-          elif [[ "$REBUILD_ALL" == "true" ]]; then
-            echo "> **Infrastructure changed** - full test suite recommended"
-            echo ""
-            echo "| Changed Files | Affected Crates |"
-            echo "|---------------|-----------------|"
-            echo "| ${{ steps.affected.outputs.changed_files_count }} | **all** |"
-          elif [[ "${COUNT:-0}" == "0" ]]; then
-            echo "> **No affected crates** - nothing to test"
-          else
-            echo "| Changed Files | Affected Crates |"
-            echo "|---------------|-----------------|"
-            echo "| ${{ steps.affected.outputs.changed_files_count }} | **$COUNT** |"
-            echo ""
-            echo "**Crates:** \`$CRATES\`"
-
-            DIRECT="${{ steps.affected.outputs.direct }}"
-            TRANSITIVE="${{ steps.affected.outputs.transitive }}"
-            if [[ -n "$DIRECT" ]]; then
-              echo ""
-              echo "<details><summary>Direct changes</summary>"
-              echo ""
-              echo "\`$DIRECT\`"
-              echo "</details>"
-            fi
-            if [[ -n "$TRANSITIVE" ]]; then
-              echo ""
-              echo "<details><summary>Transitive (via dependencies)</summary>"
-              echo ""
-              echo "\`$TRANSITIVE\`"
-              echo "</details>"
-            fi
-          fi
-        } >> "$GITHUB_STEP_SUMMARY"
+        set -euo pipefail
+        PYTHON_BIN="python3"
+        command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
+        "$PYTHON_BIN" "${{ github.action_path }}/scripts/render_summary.py" \
+          --plan-json "$PLAN_JSON" \
+          --install-method "$INSTALL_METHOD" \
+          --install-version "$INSTALL_VERSION" \
+          --base-ref "$BASE_REF" >> "$GITHUB_STEP_SUMMARY"

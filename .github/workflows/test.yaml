@@ -14,11 +14,19 @@ jobs:
       - name: Validate action.yaml
         run: ruby -ryaml -e 'YAML.load_file("action.yaml")'
 
+  fixture-tests:
+    needs: lint-action-yaml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Run mapping/summary fixture tests
+        run: ./tests/test_mapping.sh
+
   # ============================================================================
   # Self-test: Create minimal workspace, no external dependencies
   # ============================================================================
   self-test:
-    needs: lint-action-yaml
+    needs: [lint-action-yaml, fixture-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -97,6 +105,8 @@ jobs:
           echo "count: ${{ steps.rail.outputs.count }}"
           echo "crates: ${{ steps.rail.outputs.crates }}"
           echo "matrix: ${{ steps.rail.outputs.matrix }}"
+          echo "surfaces: ${{ steps.rail.outputs.surfaces }}"
+          echo "trace: ${{ steps.rail.outputs.trace }}"
           echo "install-method: ${{ steps.rail.outputs.install-method }}"
           echo "cargo-rail-version: ${{ steps.rail.outputs.cargo-rail-version }}"
 
@@ -110,6 +120,8 @@ jobs:
 
           # Verify matrix is valid JSON
           echo '${{ steps.rail.outputs.matrix }}' | jq . || { echo "matrix not valid JSON"; exit 1; }
+          echo '${{ steps.rail.outputs.surfaces }}' | jq . || { echo "surfaces not valid JSON"; exit 1; }
+          echo '${{ steps.rail.outputs.trace }}' | jq . || { echo "trace not valid JSON"; exit 1; }
 
           echo "Self-test passed!"
 
@@ -117,7 +129,7 @@ jobs:
   # Real monorepo test: tokio
   # ============================================================================
   test-monorepo:
-    needs: lint-action-yaml
+    needs: [lint-action-yaml, fixture-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -142,48 +154,26 @@ jobs:
           echo "count: ${{ steps.rail.outputs.count }}"
           echo "crates: ${{ steps.rail.outputs.crates }}"
           echo "matrix: ${{ steps.rail.outputs.matrix }}"
-          echo "docs-only: ${{ steps.rail.outputs.docs-only }}"
-          echo "rebuild-all: ${{ steps.rail.outputs.rebuild-all }}"
+          echo "active-surfaces: ${{ steps.rail.outputs.active-surfaces }}"
+          echo "files: ${{ steps.rail.outputs.files }}"
+          echo "plan-json: ${{ steps.rail.outputs.plan-json }}"
 
           # Verify count is a number
           [[ "${{ steps.rail.outputs.count }}" =~ ^[0-9]+$ ]] || { echo "count not a number"; exit 1; }
 
           # Verify matrix is valid JSON
           echo '${{ steps.rail.outputs.matrix }}' | jq . || { echo "matrix not valid JSON"; exit 1; }
+          echo '${{ steps.rail.outputs.active-surfaces }}' | jq . || { echo "active-surfaces not valid JSON"; exit 1; }
+          echo '${{ steps.rail.outputs.files }}' | jq . || { echo "files not valid JSON"; exit 1; }
+          echo '${{ steps.rail.outputs.plan-json }}' | jq . || { echo "plan-json not valid JSON"; exit 1; }
 
           echo "Monorepo test passed!"
-
-  # ============================================================================
-  # Test --all flag
-  # ============================================================================
-  test-all-mode:
-    needs: lint-action-yaml
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Clone test repo
-        run: git clone --depth 1 https://github.com/tokio-rs/tokio.git test-repo
-
-      - name: Run action with --all
-        id: rail
-        uses: ./
-        with:
-          checksum: if-available
-          args: "--all"
-          working-directory: test-repo
-
-      - name: Verify all crates returned
-        run: |
-          COUNT="${{ steps.rail.outputs.count }}"
-          echo "All crates count: $COUNT"
-          [[ "$COUNT" -gt 5 ]] || { echo "Expected more than 5 crates"; exit 1; }
 
   # ============================================================================
   # Multi-platform test
   # ============================================================================
   test-platforms:
-    needs: lint-action-yaml
+    needs: [lint-action-yaml, fixture-tests]
     strategy:
       fail-fast: false
       matrix:

@@ -1,0 +1,37 @@
+{
+  "files": [
+    {
+      "path": "README.md",
+      "kind": "docs",
+      "owners": [],
+      "owner_scope": "workspace"
+    }
+  ],
+  "impact": {
+    "direct_crates": [],
+    "transitive_crates": []
+  },
+  "inputs": {
+    "refs": {
+      "since": "origin/main",
+      "from": null,
+      "to": null,
+      "merge_base": false,
+      "resolved_base": "origin/main",
+      "resolved_head": "WORKTREE"
+    },
+    "workspace_root": "<WORKSPACE_ROOT>",
+    "config_fingerprint": "none",
+    "toolchain_fingerprint": "none"
+  },
+  "surfaces": {
+    "bench": {"enabled": false, "reasons": []},
+    "build": {"enabled": false, "reasons": []},
+    "docs": {"enabled": true, "reasons": [1]},
+    "infra": {"enabled": false, "reasons": []},
+    "test": {"enabled": false, "reasons": []}
+  },
+  "trace": [
+    {"id": 1, "code": "FILE_KIND_DOCS", "file": "README.md", "surface": "docs"}
+  ]
+}
