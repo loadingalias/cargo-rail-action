@@ -1,25 +1,23 @@
 # cargo-rail-action
 
-<p align="center">
-  <img src="https://socialify.git.ci/loadingalias/cargo-rail-action/image?font=Jost&language=1&name=1&owner=1&pattern=Solid&theme=Auto" alt="cargo-rail-action" width="640" height="320" />
-</p>
+> Planner-first GitHub Action for Rust monorepos, built as a thin transport over `cargo rail plan`.
 
-<p align="center">
-  <a href="https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml"><img src="https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg" alt="Test"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-</p>
+[![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Planner-first GitHub Action for Rust monorepos.
+## What It Is
 
-This action is a thin transport layer over:
+This action runs:
 
 ```bash
-cargo rail plan --quiet --since "$BASE_REF" -f github
+cargo rail plan ... -f github
 ```
 
-No action-side planning policy. It forwards planner outputs and adds pure projections for common CI usage.
+Then publishes planner-native outputs plus deterministic convenience projections (crate matrix, cargo args, active surfaces, counts).
 
-Minimum supported planner contract: `cargo-rail >= 0.9.1` (enforced by the action).
+- No separate action-side planning policy.
+- Same planning contract for local and CI usage.
+- Minimum supported planner contract: `cargo-rail >= 0.10.0`.
 
 ## Quick Start
 
@@ -38,7 +36,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v1
         id: rail
 
-      - name: Run tests for selected crates
+      - name: Run targeted tests
         if: steps.rail.outputs.test == 'true'
         run: cargo rail test --since "${{ steps.rail.outputs.base-ref }}"
 
@@ -50,60 +48,59 @@ jobs:
 ## Inputs
 
 | Input | Default | Description |
-|-------|---------|-------------|
-| `version` | `latest` | cargo-rail version to install |
+|---|---|---|
+| `version` | `latest` | `cargo-rail` version to install |
 | `checksum` | `required` | Binary checksum mode: `required`, `if-available`, `off` |
-| `since` | auto | Git ref to compare against |
-| `args` | | Extra args passed to `cargo rail plan` |
-| `working-directory` | `.` | Directory containing workspace root |
-| `token` | `${{ github.token }}` | GitHub token for downloading releases |
+| `since` | auto | Git ref for plan comparison |
+| `args` | `""` | Extra args passed to planner |
+| `working-directory` | `.` | Workspace directory |
+| `token` | `${{ github.token }}` | Token for release download API |
 
-## Outputs
+## Outputs You'll Actually Use
 
-### Planner-native
+### Surface gates
 
-| Output | Description |
-|--------|-------------|
-| `files` | JSON array of changed files |
-| `direct-crates` | Space-separated direct impacted crates |
-| `transitive-crates` | Space-separated transitive impacted crates |
-| `surfaces` | JSON object of surface decisions |
-| `plan-json` | Full compact planner payload |
-| `trace` | Planner trace payload |
+| Output | Use |
+|---|---|
+| `build` | Build jobs |
+| `test` | Test jobs |
+| `bench` | Benchmark jobs |
+| `docs` | Docs jobs |
+| `infra` | Infra/tooling jobs |
+| `custom-surfaces` | Custom policy gates |
 
-### Surface projections
+### Crate targeting
 
-| Output | Description |
-|--------|-------------|
-| `build` | `true` when build surface is active |
-| `test` | `true` when test surface is active |
-| `bench` | `true` when bench surface is active |
-| `docs` | `true` when docs surface is active |
-| `infra` | `true` when infra surface is active |
-| `custom-surfaces` | JSON map of custom surface booleans |
-| `active-surfaces` | JSON array of active surfaces |
-
-### Crate projections
-
-| Output | Description |
-|--------|-------------|
-| `crates` | Space-separated impacted crates (direct + transitive) |
-| `cargo-args` | `-p` flags derived from impacted crates |
+| Output | Use |
+|---|---|
+| `crates` | Space-separated impacted crates |
+| `cargo-args` | `-p crate` flags |
+| `matrix` | `strategy.matrix` JSON |
 | `count` | Impacted crate count |
-| `matrix` | JSON array of impacted crates |
-| `changed-files-count` | Number of changed files |
+| `changed-files-count` | Changed file count |
+
+### Planner-native contract
+
+| Output | Description |
+|---|---|
+| `files` | JSON array of changed file paths |
+| `direct-crates` | Directly impacted crates |
+| `transitive-crates` | Transitively impacted crates |
+| `surfaces` | Full surface decision object |
+| `trace` | Planner trace payload |
+| `plan-json` | Compact full planner payload |
 
 ### Operational metadata
 
 | Output | Description |
-|--------|-------------|
-| `base-ref` | Git ref used for comparison |
+|---|---|
+| `base-ref` | Ref used for comparison |
 | `install-method` | `binary`, `binstall`, `cargo-install`, `cached` |
-| `cargo-rail-version` | Installed cargo-rail version |
+| `cargo-rail-version` | Installed version |
 
-## Planner-first CI patterns
+## Common CI Patterns
 
-### Gate jobs by surface
+### Gate jobs by planner surfaces
 
 ```yaml
 - uses: loadingalias/cargo-rail-action@v1
@@ -145,22 +142,37 @@ jobs:
       - run: cargo test -p "${{ matrix.crate }}"
 ```
 
-## Migration from legacy coarse outputs
+## Runtime + Security Notes
 
-| Legacy | Planner-first replacement |
-|--------|---------------------------|
-| `docs-only` | `docs=true` and `test=false` |
-| `rebuild-all` | `infra=true` |
-| `custom-categories` | `custom-surfaces` |
-| `cargo-args` from `affected` | `cargo-args` projection from `plan` |
-| `command: affected|test` | Removed. Action always runs `plan`. |
+- Install order: cached binary -> release binary download -> `cargo-binstall` -> `cargo install`.
+- Checksum verification defaults to `required` and validates against release `SHA256SUMS`.
+- macOS Intel (`macOS-x64`) is intentionally unsupported in this action.
 
-## Supported runners
+## Compatibility
 
-- Linux: x86_64, ARM64
-- Windows: x86_64, ARM64
-- macOS: ARM64 (Intel not supported)
+- Action target: composite GitHub Action for Rust monorepos
+- Planner contract: `cargo-rail >= 0.9.1`
+- Supported runners: Linux (x86_64/ARM64), Windows (x86_64/ARM64), macOS (ARM64)
 
-## Security
+## Development
 
-When downloading binaries, checksum validation is enabled by default (`checksum: required`) using release `SHA256SUMS`.
+Validation in this repo includes:
+
+```bash
+./tests/test_mapping.sh
+```
+
+CI workflow: [test.yaml](.github/workflows/test.yaml)
+
+## Getting Help
+
+- Action issues: [GitHub Issues](https://github.com/loadingalias/cargo-rail-action/issues)
+- Core tool: [loadingalias/cargo-rail](https://github.com/loadingalias/cargo-rail)
+
+## Contributing
+
+PRs are welcome. If you change mappings or summary behavior, update fixtures and golden files in `tests/`.
+
+## License
+
+Licensed under [MIT](LICENSE).
