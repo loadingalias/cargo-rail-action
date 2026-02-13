@@ -36,6 +36,11 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+  mode:
+    description: "Output mode: minimal (default) or full (compatibility)"
+    required: false
+    default: "minimal"
+
 outputs:
   # Planner-native contract
   files:
@@ -111,6 +116,22 @@ outputs:
     description: "JSON array of active surfaces"
     value: ${{ steps.plan.outputs.active_surfaces }}
 
+  plan-contract-version:
+    description: "Planner contract version used by this run"
+    value: ${{ steps.plan.outputs.plan_contract_version }}
+
+  head-ref:
+    description: "Resolved planner head reference"
+    value: ${{ steps.plan.outputs.head_ref }}
+
+  confidence-profile:
+    description: "Effective planner confidence profile"
+    value: ${{ steps.plan.outputs.confidence_profile }}
+
+  confidence-profile-source:
+    description: "Source of selected confidence profile"
+    value: ${{ steps.plan.outputs.confidence_profile_source }}
+
   # Base Reference (for downstream jobs that need consistent change detection)
   base-ref:
     description: "Git ref used for comparison (set RAIL_SINCE env var for scripts)"
@@ -119,11 +140,11 @@ outputs:
   # Installation Metadata
   install-method:
     description: "How cargo-rail was installed (binary, binstall, cargo-install, cached)"
-    value: ${{ steps.install.outputs.method }}
+    value: ${{ steps.plan.outputs.install_method }}
 
   cargo-rail-version:
     description: "Installed cargo-rail version"
-    value: ${{ steps.install.outputs.version }}
+    value: ${{ steps.plan.outputs.cargo_rail_version }}
 
 runs:
   using: "composite"
@@ -391,16 +412,24 @@ runs:
           echo "::warning::No remote branch found, using HEAD~1"
         fi
 
-    # Run Planner and Map Outputs
+    # Run planner and emit selected output mode
     - name: Run cargo-rail plan
       id: plan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
+        MODE: ${{ inputs.mode }}
         EXTRA_ARGS: ${{ inputs.args }}
         BASE_REF: ${{ steps.base.outputs.ref }}
+        INSTALL_METHOD: ${{ steps.install.outputs.method }}
+        INSTALL_VERSION: ${{ steps.install.outputs.version }}
       run: |
         set -euo pipefail
+
+        if [[ "$MODE" != "minimal" && "$MODE" != "full" ]]; then
+          echo "::error::invalid mode: $MODE (expected minimal|full)"
+          exit 1
+        fi
 
         TMP_OUTPUT="$(mktemp)"
         trap 'rm -f "$TMP_OUTPUT"' EXIT
@@ -420,7 +449,20 @@ runs:
         DIRECT_CRATES="$(read_kv direct_crates)"
         TRANSITIVE_CRATES="$(read_kv transitive_crates)"
         CUSTOM_SURFACES="$(read_kv custom_surfaces)"
+        PLAN_CONTRACT_VERSION="$(read_kv plan_contract_version)"
+        HEAD_REF="$(read_kv head_ref)"
+        CONFIDENCE_PROFILE="$(read_kv confidence_profile)"
+        CONFIDENCE_PROFILE_SOURCE="$(read_kv confidence_profile_source)"
         PLAN_JSON="$(read_kv plan_json)"
+        FILES="$(read_kv files)"
+        CHANGED_FILES_COUNT="$(read_kv changed_files_count)"
+        SURFACES="$(read_kv surfaces)"
+        TRACE="$(read_kv trace)"
+        CRATES="$(read_kv crates)"
+        COUNT="$(read_kv count)"
+        CARGO_ARGS="$(read_kv cargo_args)"
+        MATRIX="$(read_kv matrix)"
+        ACTIVE_SURFACES="$(read_kv active_surfaces)"
 
         if [[ -z "${PLAN_JSON:-}" ]]; then
           echo "::error::planner output missing plan_json"
@@ -433,15 +475,31 @@ runs:
           echo "bench=${BENCH:-false}"
           echo "docs=${DOCS:-false}"
           echo "infra=${INFRA:-false}"
-          echo "direct_crates=${DIRECT_CRATES}"
-          echo "transitive_crates=${TRANSITIVE_CRATES}"
-          echo "custom_surfaces=${CUSTOM_SURFACES:-{}}"
+          echo "matrix=${MATRIX:-[]}"
           echo "plan_json=${PLAN_JSON}"
         } >> "$GITHUB_OUTPUT"
 
-        PYTHON_BIN="python3"
-        command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
-        "$PYTHON_BIN" "${{ github.action_path }}/scripts/map_plan_outputs.py" --plan-json "$PLAN_JSON" --output "$GITHUB_OUTPUT"
+        if [[ "$MODE" == "full" ]]; then
+          {
+            echo "direct_crates=${DIRECT_CRATES}"
+            echo "transitive_crates=${TRANSITIVE_CRATES}"
+            echo "custom_surfaces=${CUSTOM_SURFACES:-{}}"
+            echo "plan_contract_version=${PLAN_CONTRACT_VERSION}"
+            echo "head_ref=${HEAD_REF}"
+            echo "confidence_profile=${CONFIDENCE_PROFILE}"
+            echo "confidence_profile_source=${CONFIDENCE_PROFILE_SOURCE}"
+            echo "files=${FILES:-[]}"
+            echo "changed_files_count=${CHANGED_FILES_COUNT:-0}"
+            echo "surfaces=${SURFACES:-{}}"
+            echo "trace=${TRACE:-[]}"
+            echo "crates=${CRATES}"
+            echo "count=${COUNT:-0}"
+            echo "cargo_args=${CARGO_ARGS}"
+            echo "active_surfaces=${ACTIVE_SURFACES:-[]}"
+            echo "install_method=${INSTALL_METHOD}"
+            echo "cargo_rail_version=${INSTALL_VERSION}"
+          } >> "$GITHUB_OUTPUT"
+        fi
 
     # Generate Job Summary
     - name: Summary

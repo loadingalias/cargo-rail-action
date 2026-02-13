@@ -1,23 +1,16 @@
 # cargo-rail-action
 
-> Planner-first GitHub Action for Rust monorepos, built as a thin transport over `cargo rail plan`.
+> Thin GitHub Action transport for `cargo rail plan -f github`.
 
-[![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## What It Is
+## What It Does
 
-This action runs:
+- Runs `cargo rail plan ... -f github`.
+- Publishes planner outputs for job gating.
+- Keeps CI behavior aligned with local `plan` + `run`.
 
-```bash
-cargo rail plan ... -f github
-```
-
-Then publishes planner-native outputs plus deterministic convenience projections (crate matrix, cargo args, active surfaces, counts).
-
-- No separate action-side planning policy.
-- Same planning contract for local and CI usage.
-- Minimum supported planner contract: `cargo-rail >= 0.10.0`.
+Minimum planner contract: `cargo-rail >= 0.9.1`.
 
 ## Quick Start
 
@@ -38,11 +31,11 @@ jobs:
 
       - name: Run targeted tests
         if: steps.rail.outputs.test == 'true'
-        run: cargo rail test --since "${{ steps.rail.outputs.base-ref }}"
+        run: cargo rail run --since "${{ steps.rail.outputs.base-ref }}" --profile ci
 
       - name: Run docs pipeline
         if: steps.rail.outputs.docs == 'true'
-        run: cargo doc --workspace --no-deps
+        run: cargo rail run --since "${{ steps.rail.outputs.base-ref }}" --surface docs
 ```
 
 ## Inputs
@@ -50,128 +43,55 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `version` | `latest` | `cargo-rail` version to install |
-| `checksum` | `required` | Binary checksum mode: `required`, `if-available`, `off` |
-| `since` | auto | Git ref for plan comparison |
-| `args` | `""` | Extra args passed to planner |
+| `checksum` | `required` | `required`, `if-available`, or `off` |
+| `since` | auto | Git ref for planner comparison |
+| `args` | `""` | Extra planner args |
 | `working-directory` | `.` | Workspace directory |
 | `token` | `${{ github.token }}` | Token for release download API |
+| `mode` | `minimal` | `minimal` (recommended) or `full` |
 
-## Outputs You'll Actually Use
+## Outputs
 
-### Surface gates
-
-| Output | Use |
-|---|---|
-| `build` | Build jobs |
-| `test` | Test jobs |
-| `bench` | Benchmark jobs |
-| `docs` | Docs jobs |
-| `infra` | Infra/tooling jobs |
-| `custom-surfaces` | Custom policy gates |
-
-### Crate targeting
+### Minimal mode (default)
 
 | Output | Use |
 |---|---|
-| `crates` | Space-separated impacted crates |
-| `cargo-args` | `-p crate` flags |
+| `build` | Build gates |
+| `test` | Test gates |
+| `bench` | Benchmark gates |
+| `docs` | Docs gates |
+| `infra` | Infra/tooling gates |
 | `matrix` | `strategy.matrix` JSON |
-| `count` | Impacted crate count |
-| `changed-files-count` | Changed file count |
+| `base-ref` | Baseline for downstream `run` calls |
+| `plan-json` | Full deterministic planner output |
 
-### Planner-native contract
+### Full mode (`mode: full`)
 
-| Output | Description |
-|---|---|
-| `files` | JSON array of changed file paths |
-| `direct-crates` | Directly impacted crates |
-| `transitive-crates` | Transitively impacted crates |
-| `surfaces` | Full surface decision object |
-| `trace` | Planner trace payload |
-| `plan-json` | Compact full planner payload |
+Includes all minimal outputs plus compatibility fields (`count`, `crates`, `files`, `surfaces`, `trace`, install metadata).
 
-### Operational metadata
+## Security and Runtime
 
-| Output | Description |
-|---|---|
-| `base-ref` | Ref used for comparison |
-| `install-method` | `binary`, `binstall`, `cargo-install`, `cached` |
-| `cargo-rail-version` | Installed version |
-
-## Common CI Patterns
-
-### Gate jobs by planner surfaces
-
-```yaml
-- uses: loadingalias/cargo-rail-action@v1
-  id: rail
-
-- name: Build
-  if: steps.rail.outputs.build == 'true'
-  run: cargo build --workspace
-
-- name: Bench
-  if: steps.rail.outputs.bench == 'true'
-  run: cargo bench --workspace
-```
-
-### Matrix over impacted crates
-
-```yaml
-jobs:
-  detect:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.rail.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: loadingalias/cargo-rail-action@v1
-        id: rail
-
-  test:
-    needs: detect
-    strategy:
-      fail-fast: false
-      matrix:
-        crate: ${{ fromJson(needs.detect.outputs.matrix) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: cargo test -p "${{ matrix.crate }}"
-```
-
-## Runtime + Security Notes
-
-- Install order: cached binary -> release binary download -> `cargo-binstall` -> `cargo install`.
-- Checksum verification defaults to `required` and validates against release `SHA256SUMS`.
+- Install order: cached binary -> release binary -> `cargo-binstall` -> `cargo install`.
+- Checksum verification defaults to `required` against release `SHA256SUMS`.
 - macOS Intel (`macOS-x64`) is intentionally unsupported in this action.
 
-## Compatibility
+## Proven On Large Repos
 
-- Action target: composite GitHub Action for Rust monorepos
-- Planner contract: `cargo-rail >= 0.9.1`
-- Supported runners: Linux (x86_64/ARM64), Windows (x86_64/ARM64), macOS (ARM64)
+Action + planner flow validated on:
 
-## Development
+- [tokio-rs/tokio](https://github.com/tokio-rs/tokio)
+- [helix-editor/helix](https://github.com/helix-editor/helix)
+- [meilisearch/meilisearch](https://github.com/meilisearch/meilisearch)
 
-Validation in this repo includes:
+Reproducible command matrix and examples live in `cargo-rail`:
 
-```bash
-./tests/test_mapping.sh
-```
-
-CI workflow: [test.yaml](.github/workflows/test.yaml)
+- https://github.com/loadingalias/cargo-rail/blob/main/docs/large-repo-validation.md
+- https://github.com/loadingalias/cargo-rail/tree/main/examples/change_detection
 
 ## Getting Help
 
 - Action issues: [GitHub Issues](https://github.com/loadingalias/cargo-rail-action/issues)
 - Core tool: [loadingalias/cargo-rail](https://github.com/loadingalias/cargo-rail)
-
-## Contributing
-
-PRs are welcome. If you change mappings or summary behavior, update fixtures and golden files in `tests/`.
 
 ## License
 
