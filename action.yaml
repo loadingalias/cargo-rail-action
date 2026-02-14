@@ -451,17 +451,20 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
         if [[ "$MODE" == "full" ]]; then
+          # Set defaults for JSON object fields (can't use :-{} as bash misparses trailing })
+          : "${CUSTOM_SURFACES:="{}"}"
+          : "${SURFACES:="{}"}"
           {
             echo "direct_crates=${DIRECT_CRATES}"
             echo "transitive_crates=${TRANSITIVE_CRATES}"
-            echo "custom_surfaces=${CUSTOM_SURFACES:-{}}"
+            echo "custom_surfaces=${CUSTOM_SURFACES}"
             echo "plan_contract_version=${PLAN_CONTRACT_VERSION}"
             echo "head_ref=${HEAD_REF}"
             echo "confidence_profile=${CONFIDENCE_PROFILE}"
             echo "confidence_profile_source=${CONFIDENCE_PROFILE_SOURCE}"
             echo "files=${FILES:-[]}"
             echo "changed_files_count=${CHANGED_FILES_COUNT:-0}"
-            echo "surfaces=${SURFACES:-{}}"
+            echo "surfaces=${SURFACES}"
             echo "trace=${TRACE:-[]}"
             echo "crates=${CRATES}"
             echo "count=${COUNT:-0}"
