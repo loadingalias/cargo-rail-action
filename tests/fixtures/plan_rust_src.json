@@ -1,0 +1,40 @@
+{
+  "files": [
+    {
+      "path": "crates/lib-a/src/lib.rs",
+      "kind": "rust",
+      "sub_kind": "src",
+      "owners": ["lib-a"],
+      "owner_scope": "crate"
+    }
+  ],
+  "impact": {
+    "direct_crates": ["lib-a"],
+    "transitive_crates": ["lib-b"]
+  },
+  "inputs": {
+    "refs": {
+      "since": "origin/main",
+      "from": null,
+      "to": null,
+      "merge_base": false,
+      "resolved_base": "origin/main",
+      "resolved_head": "WORKTREE"
+    },
+    "workspace_root": "<WORKSPACE_ROOT>",
+    "config_fingerprint": "<CONFIG_FP>",
+    "toolchain_fingerprint": "<TOOLCHAIN_FP>"
+  },
+  "surfaces": {
+    "bench": {"enabled": false, "reasons": []},
+    "build": {"enabled": true, "reasons": [2, 3]},
+    "docs": {"enabled": false, "reasons": []},
+    "infra": {"enabled": false, "reasons": []},
+    "test": {"enabled": true, "reasons": [2, 3]}
+  },
+  "trace": [
+    {"id": 1, "code": "FILE_OWNS_CRATE_DIRECT", "file": "crates/lib-a/src/lib.rs", "crate": "lib-a"},
+    {"id": 2, "code": "FILE_KIND_RUST_SRC", "file": "crates/lib-a/src/lib.rs", "surface": "build"},
+    {"id": 3, "code": "TRANSITIVE_DEPENDS_ON_DIRECT", "crate": "lib-b", "depends_on": "lib-a", "surface": "build"}
+  ]
+}
