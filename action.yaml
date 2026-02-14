@@ -170,19 +170,19 @@ runs:
           fi
           local py_bin="python3"
           command -v python3 >/dev/null 2>&1 || py_bin="python"
-          "$py_bin" - "$installed" "$required" << 'PY'
-          import sys
-          def parse(v: str):
-            try:
-              return tuple(int(x) for x in v.split("."))
-            except Exception:
-              return (0, 0, 0)
-          installed = parse(sys.argv[1])
-          required = parse(sys.argv[2])
-          if installed < required:
-            print(f"::error::cargo-rail {sys.argv[1]} is below required minimum {sys.argv[2]} for planner contract")
-            sys.exit(1)
-          PY
+          "$py_bin" -c "
+import sys
+def parse(v):
+    try:
+        return tuple(int(x) for x in v.split('.'))
+    except:
+        return (0, 0, 0)
+installed = parse('$installed')
+required = parse('$required')
+if installed < required:
+    print(f'::error::cargo-rail $installed is below required minimum $required for planner contract')
+    sys.exit(1)
+"
         }
 
         # Check if already installed and meets version requirement
