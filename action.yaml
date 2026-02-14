@@ -159,38 +159,12 @@ runs:
         CHECKSUM_MODE: ${{ inputs.checksum }}
       run: |
         set -euo pipefail
-        MIN_CORE_VERSION="0.9.1"
-
-        require_min_version() {
-          local installed="$1"
-          local required="$2"
-          if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
-            echo "::warning::Python not found; skipping cargo-rail minimum version check"
-            return 0
-          fi
-          local py_bin="python3"
-          command -v python3 >/dev/null 2>&1 || py_bin="python"
-          "$py_bin" -c "
-import sys
-def parse(v):
-    try:
-        return tuple(int(x) for x in v.split('.'))
-    except:
-        return (0, 0, 0)
-installed = parse('$installed')
-required = parse('$required')
-if installed < required:
-    print(f'::error::cargo-rail $installed is below required minimum $required for planner contract')
-    sys.exit(1)
-"
-        }
 
         # Check if already installed and meets version requirement
         if command -v cargo-rail &>/dev/null; then
           INSTALLED_VERSION=$(cargo-rail rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
           if [[ "$REQUESTED_VERSION" == "latest" || "$INSTALLED_VERSION" == "$REQUESTED_VERSION" ]]; then
             echo "cargo-rail $INSTALLED_VERSION already installed"
-            require_min_version "$INSTALLED_VERSION" "$MIN_CORE_VERSION"
             echo "method=cached" >> "$GITHUB_OUTPUT"
             echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
             exit 0
@@ -342,7 +316,6 @@ if installed < required:
             fi
 
             INSTALLED_VERSION=$("$INSTALL_DIR/cargo-rail" rail --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-            require_min_version "$INSTALLED_VERSION" "$MIN_CORE_VERSION"
             echo "Installed cargo-rail v$INSTALLED_VERSION from binary"
             echo "method=binary" >> "$GITHUB_OUTPUT"
             echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
@@ -360,7 +333,6 @@ if installed < required:
 
           if cargo binstall cargo-rail $BINSTALL_ARGS 2>/dev/null; then
             INSTALLED_VERSION=$(cargo-rail rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-            require_min_version "$INSTALLED_VERSION" "$MIN_CORE_VERSION"
             echo "Installed cargo-rail v$INSTALLED_VERSION via cargo-binstall"
             echo "method=binstall" >> "$GITHUB_OUTPUT"
             echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
@@ -376,7 +348,6 @@ if installed < required:
         cargo install cargo-rail $INSTALL_ARGS
 
         INSTALLED_VERSION=$(cargo-rail rail --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        require_min_version "$INSTALLED_VERSION" "$MIN_CORE_VERSION"
         echo "Installed cargo-rail v$INSTALLED_VERSION via cargo install"
         echo "method=cargo-install" >> "$GITHUB_OUTPUT"
         echo "version=$INSTALLED_VERSION" >> "$GITHUB_OUTPUT"
