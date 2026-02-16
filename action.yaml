@@ -383,6 +383,29 @@ runs:
           echo "::warning::No remote branch found, using HEAD~1"
         fi
 
+    # Validate git state for reliable change detection
+    - name: Validate git state
+      id: validate
+      shell: bash
+      env:
+        BASE_REF: ${{ steps.base.outputs.ref }}
+      run: |
+        set -euo pipefail
+
+        # Check for shallow clone (may cause inaccurate change detection)
+        if [[ -f .git/shallow ]]; then
+          echo "::warning::Shallow clone detected. For accurate change detection, use 'fetch-depth: 0' in actions/checkout."
+          echo "shallow=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "shallow=false" >> "$GITHUB_OUTPUT"
+        fi
+
+        # Verify merge-base is resolvable
+        if ! git merge-base HEAD "$BASE_REF" &>/dev/null; then
+          echo "::error::Cannot resolve merge-base between HEAD and $BASE_REF. Ensure 'fetch-depth: 0' in actions/checkout."
+          exit 1
+        fi
+
     # Run planner and emit selected output mode
     - name: Run cargo-rail plan
       id: plan
@@ -449,6 +472,22 @@ runs:
           echo "matrix=${MATRIX:-[]}"
           echo "plan_json=${PLAN_JSON}"
         } >> "$GITHUB_OUTPUT"
+
+        # Emit individual outputs for each custom surface (P0: native custom surface outputs)
+        # This eliminates the need for jq extraction in downstream workflows
+        if [[ -n "${CUSTOM_SURFACES:-}" && "$CUSTOM_SURFACES" != "{}" ]]; then
+          while IFS='=' read -r key value; do
+            # Sanitize key: custom:foo -> custom_foo (GitHub output names can't have colons)
+            sanitized_key="${key//:/._}"
+            echo "custom_${sanitized_key#custom.}=${value}" >> "$GITHUB_OUTPUT"
+          done < <(echo "$CUSTOM_SURFACES" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for k, v in data.items():
+  # Output format: key=value (one per line)
+  print(f"{k}={str(v).lower()}")
+' 2>/dev/null || true)
+        fi
 
         if [[ "$MODE" == "full" ]]; then
           # Set defaults for JSON object fields (can't use :-{} as bash misparses trailing })

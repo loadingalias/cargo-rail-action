@@ -11,8 +11,15 @@
 | **Active surfaces** | docs |
 
 
-### Why Surfaces Are Active
-- `docs`: 1 reason(s)
+### Surface Status
+
+| Surface | Status | Reason |
+|---------|--------|--------|
+| `build` | **off** | No triggering changes |
+| `test` | **off** | No triggering changes |
+| `bench` | **off** | No triggering changes |
+| `docs` | **on** | Documentation changed |
+| `infra` | **off** | No triggering changes |
 
 <details><summary>Trace details (file -> crate -> surface)</summary>
 

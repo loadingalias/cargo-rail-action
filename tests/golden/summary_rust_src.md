@@ -13,9 +13,15 @@
 **Direct crates:** `lib-a`
 **Transitive crates:** `lib-b`
 
-### Why Surfaces Are Active
-- `build`: 2 reason(s)
-- `test`: 2 reason(s)
+### Surface Status
+
+| Surface | Status | Reason |
+|---------|--------|--------|
+| `build` | **on** | Rust source file changed; Transitive dependency of changed crate |
+| `test` | **on** | Rust source file changed; Transitive dependency of changed crate |
+| `bench` | **off** | No triggering changes |
+| `docs` | **off** | No triggering changes |
+| `infra` | **off** | No triggering changes |
 
 <details><summary>Trace details (file -> crate -> surface)</summary>
 

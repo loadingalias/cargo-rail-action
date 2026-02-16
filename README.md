@@ -172,23 +172,25 @@ macOS Intel (`x86_64-apple-darwin`) binaries are **not** published in releases.
 
 Action + planner flow validated on production repos with real merge history:
 
-| Repository | Crates | Validation Scenarios | Results |
-|---|---|---|---|
-| [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | 10 | 5 merge commits | 60% avg surface reduction, docs-only detection working |
-| [helix-editor/helix](https://github.com/helix-editor/helix) | 12 | 5 merge commits | 55% avg surface reduction, infra change detection accurate |
-| [meilisearch/meilisearch](https://github.com/meilisearch/meilisearch) | 19 | 5 merge commits | 67% avg surface reduction, isolated infra-only changes detected |
+| Repository | Crates | Fork |
+|---|---|---|
+| [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | 10 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/main/tokio) |
+| [helix-editor/helix](https://github.com/helix-editor/helix) | 14 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/main/helix) |
+| [meilisearch/meilisearch](https://github.com/meilisearch/meilisearch) | 23 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/main/meilisearch) |
+| [helixdb/helix-db](https://github.com/helixdb/helix-db) | 6 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/main/helix-db) |
 
-**Aggregate results (15 merge scenarios):**
-- **55% execution reduction** — fewer CI surfaces run per merge
-- **64% weighted reduction** — compute units saved (accounts for surface cost: bench > test > build > docs)
-- **710ms avg plan time** — deterministic plan generation (excludes git operations)
-- **Quality audit:** 2 potential false-negatives, 1 potential false-positive (all flagged for review)
+**Validation forks**: [cargo-rail-testing](https://github.com/loadingalias/cargo-rail-testing) — full configs, integration guides, and reproducible artifacts.
 
 **Real-world benefits:**
 - Docs-only PRs skip build/test entirely (run only docs checks)
 - Infrastructure changes (CI config, scripts) trigger full rebuild (no false-negatives)
 - Isolated crate changes run targeted tests (not entire workspace)
 - Plan matches local behavior (`cargo rail plan --merge-base` previews CI gates)
+
+**Each fork includes:**
+- `.config/rail.toml` — production-ready config with custom surfaces
+- `docs/cargo-rail-integration-guide.md` — step-by-step CI integration with workflow examples
+- `docs/CHANGE_DETECTION_METRICS.md` — measured impact analysis on recent commits
 
 Reproducible command matrix and examples live in `cargo-rail`:
 

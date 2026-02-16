@@ -14,6 +14,30 @@ INSTALL_MAP = {
   "cached": "Already installed",
 }
 
+# Map reason codes to human-readable descriptions
+REASON_DESCRIPTIONS = {
+  "FILE_KIND_RUST_SRC": "Rust source file changed",
+  "FILE_KIND_RUST_TEST": "Rust test file changed",
+  "FILE_KIND_RUST_BENCH": "Rust benchmark file changed",
+  "FILE_KIND_TOML_MANIFEST": "Cargo.toml changed",
+  "FILE_KIND_TOML_WORKSPACE": "Workspace Cargo.toml changed",
+  "FILE_KIND_TOML_TOOLING": "Tooling config changed",
+  "FILE_KIND_CI": "CI/workflow file changed",
+  "FILE_KIND_SCRIPT": "Script file changed",
+  "FILE_KIND_DOCS": "Documentation changed",
+  "FILE_KIND_CUSTOM": "Custom pattern matched",
+  "FILE_KIND_UNCLASSIFIED": "Unclassified file changed",
+  "FILE_OWNS_CRATE_DIRECT": "File directly owns crate",
+  "TRANSITIVE_DEPENDS_ON_DIRECT": "Transitive dependency of changed crate",
+  "OWNER_UNCERTAIN_FALLBACK": "Conservative fallback for uncertain ownership",
+  "CONFIDENCE_PROFILE_STRICT": "Strict confidence profile active",
+  "CONFIDENCE_PROFILE_BALANCED": "Balanced confidence profile active",
+  "CONFIDENCE_PROFILE_FAST": "Fast confidence profile active",
+  "CONFIDENCE_STRICT_OWNER_EXPANSION": "Strict mode expands owned crates",
+  "CONFIDENCE_FAST_SKIP_TRANSITIVE": "Fast mode skips transitive expansion",
+  "BOT_PR_CONFIDENCE_OVERRIDE": "Bot PR confidence override applied",
+}
+
 
 def parse_args() -> argparse.Namespace:
   p = argparse.ArgumentParser()
@@ -37,6 +61,35 @@ def load_plan(args: argparse.Namespace) -> dict:
   return {"files": [], "impact": {"direct_crates": [], "transitive_crates": []}, "surfaces": {}, "trace": []}
 
 
+def build_reason_lookup(trace: list) -> dict[int, dict]:
+  """Build a lookup from reason ID to trace entry."""
+  return {item.get("id"): item for item in trace if item.get("id") is not None}
+
+
+def summarize_surface_reasons(reasons: list[int], lookup: dict[int, dict]) -> str:
+  """Generate a concise summary of why a surface is active."""
+  if not reasons:
+    return "No source changes"
+
+  # Count unique reason codes
+  code_counts: dict[str, int] = {}
+  for rid in reasons:
+    entry = lookup.get(rid, {})
+    code = entry.get("code", "UNKNOWN")
+    code_counts[code] = code_counts.get(code, 0) + 1
+
+  # Generate summary
+  parts = []
+  for code, count in sorted(code_counts.items(), key=lambda x: -x[1]):
+    desc = REASON_DESCRIPTIONS.get(code, code)
+    if count > 1:
+      parts.append(f"{desc} ({count}x)")
+    else:
+      parts.append(desc)
+
+  return "; ".join(parts[:3])  # Limit to top 3 reasons
+
+
 def render(args: argparse.Namespace, plan: dict) -> str:
   files = [f.get("path", "") for f in plan.get("files", []) if f.get("path")]
   impact = plan.get("impact", {})
@@ -44,6 +97,13 @@ def render(args: argparse.Namespace, plan: dict) -> str:
   transitive = list(impact.get("transitive_crates", []))
   surfaces = plan.get("surfaces", {})
   trace = plan.get("trace", [])
+
+  # Build reason lookup
+  reason_lookup = build_reason_lookup(trace)
+
+  # Separate built-in and custom surfaces
+  builtin_surfaces = ["build", "test", "bench", "docs", "infra"]
+  custom_surfaces = {k: v for k, v in surfaces.items() if k.startswith("custom:")}
 
   active_surfaces = sorted(
     name
@@ -70,12 +130,35 @@ def render(args: argparse.Namespace, plan: dict) -> str:
   if transitive:
     lines.append(f"**Transitive crates:** `{ ' '.join(transitive) }`")
 
-  if active_surfaces:
+  # Enhanced surface status table
+  lines.append("")
+  lines.append("### Surface Status")
+  lines.append("")
+  lines.append("| Surface | Status | Reason |")
+  lines.append("|---------|--------|--------|")
+
+  for surface_name in builtin_surfaces:
+    surface_data = surfaces.get(surface_name, {})
+    enabled = surface_data.get("enabled", False)
+    reasons = surface_data.get("reasons", [])
+    status = "on" if enabled else "off"
+    reason_summary = summarize_surface_reasons(reasons, reason_lookup) if enabled else "No triggering changes"
+    lines.append(f"| `{surface_name}` | **{status}** | {reason_summary} |")
+
+  # Add custom surfaces if present
+  if custom_surfaces:
     lines.append("")
-    lines.append("### Why Surfaces Are Active")
-    for surface in active_surfaces:
-      reasons = surfaces.get(surface, {}).get("reasons", [])
-      lines.append(f"- `{surface}`: {len(reasons)} reason(s)")
+    lines.append("**Custom surfaces:**")
+    lines.append("")
+    lines.append("| Surface | Status | Reason |")
+    lines.append("|---------|--------|--------|")
+    for surface_name in sorted(custom_surfaces.keys()):
+      surface_data = custom_surfaces[surface_name]
+      enabled = surface_data.get("enabled", False)
+      reasons = surface_data.get("reasons", [])
+      status = "on" if enabled else "off"
+      reason_summary = summarize_surface_reasons(reasons, reason_lookup) if enabled else "No matching patterns"
+      lines.append(f"| `{surface_name}` | **{status}** | {reason_summary} |")
 
   lines.append("")
   lines.append("<details><summary>Trace details (file -> crate -> surface)</summary>")
