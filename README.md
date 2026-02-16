@@ -26,7 +26,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: loadingalias/cargo-rail-action@v1
+      - uses: loadingalias/cargo-rail-action@v3
         id: rail
 
       - name: Run targeted tests
@@ -54,17 +54,17 @@ jobs:
 
 ```yaml
 # Explain plan decisions in job logs
-- uses: loadingalias/cargo-rail-action@v1
+- uses: loadingalias/cargo-rail-action@v3
   with:
     args: '--explain'
 
 # Custom format (default is github for this action)
-- uses: loadingalias/cargo-rail-action@v1
+- uses: loadingalias/cargo-rail-action@v3
   with:
     args: '-f json'
 
 # Use different comparison ref
-- uses: loadingalias/cargo-rail-action@v1
+- uses: loadingalias/cargo-rail-action@v3
   with:
     since: 'origin/develop'
 ```
