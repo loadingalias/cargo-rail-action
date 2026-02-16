@@ -480,13 +480,7 @@ runs:
             # Sanitize key: custom:foo -> custom_foo (GitHub output names can't have colons)
             sanitized_key="${key//:/._}"
             echo "custom_${sanitized_key#custom.}=${value}" >> "$GITHUB_OUTPUT"
-          done < <(echo "$CUSTOM_SURFACES" | python3 -c '
-import json, sys
-data = json.load(sys.stdin)
-for k, v in data.items():
-  # Output format: key=value (one per line)
-  print(f"{k}={str(v).lower()}")
-' 2>/dev/null || true)
+          done < <(echo "$CUSTOM_SURFACES" | python3 -c 'import json,sys;d=json.load(sys.stdin);[print(f"{k}={str(v).lower()}") for k,v in d.items()]' 2>/dev/null || true)
         fi
 
         if [[ "$MODE" == "full" ]]; then
