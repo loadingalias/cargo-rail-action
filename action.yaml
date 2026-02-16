@@ -383,8 +383,8 @@ runs:
           echo "::warning::No remote branch found, using HEAD~1"
         fi
 
-    # Validate git state for reliable change detection
-    - name: Validate git state
+    # Ensure git history is available for change detection
+    - name: Ensure git history
       id: validate
       shell: bash
       env:
@@ -392,32 +392,43 @@ runs:
       run: |
         set -euo pipefail
 
-        # Check for shallow clone
+        # Track if we're in a shallow clone
         if [[ -f .git/shallow ]]; then
-          echo "::warning::Shallow clone detected. For accurate change detection, use 'fetch-depth: 0' in actions/checkout."
           echo "shallow=true" >> "$GITHUB_OUTPUT"
         else
           echo "shallow=false" >> "$GITHUB_OUTPUT"
         fi
 
-        # Validate base ref exists and is resolvable
-        # Relative refs (HEAD~N) just need the commit to exist
-        # Branch refs need merge-base to find common ancestor
+        # Check if base ref is resolvable; if not, fetch needed history
         if [[ "$BASE_REF" =~ ^HEAD~[0-9]+$ ]]; then
-          # Relative ref: verify commit exists
+          # Relative ref: check if commit exists
           if ! git rev-parse "$BASE_REF" &>/dev/null; then
             depth="${BASE_REF#HEAD~}"
-            min_depth=$((depth + 1))
-            echo "::error::Cannot resolve $BASE_REF. Shallow clone lacks history. Use 'fetch-depth: $min_depth' or 'fetch-depth: 0' in actions/checkout."
+            fetch_depth=$((depth + 1))
+            echo "Fetching $fetch_depth commits for $BASE_REF..."
+            git fetch --depth="$fetch_depth" origin HEAD
+          fi
+        else
+          # Branch ref: check if merge-base is resolvable
+          if ! git merge-base HEAD "$BASE_REF" &>/dev/null; then
+            echo "Fetching history for merge-base with $BASE_REF..."
+            git fetch --unshallow origin || git fetch origin "$BASE_REF"
+          fi
+        fi
+
+        # Final verification
+        if [[ "$BASE_REF" =~ ^HEAD~[0-9]+$ ]]; then
+          if ! git rev-parse "$BASE_REF" &>/dev/null; then
+            echo "::error::Cannot resolve $BASE_REF after fetch. Check repository state."
             exit 1
           fi
         else
-          # Branch ref: verify merge-base is resolvable
           if ! git merge-base HEAD "$BASE_REF" &>/dev/null; then
-            echo "::error::Cannot resolve merge-base between HEAD and $BASE_REF. Ensure 'fetch-depth: 0' in actions/checkout."
+            echo "::error::Cannot resolve merge-base with $BASE_REF after fetch. Check repository state."
             exit 1
           fi
         fi
+        echo "Base ref $BASE_REF verified"
 
     # Run planner and emit selected output mode
     - name: Run cargo-rail plan
