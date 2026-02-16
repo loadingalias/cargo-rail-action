@@ -194,7 +194,7 @@ Action + planner flow validated on production repos with real merge history:
 
 Reproducible command matrix and examples live in `cargo-rail`:
 
-- https://github.com/loadingalias/cargo-rail/blob/main/docs/large-repo-validation.md
+- https://github.com/loadingalias/cargo-rail/blob/main/examples/validation-protocol.md
 - https://github.com/loadingalias/cargo-rail/tree/main/examples/change_detection
 
 ## Getting Help
