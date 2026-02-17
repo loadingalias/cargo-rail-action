@@ -42,7 +42,7 @@ jobs:
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `latest` | `cargo-rail` version to install |
+| `version` | `latest` | `cargo-rail` version to install (`latest` resolves to the newest GitHub release tag each run) |
 | `checksum` | `required` | `required`, `if-available`, or `off` |
 | `since` | auto | Git ref for planner comparison |
 | `args` | `""` | Extra planner args (see below) |
@@ -135,7 +135,7 @@ The action tries installation methods in this order:
 
 1. **Cached binary** (fastest) — uses GitHub Actions cache (`actions/cache`)
    - Why: Subsequent runs on same runner are instant (no download)
-   - Cache key includes version + platform, auto-invalidates on version change
+   - Cache reuse requires exact version match; when `version: latest`, the action resolves latest first, then compares
 
 2. **Release binary** (fast) — downloads from GitHub Releases
    - Why: Pre-built binaries for all supported platforms, verified against `SHA256SUMS`
