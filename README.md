@@ -174,10 +174,10 @@ Action + planner flow validated on production repos with real merge history:
 
 | Repository | Crates | Fork |
 |---|---|---|
-| [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | 10 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/main/tokio) |
-| [helix-editor/helix](https://github.com/helix-editor/helix) | 14 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/main/helix) |
-| [meilisearch/meilisearch](https://github.com/meilisearch/meilisearch) | 23 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/main/meilisearch) |
-| [helixdb/helix-db](https://github.com/helixdb/helix-db) | 6 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/main/helix-db) |
+| [tokio-rs/tokio](https://github.com/tokio-rs/tokio) | 10 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/change-detection/tokio) |
+| [helix-editor/helix](https://github.com/helix-editor/helix) | 14 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/change-detection/helix) |
+| [meilisearch/meilisearch](https://github.com/meilisearch/meilisearch) | 23 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/change-detection/meilisearch) |
+| [helixdb/helix-db](https://github.com/helixdb/helix-db) | 6 | [Config + Guide](https://github.com/loadingalias/cargo-rail-testing/tree/change-detection/helix-db) |
 
 **Validation forks**: [cargo-rail-testing](https://github.com/loadingalias/cargo-rail-testing) — full configs, integration guides, and reproducible artifacts.
 
@@ -186,6 +186,16 @@ Action + planner flow validated on production repos with real merge history:
 - Infrastructure changes (CI config, scripts) trigger full rebuild (no false-negatives)
 - Isolated crate changes run targeted tests (not entire workspace)
 - Plan matches local behavior (`cargo rail plan --merge-base` previews CI gates)
+
+**Measured impact (last 20 commits per repo):**
+
+| Repository | Could Skip Build | Could Skip Tests | Targeted (Not Full Run) |
+|---|---:|---:|---:|
+| tokio | 10% | 0% | 95% |
+| meilisearch | 35% | 35% | 60% |
+| helix | 30% | 30% | 40% |
+| helix-db | 10% | 10% | 75% |
+| **Aggregate (80 commits)** | **21%** | **19%** | **68%** |
 
 **Each fork includes:**
 - `.config/rail.toml` — production-ready config with custom surfaces
