@@ -1,6 +1,6 @@
 # cargo-rail-action
 
-> Thin GitHub Action transport for `cargo rail plan -f github`.
+> GitHub Action wrapper for `cargo rail plan -f github`.
 
 [![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) 
 
@@ -8,7 +8,7 @@
 
 - Runs `cargo rail plan ... -f github`.
 - Publishes planner outputs for job gating.
-- Keeps CI behavior aligned with local `plan` + `run`.
+- Keeps CI behavior aligned with local `plan` + `run` workflows.
 
 Minimum planner contract: `cargo-rail >= 0.10.0`.
 
@@ -28,6 +28,8 @@ jobs:
 
       - uses: loadingalias/cargo-rail-action@v3
         id: rail
+        with:
+          version: "0.10.8"
 
       - name: Run targeted tests
         if: steps.rail.outputs.test == 'true'
@@ -38,11 +40,14 @@ jobs:
         run: cargo rail run --since "${{ steps.rail.outputs.base-ref }}" --surface docs
 ```
 
+Use the stable major tag `@v3`, or pin a commit SHA for maximum reproducibility. Pin `version` for deterministic
+`cargo-rail` installs.
+
 ## Inputs
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `latest` | `cargo-rail` version to install (`latest` resolves to the newest GitHub release tag each run) |
+| `version` | `0.10.8` | `cargo-rail` version to install (use `latest` only if you intentionally want floating upgrades) |
 | `checksum` | `required` | `required`, `if-available`, or `off` |
 | `since` | auto | Git ref for planner comparison |
 | `args` | `""` | Extra planner args (see below) |
@@ -71,9 +76,9 @@ jobs:
 
 ## Outputs
 
-### What are modes and gates?
+### Modes and gates
 
-**Gates** are boolean outputs (`true`/`false`) used for job conditional execution. They answer: "should this CI surface run?"
+**Gates** are boolean outputs (`true`/`false`) used in job conditions. They answer: "should this CI surface run?"
 
 **How gates work:**
 1. The planner (`cargo rail plan`) analyzes changed files against your `.config/rail.toml` rules
@@ -118,18 +123,17 @@ Includes all minimal outputs plus additional fields for compatibility and debugg
 |---|---|---|
 | `count` | number | Total number of affected crates (for logging/metrics) |
 | `crates` | string | Space-separated list of affected crate names |
-| `files` | string | Newline-separated list of changed files (raw git diff output) |
-| `surfaces` | string | Comma-separated list of enabled surface names (`build,test,docs`) |
+| `files` | JSON | JSON array of changed workspace-relative file paths |
+| `surfaces` | JSON | JSON object of surface decisions (`enabled` + `reasons`) |
 | `trace` | JSON | Detailed trace of plan decisions (why each surface enabled/disabled) |
-| `installed-version` | string | Actual `cargo-rail` version installed (useful when `version: latest`) |
-| `installed-from` | string | Installation source (`cache`, `release`, `binstall`, or `cargo-install`) |
-| `checksum-verified` | `true`/`false` | Whether binary checksum was verified against `SHA256SUMS` |
+| `install-method` | string | Installation source (`cached`, `binary`, `binstall`, `cargo-install`) |
+| `cargo-rail-version` | string | Installed `cargo-rail` version |
 
 **Note:** Most workflows should use `minimal` mode. The `plan-json` output contains all plan data in structured form — use `jq` to extract what you need rather than relying on legacy string outputs.
 
 ## Security and Runtime
 
-### Installation order and rationale
+### Installation order
 
 The action tries installation methods in this order:
 
@@ -151,7 +155,7 @@ The action tries installation methods in this order:
 
 ### Checksum verification
 
-Defaults to `required` — downloads `SHA256SUMS` from release and verifies binary integrity.
+Default is `required`: download `SHA256SUMS` and verify binary integrity.
 
 **Why:** Supply chain security. Detects corrupted downloads and tampering.
 
@@ -211,6 +215,18 @@ Reproducible command matrix and examples live in `cargo-rail`:
 
 - Action issues: [GitHub Issues](https://github.com/loadingalias/cargo-rail-action/issues)
 - Core tool: [loadingalias/cargo-rail](https://github.com/loadingalias/cargo-rail)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
+
+See [SECURITY.md](SECURITY.md).
+
+## Code of Conduct
+
+See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## License
 
