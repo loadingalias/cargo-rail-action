@@ -500,6 +500,13 @@ runs:
           echo "plan_json=${PLAN_JSON}"
         } >> "$GITHUB_OUTPUT"
 
+        # Write plan JSON to a temp file for the Summary step.
+        # Passing it as an env var can exceed Linux's ARG_MAX (~2MB) and
+        # cause E2BIG ("Argument list too long") on large workspaces.
+        PLAN_JSON_FILE="${RUNNER_TEMP}/cargo-rail-plan.json"
+        printf '%s' "$PLAN_JSON" > "$PLAN_JSON_FILE"
+        echo "plan_json_file=${PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
+
         # Emit individual outputs for each custom surface (P0: native custom surface outputs)
         # This eliminates the need for jq extraction in downstream workflows
         if [[ -n "${CUSTOM_SURFACES:-}" && "$CUSTOM_SURFACES" != "{}" ]]; then
@@ -543,13 +550,13 @@ runs:
         INSTALL_METHOD: ${{ steps.install.outputs.method }}
         INSTALL_VERSION: ${{ steps.install.outputs.version }}
         BASE_REF: ${{ steps.base.outputs.ref }}
-        PLAN_JSON: ${{ steps.plan.outputs.plan_json }}
+        PLAN_JSON_FILE: ${{ steps.plan.outputs.plan_json_file }}
       run: |
         set -euo pipefail
         PYTHON_BIN="python3"
         command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
         "$PYTHON_BIN" "${{ github.action_path }}/scripts/render_summary.py" \
-          --plan-json "$PLAN_JSON" \
+          --plan-json-file "$PLAN_JSON_FILE" \
           --install-method "$INSTALL_METHOD" \
           --install-version "$INSTALL_VERSION" \
           --base-ref "$BASE_REF" >> "$GITHUB_STEP_SUMMARY"
