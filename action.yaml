@@ -8,9 +8,9 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.10.12; use 'latest' for floating installs)"
+    description: "cargo-rail version to install (default: 0.11.0; use 'latest' for floating installs)"
     required: false
-    default: "0.10.12"
+    default: "0.11.0"
 
   checksum:
     description: "Checksum verification mode for downloaded binaries: required/if-available/off"

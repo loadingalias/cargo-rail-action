@@ -10,7 +10,7 @@
 - Publishes planner gates and `scope-json` for job gating.
 - Keeps CI behavior aligned with local `plan` + `run` workflows.
 
-Minimum planner contract: `cargo-rail >= 0.10.12`.
+Minimum planner contract: `cargo-rail >= 0.11.0`.
 
 ## Quick Start
 
@@ -29,7 +29,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v3
         id: rail
         with:
-          version: "0.10.12"
+          version: "0.11.0"
 
       - name: Run targeted tests
         if: steps.rail.outputs.test == 'true'
@@ -62,7 +62,7 @@ Use the stable major tag `@v3`, or pin a commit SHA for maximum reproducibility.
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `0.10.12` | `cargo-rail` version to install (use `latest` only if you intentionally want floating upgrades) |
+| `version` | `0.11.0` | `cargo-rail` version to install (use `latest` only if you intentionally want floating upgrades) |
 | `checksum` | `required` | `required`, `if-available`, or `off` |
 | `since` | auto | Git ref for planner comparison |
 | `args` | `""` | Extra planner args except `-f`/`--format`, `--json`, and `-o`/`--output` |
