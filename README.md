@@ -26,7 +26,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: loadingalias/cargo-rail-action@v3
+      - uses: loadingalias/cargo-rail-action@v4
         id: rail
         with:
           version: "0.11.0"
@@ -55,7 +55,7 @@ jobs:
         run: cargo rail run --since "${{ steps.rail.outputs.base-ref }}" --surface docs
 ```
 
-Use the stable major tag `@v3`, or pin a commit SHA for maximum reproducibility. Pin `version` for deterministic
+Use the stable major tag `@v4`, or pin a commit SHA for maximum reproducibility. Pin `version` for deterministic
 `cargo-rail` installs.
 
 ## Inputs
@@ -74,12 +74,12 @@ Use the stable major tag `@v3`, or pin a commit SHA for maximum reproducibility.
 
 ```yaml
 # Explain plan decisions in job logs
-- uses: loadingalias/cargo-rail-action@v3
+- uses: loadingalias/cargo-rail-action@v4
   with:
     args: '--explain'
 
 # Use different comparison ref
-- uses: loadingalias/cargo-rail-action@v3
+- uses: loadingalias/cargo-rail-action@v4
   with:
     since: 'origin/develop'
 ```
