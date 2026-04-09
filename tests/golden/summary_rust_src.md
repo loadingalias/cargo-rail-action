@@ -6,22 +6,13 @@
 | **Install** | Binary download |
 | **Base** | `origin/main` |
 | **Changed files** | 1 |
+| **Scope mode** | `workspace` |
 | **Direct crates** | 1 |
-| **Transitive crates** | 1 |
 | **Active surfaces** | build, test |
 
-**Direct crates:** `lib-a`
-**Transitive crates:** `lib-b`
-
-### Surface Status
-
-| Surface | Status | Reason |
-|---------|--------|--------|
-| `build` | **on** | Rust source file changed; Transitive dependency of changed crate |
-| `test` | **on** | Rust source file changed; Transitive dependency of changed crate |
-| `bench` | **off** | No triggering changes |
-| `docs` | **off** | No triggering changes |
-| `infra` | **off** | No triggering changes |
+**Changed direct crates:** `lib-a`
+**Execution scope:** full workspace
+**Top reasons:** Rust source file changed; Transitive dependency of changed crate
 
 <details><summary>Trace details (file -> crate -> surface)</summary>
 

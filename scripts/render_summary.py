@@ -90,26 +90,38 @@ def summarize_surface_reasons(reasons: list[int], lookup: dict[int, dict]) -> st
   return "; ".join(parts[:3])  # Limit to top 3 reasons
 
 
+def collect_active_reason_ids(surfaces: dict) -> list[int]:
+  """Collect unique reason ids from enabled surfaces only."""
+  reason_ids: set[int] = set()
+  for value in surfaces.values():
+    if isinstance(value, dict) and value.get("enabled") is True:
+      for reason_id in value.get("reasons", []):
+        if isinstance(reason_id, int):
+          reason_ids.add(reason_id)
+  return sorted(reason_ids)
+
+
 def render(args: argparse.Namespace, plan: dict) -> str:
   files = [f.get("path", "") for f in plan.get("files", []) if f.get("path")]
   impact = plan.get("impact", {})
   direct = list(impact.get("direct_crates", []))
-  transitive = list(impact.get("transitive_crates", []))
   surfaces = plan.get("surfaces", {})
+  scope = plan.get("scope", {})
   trace = plan.get("trace", [])
 
   # Build reason lookup
   reason_lookup = build_reason_lookup(trace)
+  scope_surfaces = scope.get("surfaces", {})
+  scope_mode = scope.get("mode", "empty")
+  scope_crates = list(scope.get("crates", []))
 
-  # Separate built-in and custom surfaces
-  builtin_surfaces = ["build", "test", "bench", "docs", "infra"]
-  custom_surfaces = {k: v for k, v in surfaces.items() if k.startswith("custom:")}
-
-  active_surfaces = sorted(
-    name
-    for name, value in surfaces.items()
-    if isinstance(value, dict) and value.get("enabled") is True
+  active_builtin_surfaces = sorted(
+    name for name, enabled in scope_surfaces.items() if enabled is True and not name.startswith("custom:")
   )
+  active_custom_surfaces = sorted(
+    name for name, enabled in scope_surfaces.items() if enabled is True and name.startswith("custom:")
+  )
+  top_reasons = summarize_surface_reasons(collect_active_reason_ids(surfaces), reason_lookup)
 
   lines: list[str] = []
   lines.append("## cargo-rail plan")
@@ -120,45 +132,22 @@ def render(args: argparse.Namespace, plan: dict) -> str:
   lines.append(f"| **Install** | {INSTALL_MAP.get(args.install_method, 'Unknown')} |")
   lines.append(f"| **Base** | `{args.base_ref}` |")
   lines.append(f"| **Changed files** | {len(files)} |")
+  lines.append(f"| **Scope mode** | `{scope_mode}` |")
   lines.append(f"| **Direct crates** | {len(direct)} |")
-  lines.append(f"| **Transitive crates** | {len(transitive)} |")
-  lines.append(f"| **Active surfaces** | {', '.join(active_surfaces) if active_surfaces else 'none'} |")
+  lines.append(
+    f"| **Active surfaces** | {', '.join(active_builtin_surfaces) if active_builtin_surfaces else 'none'} |"
+  )
   lines.append("")
 
   if direct:
-    lines.append(f"**Direct crates:** `{ ' '.join(direct) }`")
-  if transitive:
-    lines.append(f"**Transitive crates:** `{ ' '.join(transitive) }`")
-
-  # Enhanced surface status table
-  lines.append("")
-  lines.append("### Surface Status")
-  lines.append("")
-  lines.append("| Surface | Status | Reason |")
-  lines.append("|---------|--------|--------|")
-
-  for surface_name in builtin_surfaces:
-    surface_data = surfaces.get(surface_name, {})
-    enabled = surface_data.get("enabled", False)
-    reasons = surface_data.get("reasons", [])
-    status = "on" if enabled else "off"
-    reason_summary = summarize_surface_reasons(reasons, reason_lookup) if enabled else "No triggering changes"
-    lines.append(f"| `{surface_name}` | **{status}** | {reason_summary} |")
-
-  # Add custom surfaces if present
-  if custom_surfaces:
-    lines.append("")
-    lines.append("**Custom surfaces:**")
-    lines.append("")
-    lines.append("| Surface | Status | Reason |")
-    lines.append("|---------|--------|--------|")
-    for surface_name in sorted(custom_surfaces.keys()):
-      surface_data = custom_surfaces[surface_name]
-      enabled = surface_data.get("enabled", False)
-      reasons = surface_data.get("reasons", [])
-      status = "on" if enabled else "off"
-      reason_summary = summarize_surface_reasons(reasons, reason_lookup) if enabled else "No matching patterns"
-      lines.append(f"| `{surface_name}` | **{status}** | {reason_summary} |")
+    lines.append(f"**Changed direct crates:** `{ ' '.join(direct) }`")
+  if scope_mode == "crates" and scope_crates:
+    lines.append(f"**Execution crates:** `{ ' '.join(scope_crates) }`")
+  elif scope_mode == "workspace":
+    lines.append("**Execution scope:** full workspace")
+  if active_custom_surfaces:
+    lines.append(f"**Active custom surfaces:** `{ ' '.join(active_custom_surfaces) }`")
+  lines.append(f"**Top reasons:** {top_reasons}")
 
   lines.append("")
   lines.append("<details><summary>Trace details (file -> crate -> surface)</summary>")

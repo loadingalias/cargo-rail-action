@@ -1,5 +1,5 @@
 name: "cargo-rail"
-description: "Planner-first CI transport for cargo rail plan surfaces and trace output."
+description: "Planner-first CI transport for cargo rail plan surfaces and scope."
 author: "loadingalias"
 
 branding:
@@ -8,9 +8,9 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.10.8; use 'latest' for floating installs)"
+    description: "cargo-rail version to install (default: 0.10.12; use 'latest' for floating installs)"
     required: false
-    default: "0.10.8"
+    default: "0.10.12"
 
   checksum:
     description: "Checksum verification mode for downloaded binaries: required/if-available/off"
@@ -37,35 +37,18 @@ inputs:
     default: ${{ github.token }}
 
   mode:
-    description: "Output mode: minimal (default) or full (compatibility)"
+    description: "Output mode: minimal (default) or debug"
     required: false
     default: "minimal"
 
 outputs:
-  # Planner-native contract
-  files:
-    description: "JSON array of changed workspace-relative file paths"
-    value: ${{ steps.plan.outputs.files }}
-
-  direct-crates:
-    description: "Space-separated direct impacted crates"
-    value: ${{ steps.plan.outputs.direct_crates }}
-
-  transitive-crates:
-    description: "Space-separated transitive impacted crates"
-    value: ${{ steps.plan.outputs.transitive_crates }}
-
-  surfaces:
-    description: "JSON object of surface decisions (enabled + reasons)"
-    value: ${{ steps.plan.outputs.surfaces }}
-
   plan-json:
-    description: "Compact planner payload"
+    description: "Full planner contract (debug mode only)"
     value: ${{ steps.plan.outputs.plan_json }}
 
-  trace:
-    description: "Planner trace payload"
-    value: ${{ steps.plan.outputs.trace }}
+  scope-json:
+    description: "Compact execution-scope payload emitted by the planner"
+    value: ${{ steps.plan.outputs.scope_json }}
 
   # Convenience projections (pure projections of planner output)
   build:
@@ -88,63 +71,10 @@ outputs:
     description: "'true' when infra surface is active"
     value: ${{ steps.plan.outputs.infra }}
 
-  custom-surfaces:
-    description: "JSON object of custom surface booleans"
-    value: ${{ steps.plan.outputs.custom_surfaces }}
-
-  crates:
-    description: "Space-separated impacted crates (direct + transitive)"
-    value: ${{ steps.plan.outputs.crates }}
-
-  cargo-args:
-    description: "Cargo -p flags derived from impacted crates"
-    value: ${{ steps.plan.outputs.cargo_args }}
-
-  count:
-    description: "Number of impacted crates"
-    value: ${{ steps.plan.outputs.count }}
-
-  matrix:
-    description: "JSON array of impacted crates (for strategy.matrix)"
-    value: ${{ steps.plan.outputs.matrix }}
-
-  changed-files-count:
-    description: "Number of changed files"
-    value: ${{ steps.plan.outputs.changed_files_count }}
-
-  active-surfaces:
-    description: "JSON array of active surfaces"
-    value: ${{ steps.plan.outputs.active_surfaces }}
-
-  plan-contract-version:
-    description: "Planner contract version used by this run"
-    value: ${{ steps.plan.outputs.plan_contract_version }}
-
-  head-ref:
-    description: "Resolved planner head reference"
-    value: ${{ steps.plan.outputs.head_ref }}
-
-  confidence-profile:
-    description: "Effective planner confidence profile"
-    value: ${{ steps.plan.outputs.confidence_profile }}
-
-  confidence-profile-source:
-    description: "Source of selected confidence profile"
-    value: ${{ steps.plan.outputs.confidence_profile_source }}
-
   # Base Reference (for downstream jobs that need consistent change detection)
   base-ref:
     description: "Git ref used for comparison (set RAIL_SINCE env var for scripts)"
     value: ${{ steps.base.outputs.ref }}
-
-  # Installation Metadata
-  install-method:
-    description: "How cargo-rail was installed (binary, binstall, cargo-install, cached)"
-    value: ${{ steps.plan.outputs.install_method }}
-
-  cargo-rail-version:
-    description: "Installed cargo-rail version"
-    value: ${{ steps.plan.outputs.cargo_rail_version }}
 
 runs:
   using: "composite"
@@ -447,15 +377,25 @@ runs:
       run: |
         set -euo pipefail
 
-        if [[ "$MODE" != "minimal" && "$MODE" != "full" ]]; then
-          echo "::error::invalid mode: $MODE (expected minimal|full)"
+        if [[ "$MODE" == "full" ]]; then
+          echo "::warning::mode=full is deprecated; using debug outputs instead"
+          MODE="debug"
+        fi
+
+        if [[ "$MODE" != "minimal" && "$MODE" != "debug" ]]; then
+          echo "::error::invalid mode: $MODE (expected minimal|debug)"
+          exit 1
+        fi
+
+        if printf '%s\n' "$EXTRA_ARGS" | grep -Eq '(^|[[:space:]])(--format|-f|--json|--output|-o)([[:space:]=]|$)'; then
+          echo "::error::inputs.args must not override planner format or output path"
           exit 1
         fi
 
         TMP_OUTPUT="$(mktemp)"
         trap 'rm -f "$TMP_OUTPUT"' EXIT
 
-        cargo rail plan --quiet --since "$BASE_REF" -f github $EXTRA_ARGS -o "$TMP_OUTPUT"
+        cargo rail plan --quiet --since "$BASE_REF" -f github-debug $EXTRA_ARGS -o "$TMP_OUTPUT"
 
         read_kv() {
           local key="$1"
@@ -467,24 +407,12 @@ runs:
         BENCH="$(read_kv bench)"
         DOCS="$(read_kv docs)"
         INFRA="$(read_kv infra)"
-        DIRECT_CRATES="$(read_kv direct_crates)"
-        TRANSITIVE_CRATES="$(read_kv transitive_crates)"
-        CUSTOM_SURFACES="$(read_kv custom_surfaces)"
-        PLAN_CONTRACT_VERSION="$(read_kv plan_contract_version)"
-        HEAD_REF="$(read_kv head_ref)"
-        CONFIDENCE_PROFILE="$(read_kv confidence_profile)"
-        CONFIDENCE_PROFILE_SOURCE="$(read_kv confidence_profile_source)"
+        SCOPE_JSON="$(read_kv scope_json)"
         PLAN_JSON="$(read_kv plan_json)"
-        FILES="$(read_kv files)"
-        CHANGED_FILES_COUNT="$(read_kv changed_files_count)"
-        SURFACES="$(read_kv surfaces)"
-        TRACE="$(read_kv trace)"
-        CRATES="$(read_kv crates)"
-        COUNT="$(read_kv count)"
-        CARGO_ARGS="$(read_kv cargo_args)"
-        MATRIX="$(read_kv matrix)"
-        ACTIVE_SURFACES="$(read_kv active_surfaces)"
-
+        if [[ -z "${SCOPE_JSON:-}" ]]; then
+          echo "::error::planner output missing scope_json"
+          exit 1
+        fi
         if [[ -z "${PLAN_JSON:-}" ]]; then
           echo "::error::planner output missing plan_json"
           exit 1
@@ -496,9 +424,12 @@ runs:
           echo "bench=${BENCH:-false}"
           echo "docs=${DOCS:-false}"
           echo "infra=${INFRA:-false}"
-          echo "matrix=${MATRIX:-[]}"
-          echo "plan_json=${PLAN_JSON}"
+          echo "scope_json=${SCOPE_JSON}"
         } >> "$GITHUB_OUTPUT"
+
+        if [[ "$MODE" == "debug" ]]; then
+          echo "plan_json=${PLAN_JSON}" >> "$GITHUB_OUTPUT"
+        fi
 
         # Write plan JSON to a temp file for the Summary step.
         # Passing it as an env var can exceed Linux's ARG_MAX (~2MB) and
@@ -507,40 +438,25 @@ runs:
         printf '%s' "$PLAN_JSON" > "$PLAN_JSON_FILE"
         echo "plan_json_file=${PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
 
-        # Emit individual outputs for each custom surface (P0: native custom surface outputs)
-        # This eliminates the need for jq extraction in downstream workflows
-        if [[ -n "${CUSTOM_SURFACES:-}" && "$CUSTOM_SURFACES" != "{}" ]]; then
-          while IFS='=' read -r key value; do
-            # Sanitize key: custom:foo -> custom_foo (GitHub output names can't have colons)
-            sanitized_key="${key//:/._}"
-            echo "custom_${sanitized_key#custom.}=${value}" >> "$GITHUB_OUTPUT"
-          done < <(echo "$CUSTOM_SURFACES" | python3 -c 'import json,sys;d=json.load(sys.stdin);[print(f"{k}={str(v).lower()}") for k,v in d.items()]' 2>/dev/null || true)
-        fi
+        # Emit individual outputs for custom surfaces as custom_<name>, with punctuation normalized to _.
+        python3 - "$GITHUB_OUTPUT" "$SCOPE_JSON" <<'PY'
+        import json
+        import re
+        import sys
 
-        if [[ "$MODE" == "full" ]]; then
-          # Set defaults for JSON object fields (can't use :-{} as bash misparses trailing })
-          : "${CUSTOM_SURFACES:="{}"}"
-          : "${SURFACES:="{}"}"
-          {
-            echo "direct_crates=${DIRECT_CRATES}"
-            echo "transitive_crates=${TRANSITIVE_CRATES}"
-            echo "custom_surfaces=${CUSTOM_SURFACES}"
-            echo "plan_contract_version=${PLAN_CONTRACT_VERSION}"
-            echo "head_ref=${HEAD_REF}"
-            echo "confidence_profile=${CONFIDENCE_PROFILE}"
-            echo "confidence_profile_source=${CONFIDENCE_PROFILE_SOURCE}"
-            echo "files=${FILES:-[]}"
-            echo "changed_files_count=${CHANGED_FILES_COUNT:-0}"
-            echo "surfaces=${SURFACES}"
-            echo "trace=${TRACE:-[]}"
-            echo "crates=${CRATES}"
-            echo "count=${COUNT:-0}"
-            echo "cargo_args=${CARGO_ARGS}"
-            echo "active_surfaces=${ACTIVE_SURFACES:-[]}"
-            echo "install_method=${INSTALL_METHOD}"
-            echo "cargo_rail_version=${INSTALL_VERSION}"
-          } >> "$GITHUB_OUTPUT"
-        fi
+        output_path = sys.argv[1]
+        scope = json.loads(sys.argv[2])
+        surfaces = scope.get("surfaces", {})
+
+        with open(output_path, "a", encoding="utf-8") as out:
+          for name, enabled in sorted(surfaces.items()):
+            if not name.startswith("custom:"):
+              continue
+            sanitized = re.sub(r"[^A-Za-z0-9]+", "_", name.removeprefix("custom:")).strip("_").lower()
+            if not sanitized:
+              continue
+            out.write(f"custom_{sanitized}={str(bool(enabled)).lower()}\n")
+        PY
 
     # Generate Job Summary
     - name: Summary

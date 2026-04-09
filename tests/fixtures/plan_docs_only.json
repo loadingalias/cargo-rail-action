@@ -11,6 +11,20 @@
     "direct_crates": [],
     "transitive_crates": []
   },
+  "scope": {
+    "scope_contract_version": 1,
+    "resolved_base": "origin/main",
+    "resolved_head": "WORKTREE",
+    "mode": "empty",
+    "crates": [],
+    "surfaces": {
+      "bench": false,
+      "build": false,
+      "docs": true,
+      "infra": false,
+      "test": false
+    }
+  },
   "inputs": {
     "refs": {
       "since": "origin/main",

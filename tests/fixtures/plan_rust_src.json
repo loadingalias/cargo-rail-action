@@ -12,6 +12,20 @@
     "direct_crates": ["lib-a"],
     "transitive_crates": ["lib-b"]
   },
+  "scope": {
+    "scope_contract_version": 1,
+    "resolved_base": "origin/main",
+    "resolved_head": "WORKTREE",
+    "mode": "workspace",
+    "crates": [],
+    "surfaces": {
+      "bench": false,
+      "build": true,
+      "docs": false,
+      "infra": false,
+      "test": true
+    }
+  },
   "inputs": {
     "refs": {
       "since": "origin/main",

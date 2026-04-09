@@ -1,16 +1,16 @@
 # cargo-rail-action
 
-> GitHub Action wrapper for `cargo rail plan -f github`.
+> GitHub Action wrapper for planner gates and `scope-json`.
 
 [![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) 
 
 ## What It Does
 
-- Runs `cargo rail plan ... -f github`.
-- Publishes planner outputs for job gating.
+- Runs `cargo rail plan` in planner-owned GitHub transport mode.
+- Publishes planner gates and `scope-json` for job gating.
 - Keeps CI behavior aligned with local `plan` + `run` workflows.
 
-Minimum planner contract: `cargo-rail >= 0.10.0`.
+Minimum planner contract: `cargo-rail >= 0.10.12`.
 
 ## Quick Start
 
@@ -29,11 +29,26 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v3
         id: rail
         with:
-          version: "0.10.8"
+          version: "0.10.12"
 
       - name: Run targeted tests
         if: steps.rail.outputs.test == 'true'
-        run: cargo rail run --since "${{ steps.rail.outputs.base-ref }}" --profile ci
+        env:
+          SCOPE_JSON: ${{ steps.rail.outputs.scope-json }}
+        run: |
+          MODE=$(echo "$SCOPE_JSON" | jq -r '.mode')
+          if [ "$MODE" = "workspace" ]; then
+            cargo nextest run --workspace
+          elif [ "$MODE" = "crates" ]; then
+            mapfile -t CRATES < <(echo "$SCOPE_JSON" | jq -r '.crates[]')
+            ARGS=()
+            for crate in "${CRATES[@]}"; do
+              ARGS+=(-p "$crate")
+            done
+            cargo nextest run "${ARGS[@]}"
+          else
+            echo "planner enabled test surface, but no package-scoped work was selected"
+          fi
 
       - name: Run docs pipeline
         if: steps.rail.outputs.docs == 'true'
@@ -47,13 +62,13 @@ Use the stable major tag `@v3`, or pin a commit SHA for maximum reproducibility.
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `0.10.8` | `cargo-rail` version to install (use `latest` only if you intentionally want floating upgrades) |
+| `version` | `0.10.12` | `cargo-rail` version to install (use `latest` only if you intentionally want floating upgrades) |
 | `checksum` | `required` | `required`, `if-available`, or `off` |
 | `since` | auto | Git ref for planner comparison |
-| `args` | `""` | Extra planner args (see below) |
+| `args` | `""` | Extra planner args except `-f`/`--format`, `--json`, and `-o`/`--output` |
 | `working-directory` | `.` | Workspace directory |
 | `token` | `${{ github.token }}` | Token for release download API |
-| `mode` | `minimal` | `minimal` (recommended) or `full` |
+| `mode` | `minimal` | `minimal` (recommended) or `debug` |
 
 **Optional `args` examples:**
 
@@ -62,11 +77,6 @@ Use the stable major tag `@v3`, or pin a commit SHA for maximum reproducibility.
 - uses: loadingalias/cargo-rail-action@v3
   with:
     args: '--explain'
-
-# Custom format (default is github for this action)
-- uses: loadingalias/cargo-rail-action@v3
-  with:
-    args: '-f json'
 
 # Use different comparison ref
 - uses: loadingalias/cargo-rail-action@v3
@@ -92,8 +102,8 @@ Use the stable major tag `@v3`, or pin a commit SHA for maximum reproducibility.
 - Composable: combine gates (`if: steps.rail.outputs.build == 'true' || steps.rail.outputs.infra == 'true'`)
 
 **Modes** control what outputs are published:
-- `minimal` (default): only gates, matrix, base-ref, plan-json — optimized for modern workflows
-- `full`: includes all minimal outputs plus legacy compatibility fields (counts, file lists, etc.)
+- `minimal` (default): gates, `scope-json`, `base-ref`, and per-custom-surface booleans
+- `debug`: minimal outputs plus `plan-json`
 
 ### Minimal mode (default)
 
@@ -104,32 +114,34 @@ Use the stable major tag `@v3`, or pin a commit SHA for maximum reproducibility.
 | `bench` | `true`/`false` | Gate benchmark jobs — set when changes affect performance tests |
 | `docs` | `true`/`false` | Gate docs jobs — set for doc comments, README, markdown changes |
 | `infra` | `true`/`false` | Gate infra jobs — set for CI config, scripts, toolchain changes |
-| `matrix` | JSON | `strategy.matrix` for dynamic job matrices (crate-level parallelism) |
+| `scope-json` | JSON | Compact execution-scope payload emitted by `cargo-rail` |
 | `base-ref` | string | Git ref for downstream `run` calls (`--since "${{ steps.rail.outputs.base-ref }}"`) |
-| `plan-json` | JSON | Full deterministic planner output (all surfaces, crates, files, metadata) |
+| `custom_<name>` | `true`/`false` | Custom surface gates, with punctuation normalized to `_` |
 
-### Full mode (`mode: full`)
+### Debug mode (`mode: debug`)
 
-Includes all minimal outputs plus additional fields for compatibility and debugging.
-
-**When to use full mode:**
-- Migrating from legacy workflows that parse file lists or crate counts
-- Debugging plan decisions (use `trace` output)
-- Building custom CI logic that needs raw file/crate lists
-
-**Additional outputs in full mode:**
+Includes all minimal outputs plus the full planner contract.
 
 | Output | Type | Description |
 |---|---|---|
-| `count` | number | Total number of affected crates (for logging/metrics) |
-| `crates` | string | Space-separated list of affected crate names |
-| `files` | JSON | JSON array of changed workspace-relative file paths |
-| `surfaces` | JSON | JSON object of surface decisions (`enabled` + `reasons`) |
-| `trace` | JSON | Detailed trace of plan decisions (why each surface enabled/disabled) |
-| `install-method` | string | Installation source (`cached`, `binary`, `binstall`, `cargo-install`) |
-| `cargo-rail-version` | string | Installed `cargo-rail` version |
+| `plan-json` | JSON | Full deterministic planner contract for debugging and deep inspection |
 
-**Note:** Most workflows should use `minimal` mode. The `plan-json` output contains all plan data in structured form — use `jq` to extract what you need rather than relying on legacy string outputs.
+**Note:** Most workflows should use `minimal` mode. `scope-json` is the execution handoff; use it for package selection in scripts and jobs. `plan-json` is forensic/debug output only.
+
+Example:
+
+```yaml
+- name: Show targeted crates
+  run: echo '${{ steps.rail.outputs.scope-json }}' | jq -r '.crates[]'
+```
+
+Custom surfaces are exported as `custom_<name>` outputs. Example:
+
+```yaml
+- name: Run benchmark suite
+  if: steps.rail.outputs.custom_benchmarks == 'true'
+  run: cargo bench --workspace
+```
 
 ## Security and Runtime
 
