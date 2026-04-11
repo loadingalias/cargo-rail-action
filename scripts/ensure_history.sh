@@ -14,12 +14,8 @@ emit_output() {
   fi
 }
 
-shallow_file() {
-  git rev-parse --git-path shallow
-}
-
 is_shallow_clone() {
-  [[ -f "$(shallow_file)" ]]
+  [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]
 }
 
 has_commit() {

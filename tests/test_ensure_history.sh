@@ -29,6 +29,11 @@ run_history_check() {
   )
 }
 
+repo_is_shallow() {
+  local repo="$1"
+  [[ "$(git -C "$repo" rev-parse --is-shallow-repository)" == "true" ]]
+}
+
 test_raw_sha_fetch_stays_shallow() {
   init_remote_repo raw-sha
   local remote="$INIT_REMOTE"
@@ -57,7 +62,7 @@ test_raw_sha_fetch_stays_shallow() {
   run_history_check "$clone" "$base_sha" "$output_file"
 
   git -C "$clone" rev-parse --verify "$base_sha^{commit}" >/dev/null
-  [[ -f "$(git -C "$clone" rev-parse --git-path shallow)" ]]
+  repo_is_shallow "$clone"
   grep -qx 'shallow=true' "$output_file"
 }
 
@@ -96,7 +101,7 @@ test_branch_ref_falls_back_to_full_history() {
 
   git -C "$clone" rev-parse --verify "origin/main^{commit}" >/dev/null
   git -C "$clone" merge-base HEAD origin/main >/dev/null
-  [[ ! -f "$(git -C "$clone" rev-parse --git-path shallow)" ]]
+  [[ "$(git -C "$clone" rev-parse --is-shallow-repository)" == "false" ]]
   grep -qx 'shallow=true' "$output_file"
 }
 
