@@ -323,45 +323,7 @@ runs:
       env:
         BASE_REF: ${{ steps.base.outputs.ref }}
       run: |
-        set -euo pipefail
-
-        # Track if we're in a shallow clone
-        if [[ -f .git/shallow ]]; then
-          echo "shallow=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "shallow=false" >> "$GITHUB_OUTPUT"
-        fi
-
-        # Check if base ref is resolvable; if not, fetch needed history
-        if [[ "$BASE_REF" =~ ^HEAD~[0-9]+$ ]]; then
-          # Relative ref: check if commit exists
-          if ! git rev-parse "$BASE_REF" &>/dev/null; then
-            depth="${BASE_REF#HEAD~}"
-            fetch_depth=$((depth + 1))
-            echo "Fetching $fetch_depth commits for $BASE_REF..."
-            git fetch --depth="$fetch_depth" origin HEAD
-          fi
-        else
-          # Branch ref: check if merge-base is resolvable
-          if ! git merge-base HEAD "$BASE_REF" &>/dev/null; then
-            echo "Fetching history for merge-base with $BASE_REF..."
-            git fetch --unshallow origin || git fetch origin "$BASE_REF"
-          fi
-        fi
-
-        # Final verification
-        if [[ "$BASE_REF" =~ ^HEAD~[0-9]+$ ]]; then
-          if ! git rev-parse "$BASE_REF" &>/dev/null; then
-            echo "::error::Cannot resolve $BASE_REF after fetch. Check repository state."
-            exit 1
-          fi
-        else
-          if ! git merge-base HEAD "$BASE_REF" &>/dev/null; then
-            echo "::error::Cannot resolve merge-base with $BASE_REF after fetch. Check repository state."
-            exit 1
-          fi
-        fi
-        echo "Base ref $BASE_REF verified"
+        bash "$GITHUB_ACTION_PATH/scripts/ensure_history.sh"
 
     # Run planner and emit selected output mode
     - name: Run cargo-rail plan

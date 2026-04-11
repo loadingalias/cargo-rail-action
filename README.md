@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - uses: loadingalias/cargo-rail-action@v4
         id: rail
@@ -57,6 +57,9 @@ jobs:
 
 Use the stable major tag `@v4`, or pin a commit SHA for maximum reproducibility. Pin `version` for deterministic
 `cargo-rail` installs.
+
+The action handles shallow checkouts intentionally: raw commit SHAs are fetched directly when possible, and broader
+history fetch only happens when a branch-based comparison still needs merge-base history.
 
 ## Inputs
 
