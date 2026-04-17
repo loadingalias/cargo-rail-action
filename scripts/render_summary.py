@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections import Counter
 
 INSTALL_MAP = {
   "binary": "Binary download",
@@ -13,6 +14,10 @@ INSTALL_MAP = {
   "cargo-install": "cargo install (compiled)",
   "cached": "Already installed",
 }
+
+LIST_PREVIEW_LIMIT = 12
+TRACE_PREVIEW_LIMIT = 20
+REASON_COUNT_PREVIEW_LIMIT = 8
 
 # Map reason codes to human-readable descriptions
 REASON_DESCRIPTIONS = {
@@ -101,6 +106,45 @@ def collect_active_reason_ids(surfaces: dict) -> list[int]:
   return sorted(reason_ids)
 
 
+def preview_items(items: list[str], limit: int = LIST_PREVIEW_LIMIT) -> str:
+  """Render a stable preview for a potentially large list."""
+  if not items:
+    return "none"
+
+  preview = items[: max(limit, 1)]
+  rendered = ", ".join(preview)
+  if len(items) <= limit:
+    return rendered
+  return f"{rendered}, ... +{len(items) - limit} more"
+
+
+def summarize_reason_counts(trace: list[dict]) -> list[tuple[str, int]]:
+  """Count reason codes across the full trace."""
+  counts = Counter(item.get("code", "UNKNOWN") for item in trace)
+  return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+def render_trace_entry(item: dict) -> str:
+  """Render a single raw trace entry."""
+  rid = item.get("id")
+  code = item.get("code", "")
+  file_path = item.get("file")
+  crate_name = item.get("crate")
+  depends_on = item.get("depends_on")
+  surface = item.get("surface")
+
+  parts = [f"r{rid}", code]
+  if file_path:
+    parts.append(f"file={file_path}")
+  if crate_name:
+    parts.append(f"crate={crate_name}")
+  if depends_on:
+    parts.append(f"depends_on={depends_on}")
+  if surface:
+    parts.append(f"surface={surface}")
+  return f"- {' '.join(parts)}"
+
+
 def render(args: argparse.Namespace, plan: dict) -> str:
   files = [f.get("path", "") for f in plan.get("files", []) if f.get("path")]
   impact = plan.get("impact", {})
@@ -140,37 +184,37 @@ def render(args: argparse.Namespace, plan: dict) -> str:
   lines.append("")
 
   if direct:
-    lines.append(f"**Changed direct crates:** `{ ' '.join(direct) }`")
+    lines.append(f"**Changed direct crates ({len(direct)}):** `{preview_items(direct)}`")
   if scope_mode == "crates" and scope_crates:
-    lines.append(f"**Execution crates:** `{ ' '.join(scope_crates) }`")
+    lines.append(f"**Execution crates ({len(scope_crates)}):** `{preview_items(scope_crates)}`")
   elif scope_mode == "workspace":
     lines.append("**Execution scope:** full workspace")
   if active_custom_surfaces:
-    lines.append(f"**Active custom surfaces:** `{ ' '.join(active_custom_surfaces) }`")
+    lines.append(f"**Active custom surfaces:** `{preview_items(active_custom_surfaces)}`")
   lines.append(f"**Top reasons:** {top_reasons}")
 
   lines.append("")
-  lines.append("<details><summary>Trace details (file -> crate -> surface)</summary>")
+  lines.append(f"<details><summary>Trace summary ({len(trace)} reasons)</summary>")
   lines.append("")
 
-  for item in trace:
-    rid = item.get("id")
-    code = item.get("code", "")
-    file_path = item.get("file")
-    crate_name = item.get("crate")
-    depends_on = item.get("depends_on")
-    surface = item.get("surface")
+  reason_counts = summarize_reason_counts(trace)
+  if reason_counts:
+    lines.append("**Reason counts**")
+    for code, count in reason_counts[:REASON_COUNT_PREVIEW_LIMIT]:
+      desc = REASON_DESCRIPTIONS.get(code, code)
+      lines.append(f"- {desc}: {count}")
+    if len(reason_counts) > REASON_COUNT_PREVIEW_LIMIT:
+      lines.append(f"- ... +{len(reason_counts) - REASON_COUNT_PREVIEW_LIMIT} more reason types")
+    lines.append("")
 
-    parts = [f"r{rid}", code]
-    if file_path:
-      parts.append(f"file={file_path}")
-    if crate_name:
-      parts.append(f"crate={crate_name}")
-    if depends_on:
-      parts.append(f"depends_on={depends_on}")
-    if surface:
-      parts.append(f"surface={surface}")
-    lines.append(f"- {' '.join(parts)}")
+  if trace:
+    lines.append(f"**Sample trace entries ({min(len(trace), TRACE_PREVIEW_LIMIT)} of {len(trace)})**")
+    for item in trace[:TRACE_PREVIEW_LIMIT]:
+      lines.append(render_trace_entry(item))
+    if len(trace) > TRACE_PREVIEW_LIMIT:
+      lines.append(f"- ... +{len(trace) - TRACE_PREVIEW_LIMIT} more trace entries")
+  else:
+    lines.append("No trace reasons.")
 
   lines.append("")
   lines.append("</details>")
