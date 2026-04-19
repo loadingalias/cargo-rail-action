@@ -11,8 +11,8 @@ run_summary() {
   python3 "$ROOT/scripts/render_summary.py" \
     --plan-json-file "$fixture" \
     --install-method binary \
-    --install-version 0.12.0 \
-    --base-ref origin/main > "$out"
+    --install-version 0.13.0 \
+    --base-ref origin/main >"$out"
 }
 
 # Determinism: same fixture => byte-identical summary output.
@@ -27,7 +27,7 @@ diff -u "$ROOT/tests/golden/summary_rust_src.md" "$TMP_DIR/summary_rust_src.md"
 run_summary "$ROOT/tests/fixtures/plan_docs_only.json" "$TMP_DIR/summary_docs_only.md"
 diff -u "$ROOT/tests/golden/summary_docs_only.md" "$TMP_DIR/summary_docs_only.md"
 
-python3 - <<'PY' > "$TMP_DIR/plan_large.json"
+python3 - <<'PY' >"$TMP_DIR/plan_large.json"
 import json
 
 trace = []

@@ -8,12 +8,14 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.12.0; use 'latest' for floating installs)"
+    description: "cargo-rail version to install (default: 0.13.0; use 'latest' for
+      floating installs)"
     required: false
-    default: "0.12.0"
+    default: "0.13.0"
 
   checksum:
-    description: "Checksum verification mode for downloaded binaries: required/if-available/off"
+    description: "Checksum verification mode for downloaded binaries:
+      required/if-available/off"
     required: false
     default: "required"
 
@@ -151,7 +153,7 @@ runs:
               shasum -a 256 "$file" | awk '{print $1}'
 
             else
-              
+
               if command -v python3 &>/dev/null; then
                 python3 -c 'import hashlib,sys; p=sys.argv[1]; h=hashlib.sha256(); f=open(p,"rb"); [h.update(b) for b in iter(lambda: f.read(1024*1024), b"")]; f.close(); print(h.hexdigest())' "$file"
               elif command -v python &>/dev/null; then
@@ -167,7 +169,7 @@ runs:
             local archive_path="$1"
             local archive_name="$2"
             local mode="${CHECKSUM_MODE:-required}"
-          
+
             case "$mode" in
               off)
                 echo "Checksum verification disabled (checksum=off)"
@@ -180,10 +182,10 @@ runs:
                 exit 1
                 ;;
             esac
-          
+
             local sums_url="https://github.com/loadingalias/cargo-rail/releases/download/v${VERSION}/SHA256SUMS"
             local sums_path="/tmp/SHA256SUMS-cargo-rail"
-          
+
             if ! curl -fsSL --retry 3 "$sums_url" -o "$sums_path" 2>/dev/null; then
               if [[ "$mode" == "required" ]]; then
                 echo "::error::SHA256SUMS not found for v$VERSION; set checksum: if-available or off to skip verification"
@@ -192,21 +194,21 @@ runs:
               echo "::warning::SHA256SUMS not found for v$VERSION; skipping checksum verification"
               return 0
             fi
-          
+
             local expected
             expected="$(awk -v f="$archive_name" '$2==f || $2=="*"f {print $1; exit}' "$sums_path" 2>/dev/null || true)"
             if [[ -z "$expected" ]]; then
               echo "::error::SHA256SUMS is present for v$VERSION but has no entry for $archive_name"
               exit 1
             fi
-          
+
             local actual
             actual="$(calc_sha256 "$archive_path")"
             if [[ "$actual" != "$expected" ]]; then
               echo "::error::Checksum mismatch for $archive_name (expected $expected, got $actual)"
               exit 1
             fi
-          
+
             echo "Checksum verified for $archive_name"
           }
 

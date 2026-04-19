@@ -40,16 +40,38 @@
     "toolchain_fingerprint": "none"
   },
   "surfaces": {
-    "bench": {"enabled": false, "reasons": []},
-    "build": {"enabled": false, "reasons": []},
-    "docs": {"enabled": true, "reasons": [1]},
-    "infra": {"enabled": false, "reasons": []},
-    "test": {"enabled": false, "reasons": []}
+    "bench": {
+      "enabled": false,
+      "reasons": []
+    },
+    "build": {
+      "enabled": false,
+      "reasons": []
+    },
+    "docs": {
+      "enabled": true,
+      "reasons": [
+        1
+      ]
+    },
+    "infra": {
+      "enabled": false,
+      "reasons": []
+    },
+    "test": {
+      "enabled": false,
+      "reasons": []
+    }
   },
   "trace": [
-    {"id": 1, "code": "FILE_KIND_DOCS", "file": "README.md", "surface": "docs"}
+    {
+      "id": 1,
+      "code": "FILE_KIND_DOCS",
+      "file": "README.md",
+      "surface": "docs"
+    }
   ],
   "reproducibility": {
-    "cargo_rail_version": "0.12.0"
+    "cargo_rail_version": "0.13.0"
   }
 }

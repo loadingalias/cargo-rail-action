@@ -53,7 +53,7 @@ Debug mode adds:
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `0.12.0` | Published `cargo-rail` release to install |
+| `version` | `0.13.0` | Published `cargo-rail` release to install |
 | `checksum` | `required` | `required`, `if-available`, or `off` |
 | `since` | auto | Git ref for planner comparison |
 | `args` | `""` | Extra planner args except format/output flags |
