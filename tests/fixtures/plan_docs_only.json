@@ -1,4 +1,5 @@
 {
+  "plan_contract_version": 3,
   "files": [
     {
       "path": "README.md",
@@ -47,5 +48,8 @@
   },
   "trace": [
     {"id": 1, "code": "FILE_KIND_DOCS", "file": "README.md", "surface": "docs"}
-  ]
+  ],
+  "reproducibility": {
+    "cargo_rail_version": "0.12.0"
+  }
 }

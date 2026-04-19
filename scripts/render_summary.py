@@ -19,7 +19,7 @@ LIST_PREVIEW_LIMIT = 12
 TRACE_PREVIEW_LIMIT = 20
 REASON_COUNT_PREVIEW_LIMIT = 8
 
-# Map reason codes to human-readable descriptions
+# Fallback descriptions for older planner contracts that don't ship descriptions inline.
 REASON_DESCRIPTIONS = {
   "FILE_KIND_RUST_SRC": "Rust source file changed",
   "FILE_KIND_RUST_TEST": "Rust test file changed",
@@ -86,7 +86,14 @@ def summarize_surface_reasons(reasons: list[int], lookup: dict[int, dict]) -> st
   # Generate summary
   parts = []
   for code, count in sorted(code_counts.items(), key=lambda x: -x[1]):
-    desc = REASON_DESCRIPTIONS.get(code, code)
+    desc = next(
+      (
+        entry.get("description")
+        for rid, entry in lookup.items()
+        if rid in reasons and entry.get("code") == code and entry.get("description")
+      ),
+      REASON_DESCRIPTIONS.get(code, code),
+    )
     if count > 1:
       parts.append(f"{desc} ({count}x)")
     else:
@@ -122,6 +129,13 @@ def summarize_reason_counts(trace: list[dict]) -> list[tuple[str, int]]:
   """Count reason codes across the full trace."""
   counts = Counter(item.get("code", "UNKNOWN") for item in trace)
   return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+def reason_description(code: str, trace: list[dict]) -> str:
+  for item in trace:
+    if item.get("code") == code and item.get("description"):
+      return item["description"]
+  return REASON_DESCRIPTIONS.get(code, code)
 
 
 def render_trace_entry(item: dict) -> str:
@@ -201,7 +215,7 @@ def render(args: argparse.Namespace, plan: dict) -> str:
   if reason_counts:
     lines.append("**Reason counts**")
     for code, count in reason_counts[:REASON_COUNT_PREVIEW_LIMIT]:
-      desc = REASON_DESCRIPTIONS.get(code, code)
+      desc = reason_description(code, trace)
       lines.append(f"- {desc}: {count}")
     if len(reason_counts) > REASON_COUNT_PREVIEW_LIMIT:
       lines.append(f"- ... +{len(reason_counts) - REASON_COUNT_PREVIEW_LIMIT} more reason types")

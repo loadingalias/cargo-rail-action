@@ -8,9 +8,9 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.11.0; use 'latest' for floating installs)"
+    description: "cargo-rail version to install (default: 0.12.0; use 'latest' for floating installs)"
     required: false
-    default: "0.11.0"
+    default: "0.12.0"
 
   checksum:
     description: "Checksum verification mode for downloaded binaries: required/if-available/off"
@@ -380,6 +380,16 @@ runs:
           exit 1
         fi
 
+        PLAN_JSON_FILE="$(mktemp)"
+        SCOPE_JSON_FILE="$(mktemp)"
+        printf '%s' "$PLAN_JSON" > "$PLAN_JSON_FILE"
+        printf '%s' "$SCOPE_JSON" > "$SCOPE_JSON_FILE"
+        trap 'rm -f "$TMP_OUTPUT" "$PLAN_JSON_FILE" "$SCOPE_JSON_FILE"' EXIT
+
+        python3 "$GITHUB_ACTION_PATH/scripts/validate_contract.py" \
+          --plan-json-file "$PLAN_JSON_FILE" \
+          --scope-json-file "$SCOPE_JSON_FILE"
+
         {
           echo "build=${BUILD:-false}"
           echo "test=${TEST:-false}"
@@ -396,9 +406,9 @@ runs:
         # Write plan JSON to a temp file for the Summary step.
         # Passing it as an env var can exceed Linux's ARG_MAX (~2MB) and
         # cause E2BIG ("Argument list too long") on large workspaces.
-        PLAN_JSON_FILE="${RUNNER_TEMP}/cargo-rail-plan.json"
-        printf '%s' "$PLAN_JSON" > "$PLAN_JSON_FILE"
-        echo "plan_json_file=${PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
+        SUMMARY_PLAN_JSON_FILE="${RUNNER_TEMP}/cargo-rail-plan.json"
+        printf '%s' "$PLAN_JSON" > "$SUMMARY_PLAN_JSON_FILE"
+        echo "plan_json_file=${SUMMARY_PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
 
         # Emit individual outputs for custom surfaces as custom_<name>, with punctuation normalized to _.
         python3 - "$GITHUB_OUTPUT" "$SCOPE_JSON" <<'PY'

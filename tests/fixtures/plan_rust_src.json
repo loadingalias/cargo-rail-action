@@ -1,4 +1,5 @@
 {
+  "plan_contract_version": 3,
   "files": [
     {
       "path": "crates/lib-a/src/lib.rs",
@@ -50,5 +51,8 @@
     {"id": 1, "code": "FILE_OWNS_CRATE_DIRECT", "file": "crates/lib-a/src/lib.rs", "crate": "lib-a"},
     {"id": 2, "code": "FILE_KIND_RUST_SRC", "file": "crates/lib-a/src/lib.rs", "surface": "build"},
     {"id": 3, "code": "TRANSITIVE_DEPENDS_ON_DIRECT", "crate": "lib-b", "depends_on": "lib-a", "surface": "build"}
-  ]
+  ],
+  "reproducibility": {
+    "cargo_rail_version": "0.12.0"
+  }
 }

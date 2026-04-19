@@ -1,20 +1,24 @@
 # Contributing to cargo-rail-action
 
-Thanks for contributing.
+## Local Setup
 
-## Development Setup
+Required tools:
 
-Prerequisites:
+- `bash`
+- `python3`
+- `ruby`
+- `jq`
 
-- `python3` (summary renderer tests)
-- `ruby` (YAML parse validation)
-- `jq` (used by workflow verification steps)
-- `actionlint` (recommended)
+Recommended:
 
-Run fixture tests locally:
+- `actionlint`
+
+Run the local test set:
 
 ```bash
-./tests/test_summary.sh
+bash tests/test_summary.sh
+bash tests/test_contracts.sh
+bash tests/test_ensure_history.sh
 ```
 
 Validate `action.yaml` structure:
@@ -23,25 +27,19 @@ Validate `action.yaml` structure:
 ruby -ryaml -e 'YAML.load_file("action.yaml")'
 ```
 
-Recommended semantic lint:
-
-```bash
-actionlint
-```
-
-## Change Requirements
+## Expectations
 
 - Keep changes focused and deterministic.
-- Update README and tests when output contracts change.
+- Update README and tests when documented behavior changes.
 - Preserve compatibility with documented outputs.
-- For changes that touch both repos, validate cargo-rail with `just check-all && just test` before opening a PR.
+- If a change spans both repos, validate `cargo-rail` with `just check && just test`.
 
 ## Pull Requests
 
 - Use a clear title and summary.
-- Include behavior changes and migration notes if outputs changed.
+- Call out output or compatibility changes.
 - Link related issues when applicable.
 
 ## Security
 
-Please do not open public issues for vulnerabilities. See [SECURITY.md](SECURITY.md).
+Do not open public issues for vulnerabilities. See [SECURITY.md](SECURITY.md).
