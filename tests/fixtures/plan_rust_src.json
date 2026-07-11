@@ -20,11 +20,14 @@
     ]
   },
   "scope": {
-    "scope_contract_version": 1,
+    "scope_contract_version": 2,
     "resolved_base": "origin/main",
     "resolved_head": "WORKTREE",
     "mode": "workspace",
     "crates": [],
+    "cargo_args": [
+      "--workspace"
+    ],
     "surfaces": {
       "bench": false,
       "build": true,
@@ -96,6 +99,6 @@
     }
   ],
   "reproducibility": {
-    "cargo_rail_version": "0.13.0"
+    "cargo_rail_version": "0.16.0"
   }
 }

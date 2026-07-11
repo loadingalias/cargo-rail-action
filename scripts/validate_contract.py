@@ -8,7 +8,7 @@ import json
 import sys
 
 SUPPORTED_PLAN_CONTRACT_VERSION = 3
-SUPPORTED_SCOPE_CONTRACT_VERSION = 1
+SUPPORTED_SCOPE_CONTRACT_VERSION = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,10 +51,55 @@ def classify_version(actual: object, expected: int, field: str) -> str:
   return f"::error::{field} {direction}: got {actual}, expected {expected}"
 
 
+def require_object(value: object, label: str) -> dict[str, object]:
+  if not isinstance(value, dict):
+    raise SystemExit(f"::error::{label} must be a JSON object")
+  return value
+
+
+def string_list(value: object) -> list[str] | None:
+  if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+    return None
+  return value
+
+
+def validate_scope_cargo_args(scope: dict[str, object]) -> list[str]:
+  cargo_args = string_list(scope.get("cargo_args"))
+  crates = string_list(scope.get("crates"))
+  mode = scope.get("mode")
+
+  messages: list[str] = []
+  if cargo_args is None:
+    messages.append("::error::scope.cargo_args missing or invalid in planner output")
+    return messages
+  if crates is None:
+    messages.append("::error::scope.crates missing or invalid in planner output")
+    return messages
+
+  if mode == "empty":
+    expected: list[str] = []
+  elif mode == "workspace":
+    expected = ["--workspace"]
+  elif mode == "crates":
+    expected = []
+    for crate_name in crates:
+      expected.extend(["-p", crate_name])
+  else:
+    messages.append(f"::error::scope.mode invalid in planner output: {mode!r}")
+    return messages
+
+  if cargo_args != expected:
+    messages.append(
+      "::error::scope.cargo_args does not match scope mode/crates: "
+      f"got {json.dumps(cargo_args)}, expected {json.dumps(expected)}"
+    )
+  return messages
+
+
 def main() -> int:
   args = parse_args()
-  plan = load_json_value(args.plan_json, args.plan_json_file, "plan_json")
-  scope = load_json_value(args.scope_json, args.scope_json_file, "scope_json")
+  plan = require_object(load_json_value(args.plan_json, args.plan_json_file, "plan_json"), "plan_json")
+  scope = require_object(load_json_value(args.scope_json, args.scope_json_file, "scope_json"), "scope_json")
 
   messages = []
   messages.append(
@@ -63,6 +108,7 @@ def main() -> int:
   messages.append(
     classify_version(scope.get("scope_contract_version"), SUPPORTED_SCOPE_CONTRACT_VERSION, "scope_contract_version")
   )
+  messages.extend(validate_scope_cargo_args(scope))
 
   messages = [message for message in messages if message]
   if not messages:

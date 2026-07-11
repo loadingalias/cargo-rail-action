@@ -8,10 +8,10 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.13.0; use 'latest' for
+    description: "cargo-rail version to install (default: 0.16.0; use 'latest' for
       floating installs)"
     required: false
-    default: "0.13.0"
+    default: "0.16.0"
 
   checksum:
     description: "Checksum verification mode for downloaded binaries:
@@ -51,6 +51,10 @@ outputs:
   scope-json:
     description: "Compact execution-scope payload emitted by the planner"
     value: ${{ steps.plan.outputs.scope_json }}
+
+  cargo-args:
+    description: "Cargo package selection args emitted by the planner scope"
+    value: ${{ steps.plan.outputs.cargo_args }}
 
   # Convenience projections (pure projections of planner output)
   build:
@@ -371,6 +375,7 @@ runs:
         BENCH="$(read_kv bench)"
         DOCS="$(read_kv docs)"
         INFRA="$(read_kv infra)"
+        CARGO_ARGS="$(read_kv cargo_args)"
         SCOPE_JSON="$(read_kv scope_json)"
         PLAN_JSON="$(read_kv plan_json)"
         if [[ -z "${SCOPE_JSON:-}" ]]; then
@@ -398,6 +403,7 @@ runs:
           echo "bench=${BENCH:-false}"
           echo "docs=${DOCS:-false}"
           echo "infra=${INFRA:-false}"
+          echo "cargo_args=${CARGO_ARGS}"
           echo "scope_json=${SCOPE_JSON}"
         } >> "$GITHUB_OUTPUT"
 

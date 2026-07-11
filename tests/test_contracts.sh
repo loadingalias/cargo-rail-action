@@ -51,7 +51,7 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as f:
   scope = json.load(f)["scope"]
-scope["scope_contract_version"] = 2
+scope["scope_contract_version"] = 3
 print(json.dumps(scope))
 PY
 )"
@@ -60,6 +60,23 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$PLAN_FIXTURE" --sc
   echo "expected scope contract validation to fail for new contract"
   exit 1
 fi
-grep -F "scope_contract_version too new: got 2, expected 1" "$TMP_DIR/out.txt"
+grep -F "scope_contract_version too new: got 3, expected 2" "$TMP_DIR/out.txt"
+
+BAD_CARGO_ARGS="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+  scope = json.load(f)["scope"]
+scope["cargo_args"] = []
+print(json.dumps(scope))
+PY
+)"
+
+if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$PLAN_FIXTURE" --scope-json "$BAD_CARGO_ARGS" >"$TMP_DIR/out.txt" 2>&1; then
+  echo "expected scope contract validation to fail for mismatched cargo_args"
+  exit 1
+fi
+grep -F "scope.cargo_args does not match scope mode/crates" "$TMP_DIR/out.txt"
 
 echo "contract validation tests passed"

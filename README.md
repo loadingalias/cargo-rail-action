@@ -1,8 +1,19 @@
 # cargo-rail-action
 
-> GitHub Action for `cargo rail plan` gates and execution scope.
+> Install cargo-rail, calculate the affected CI surfaces and Cargo packages, and expose that scope to later GitHub Actions steps or jobs.
 
 [![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## What the action does
+
+The action runs `cargo rail plan` against the current checkout and a base Git ref. It publishes two kinds of output:
+
+- Boolean surfaces such as `build`, `test`, and `docs` for job or step conditions.
+- Execution scope as `scope-json` and `cargo-args`, so existing Cargo commands can target the affected workspace packages.
+
+The action does not build, test, or publish crates. Keep those commands in your workflow and gate them with the planner outputs. This separates change detection from execution and lets each job use its existing toolchain, cache, runner, and test backend.
+
+In a multi-crate workspace, changing a crate can select that crate and affected dependents. In a single-crate repository, package scope resolves to that package or no Rust work, while surface outputs can still distinguish source, documentation, and infrastructure changes.
 
 ## Quick Start
 
@@ -13,24 +24,31 @@ on: [push, pull_request]
 jobs:
   plan:
     runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.rail.outputs.build }}
+      test: ${{ steps.rail.outputs.test }}
+      cargo_args: ${{ steps.rail.outputs.cargo-args }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: loadingalias/cargo-rail-action@v4
+      - uses: loadingalias/cargo-rail-action@v5
         id: rail
 
-      - name: Run selected CI profile
-        if: steps.rail.outputs.build == 'true' || steps.rail.outputs.test == 'true'
-        run: cargo rail run --since "${{ steps.rail.outputs.base-ref }}" --profile ci
-
-      - name: Run docs pipeline
-        if: steps.rail.outputs.docs == 'true'
-        run: cargo rail run --since "${{ steps.rail.outputs.base-ref }}" --surface docs
+  test:
+    needs: plan
+    if: needs.plan.outputs.test == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test affected packages
+        env:
+          CARGO_ARGS: ${{ needs.plan.outputs.cargo_args }}
+        run: cargo test $CARGO_ARGS
 ```
 
-The default `version` tracks the latest published stable `cargo-rail` release this action is tested against. Set `version` only when you need a different published release.
+The default `version` is the cargo-rail release tested with this action major. Set `version` to test or hold another published release.
 
-## What It Publishes
+## Outputs
 
 Minimal mode publishes:
 
@@ -40,6 +58,7 @@ Minimal mode publishes:
 - `docs`
 - `infra`
 - `scope-json`
+- `cargo-args`
 - `base-ref`
 - `custom_<name>` for custom surfaces
 
@@ -47,13 +66,13 @@ Debug mode adds:
 
 - `plan-json`
 
-`scope-json` is the execution handoff. `plan-json` is for debugging.
+`scope-json` is the stable execution handoff. `cargo-args` is its Cargo package selection: `--workspace`, one or more `-p <crate>` arguments, or an empty string. `plan-json` contains diagnostic detail and is available only in debug mode.
 
 ## Inputs
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `0.13.0` | Published `cargo-rail` release to install |
+| `version` | `0.16.0` | Published `cargo-rail` release to install |
 | `checksum` | `required` | `required`, `if-available`, or `off` |
 | `since` | auto | Git ref for planner comparison |
 | `args` | `""` | Extra planner args except format/output flags |
@@ -68,13 +87,14 @@ The action validates both planner contracts before publishing outputs.
 - `plan_contract_version` covers the full diagnostic planner payload
 - `scope_contract_version` covers the execution handoff payload
 
-They are separate on purpose. `scope-json` should be able to stay stable even when `plan-json` grows.
+The contracts version independently. Diagnostic fields can be added to `plan-json` without changing the smaller execution handoff in `scope-json`.
 
-## Notes
+## Operational behavior
 
 - Checksum verification is on by default.
-- Shallow checkouts are handled automatically when more history is needed.
-- Use `@v4` for the stable action major, or pin a commit SHA if you want maximum reproducibility.
+- The action fetches missing history when a shallow checkout does not contain the selected base ref.
+- Installation tries a matching cached binary, a release archive, `cargo-binstall`, then `cargo install`.
+- Use `@v5` with cargo-rail v0.16 and scope contract v2, or pin a commit SHA for immutable action execution.
 
 ## Getting Help
 
