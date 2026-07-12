@@ -23,7 +23,7 @@ jobs:
       - name: Run summary fixture tests
         run: ./tests/test_summary.sh
       - name: Run contract fixture tests
-        run: ./tests/test_contracts.sh
+        run: bash ./tests/test_contracts.sh
       - name: Run history fixture tests
         run: bash ./tests/test_ensure_history.sh
 
