@@ -43,7 +43,7 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$OLD_PLAN" --scope-
   echo "expected plan contract validation to fail for old contract"
   exit 1
 fi
-grep -F "plan_contract_version too old: got 2, expected 3" "$TMP_DIR/out.txt"
+grep -Fq "plan_contract_version too old: got 2, expected 3" "$TMP_DIR/out.txt"
 
 NEW_SCOPE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json
@@ -60,7 +60,7 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$PLAN_FIXTURE" --sc
   echo "expected scope contract validation to fail for new contract"
   exit 1
 fi
-grep -F "scope_contract_version too new: got 3, expected 2" "$TMP_DIR/out.txt"
+grep -Fq "scope_contract_version too new: got 3, expected 2" "$TMP_DIR/out.txt"
 
 BAD_CARGO_ARGS="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json
@@ -77,6 +77,6 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$PLAN_FIXTURE" --sc
   echo "expected scope contract validation to fail for mismatched cargo_args"
   exit 1
 fi
-grep -F "scope.cargo_args does not match scope mode/crates" "$TMP_DIR/out.txt"
+grep -Fq "scope.cargo_args does not match scope mode/crates" "$TMP_DIR/out.txt"
 
 echo "contract validation tests passed"
