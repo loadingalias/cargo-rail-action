@@ -4,17 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g., 1.0.2)"
+        description: "Version to release (e.g., 5.1.0)"
         required: true
         type: string
-      bump_type:
-        description: "What changed?"
-        required: true
-        type: choice
-        options:
-          - patch  # Bug fix
-          - minor  # New feature (backwards compatible)
-          - major  # Breaking change
 
 permissions:
   contents: write
@@ -34,6 +26,11 @@ jobs:
 
       - name: Validate version format
         run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Releases must run from main, got $GITHUB_REF"
+            exit 1
+          fi
+
           VERSION="${{ inputs.version }}"
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid version format. Use x.y.z (e.g., 1.0.2)"
@@ -49,7 +46,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ inputs.version }}
-          BUMP_TYPE: ${{ inputs.bump_type }}
         run: |
           MAJOR="v${VERSION%%.*}"  # 1.0.2 -> v1
 
@@ -59,13 +55,11 @@ jobs:
           # Create version tag
           git tag -a "v$VERSION" -m "v$VERSION"
 
-          # Update or create floating major tag
-          if [[ "$BUMP_TYPE" == "major" ]]; then
-            # New major version - create new floating tag
-            git tag -a "$MAJOR" -m "$MAJOR: Latest ${MAJOR}.x release"
-          else
-            # Patch/minor - move existing floating tag
+          # Update or create the floating major tag.
+          if git rev-parse "$MAJOR" &>/dev/null; then
             git tag -fa "$MAJOR" -m "$MAJOR: Latest ${MAJOR}.x release"
+          else
+            git tag -a "$MAJOR" -m "$MAJOR: Latest ${MAJOR}.x release"
           fi
 
           # Push tags

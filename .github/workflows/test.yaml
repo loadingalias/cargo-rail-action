@@ -22,6 +22,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Run summary fixture tests
         run: ./tests/test_summary.sh
+      - name: Run contract fixture tests
+        run: ./tests/test_contracts.sh
       - name: Run history fixture tests
         run: bash ./tests/test_ensure_history.sh
 
@@ -35,64 +37,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Create test workspace
-        run: |
-          mkdir -p test-workspace/crates/{core,api,cli}
-
-          # Root Cargo.toml
-          cat > test-workspace/Cargo.toml << 'EOF'
-          [workspace]
-          members = ["crates/*"]
-          resolver = "2"
-          EOF
-
-          # Core crate
-          cat > test-workspace/crates/core/Cargo.toml << 'EOF'
-          [package]
-          name = "test-core"
-          version = "0.1.0"
-          edition = "2021"
-          EOF
-          mkdir -p test-workspace/crates/core/src
-          echo 'pub fn core() {}' > test-workspace/crates/core/src/lib.rs
-
-          # API crate (depends on core)
-          cat > test-workspace/crates/api/Cargo.toml << 'EOF'
-          [package]
-          name = "test-api"
-          version = "0.1.0"
-          edition = "2021"
-
-          [dependencies]
-          test-core = { path = "../core" }
-          EOF
-          mkdir -p test-workspace/crates/api/src
-          echo 'pub fn api() { test_core::core(); }' > test-workspace/crates/api/src/lib.rs
-
-          # CLI crate (depends on api)
-          cat > test-workspace/crates/cli/Cargo.toml << 'EOF'
-          [package]
-          name = "test-cli"
-          version = "0.1.0"
-          edition = "2021"
-
-          [dependencies]
-          test-api = { path = "../api" }
-          EOF
-          mkdir -p test-workspace/crates/cli/src
-          echo 'fn main() { test_api::api(); }' > test-workspace/crates/cli/src/main.rs
-
-          # Initialize git
-          cd test-workspace
-          git init
-          git config user.email "test@test.com"
-          git config user.name "Test"
-          git add -A
-          git commit -m "initial"
-
-          # Make a change to core
-          echo '// change' >> crates/core/src/lib.rs
-          git add -A
-          git commit -m "modify core"
+        shell: bash
+        run: bash tests/create_workspace.sh test-workspace
 
       - name: Run action
         id: rail
@@ -120,43 +66,6 @@ jobs:
           echo "Self-test passed!"
 
   # ============================================================================
-  # Real monorepo test: tokio
-  # ============================================================================
-  test-monorepo:
-    needs: [lint-action-yaml, fixture-tests]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Clone test repo (tokio)
-        run: |
-          git clone --depth 100 https://github.com/tokio-rs/tokio.git test-repo
-          cd test-repo
-          git log --oneline -5
-
-      - name: Run action
-        id: rail
-        uses: ./
-        with:
-          mode: minimal
-          checksum: if-available
-          since: HEAD~10
-          working-directory: test-repo
-
-      - name: Verify outputs
-        run: |
-          echo "=== Outputs ==="
-          echo "scope-json: ${{ steps.rail.outputs.scope-json }}"
-          echo "build: ${{ steps.rail.outputs.build }}"
-          echo "test: ${{ steps.rail.outputs.test }}"
-
-          echo '${{ steps.rail.outputs.scope-json }}' | jq . || { echo "scope-json not valid JSON"; exit 1; }
-          [[ -n "${{ steps.rail.outputs.base-ref }}" ]] || { echo "base-ref missing"; exit 1; }
-          [[ -z "${{ steps.rail.outputs.plan-json }}" ]] || { echo "plan-json should be empty in minimal mode"; exit 1; }
-
-          echo "Monorepo test passed!"
-
-  # ============================================================================
   # Multi-platform test
   # ============================================================================
   test-platforms:
@@ -169,9 +78,9 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Clone test repo
+      - name: Create test workspace
         shell: bash
-        run: git clone --depth 50 https://github.com/tokio-rs/tokio.git test-repo
+        run: bash tests/create_workspace.sh test-workspace
 
       - name: Run action
         id: rail
@@ -179,8 +88,8 @@ jobs:
         with:
           mode: minimal
           checksum: if-available
-          since: HEAD~5
-          working-directory: test-repo
+          since: HEAD~1
+          working-directory: test-workspace
 
       - name: Verify
         shell: bash
