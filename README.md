@@ -33,6 +33,8 @@ jobs:
 
       - uses: loadingalias/cargo-rail-action@v5.1.0
         id: rail
+        with:
+          version: 0.18.0
 
   test:
     needs: plan
@@ -72,7 +74,7 @@ Debug mode adds:
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `0.17.0` | Published `cargo-rail` release tested by default; override with a newer compatible v0.17 patch |
+| `version` | `0.18.0` | Published `cargo-rail` release tested by default; override only with a contract-compatible release |
 | `checksum` | `required` | `required`, `if-available`, or `off` |
 | `since` | auto | Git ref for planner comparison |
 | `args` | `""` | Extra planner args except format/output flags |
@@ -94,7 +96,7 @@ The contracts version independently. Diagnostic fields can be added to `plan-jso
 - Checksum verification is on by default.
 - The action fetches missing history when a shallow checkout does not contain the selected base ref.
 - Installation tries a matching cached binary, a release archive, `cargo-binstall`, then `cargo install`.
-- Use `@v5.1.0` with cargo-rail v0.17 and scope contract v2, or pin the v5.1.0 commit SHA for immutable action execution.
+- `@v5.1.0` supports cargo-rail v0.18 and scope contract v2 when `version: 0.18.0` is explicit; pin its commit SHA for immutable action execution.
 - Linux x86-64/ARM64, Windows x86-64/ARM64, and Apple Silicon macOS use published release binaries. Intel macOS is not supported.
 
 ## Getting Help
