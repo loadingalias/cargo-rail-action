@@ -1,5 +1,5 @@
 {
-  "plan_contract_version": 3,
+  "plan_contract_version": 5,
   "files": [
     {
       "path": "crates/lib-a/src/lib.rs",
@@ -15,26 +15,20 @@
     "direct_crates": [
       "lib-a"
     ],
-    "transitive_crates": [
+    "build_transitive_crates": [
       "lib-b"
-    ]
+    ],
+    "development_transitive_crates": []
   },
   "scope": {
-    "scope_contract_version": 2,
+    "scope_contract_version": 3,
     "resolved_base": "origin/main",
     "resolved_head": "WORKTREE",
     "mode": "workspace",
     "crates": [],
     "cargo_args": [
       "--workspace"
-    ],
-    "surfaces": {
-      "bench": false,
-      "build": true,
-      "docs": false,
-      "infra": false,
-      "test": true
-    }
+    ]
   },
   "inputs": {
     "refs": {
@@ -45,60 +39,117 @@
       "resolved_base": "origin/main",
       "resolved_head": "WORKTREE"
     },
+    "snapshot_id": "<SNAPSHOT_ID>",
     "workspace_root": "<WORKSPACE_ROOT>",
     "config_fingerprint": "<CONFIG_FP>",
-    "toolchain_fingerprint": "<TOOLCHAIN_FP>"
+    "toolchain_fingerprint": "<TOOLCHAIN_FP>",
+    "confidence_profile": "balanced",
+    "confidence_profile_source": "config"
   },
   "surfaces": {
     "bench": {
       "enabled": false,
-      "reasons": []
+      "reasons": [],
+      "scope": {
+        "mode": "empty",
+        "crates": [],
+        "cargo_args": []
+      }
     },
     "build": {
       "enabled": true,
       "reasons": [
-        2,
-        3
-      ]
+        3,
+        4
+      ],
+      "scope": {
+        "mode": "workspace",
+        "crates": [],
+        "cargo_args": [
+          "--workspace"
+        ]
+      }
     },
     "docs": {
       "enabled": false,
-      "reasons": []
+      "reasons": [],
+      "scope": {
+        "mode": "empty",
+        "crates": [],
+        "cargo_args": []
+      }
     },
     "infra": {
       "enabled": false,
-      "reasons": []
+      "reasons": [],
+      "scope": {
+        "mode": "empty",
+        "crates": [],
+        "cargo_args": []
+      }
     },
     "test": {
       "enabled": true,
       "reasons": [
-        2,
-        3
-      ]
+        3,
+        4
+      ],
+      "scope": {
+        "mode": "workspace",
+        "crates": [],
+        "cargo_args": [
+          "--workspace"
+        ]
+      }
     }
   },
   "trace": [
     {
       "id": 1,
-      "code": "FILE_OWNS_CRATE_DIRECT",
-      "file": "crates/lib-a/src/lib.rs",
-      "crate": "lib-a"
+      "code": "CONFIDENCE_PROFILE_BALANCED",
+      "description": "Balanced confidence profile active",
+      "selected_surfaces": []
     },
     {
       "id": 2,
-      "code": "FILE_KIND_RUST_SRC",
+      "code": "FILE_OWNS_CRATE_DIRECT",
+      "description": "File directly owns a crate",
       "file": "crates/lib-a/src/lib.rs",
-      "surface": "build"
+      "crate": "lib-a",
+      "package_id": "<PACKAGE_ID:lib-a>",
+      "selected_surfaces": []
     },
     {
       "id": 3,
+      "code": "FILE_KIND_RUST_SRC",
+      "description": "Rust source file changed",
+      "file": "crates/lib-a/src/lib.rs",
+      "selected_surfaces": [
+        "build",
+        "test"
+      ]
+    },
+    {
+      "id": 4,
       "code": "TRANSITIVE_DEPENDS_ON_DIRECT",
+      "description": "Transitive dependency of changed crate",
       "crate": "lib-b",
+      "package_id": "<PACKAGE_ID:lib-b>",
       "depends_on": "lib-a",
-      "surface": "build"
+      "depends_on_package_id": "<PACKAGE_ID:lib-a>",
+      "edge_kind": "normal",
+      "alias": "lib_a",
+      "optional": false,
+      "uses_default_features": true,
+      "selected_surfaces": [
+        "build",
+        "test"
+      ]
     }
   ],
   "reproducibility": {
-    "cargo_rail_version": "0.18.0"
+    "cargo_rail_version": "0.19.0",
+    "config_hash": "<CONFIG_HASH>",
+    "git_shallow_clone": false
   }
 }

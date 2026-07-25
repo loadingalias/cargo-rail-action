@@ -7,8 +7,8 @@ import argparse
 import json
 import sys
 
-SUPPORTED_PLAN_CONTRACT_VERSION = 3
-SUPPORTED_SCOPE_CONTRACT_VERSION = 2
+SUPPORTED_PLAN_CONTRACT_VERSION = 5
+SUPPORTED_SCOPE_CONTRACT_VERSION = 3
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,17 +63,17 @@ def string_list(value: object) -> list[str] | None:
   return value
 
 
-def validate_scope_cargo_args(scope: dict[str, object]) -> list[str]:
+def validate_scope_cargo_args(scope: dict[str, object], label: str = "scope") -> list[str]:
   cargo_args = string_list(scope.get("cargo_args"))
   crates = string_list(scope.get("crates"))
   mode = scope.get("mode")
 
   messages: list[str] = []
   if cargo_args is None:
-    messages.append("::error::scope.cargo_args missing or invalid in planner output")
+    messages.append(f"::error::{label}.cargo_args missing or invalid in planner output")
     return messages
   if crates is None:
-    messages.append("::error::scope.crates missing or invalid in planner output")
+    messages.append(f"::error::{label}.crates missing or invalid in planner output")
     return messages
 
   if mode == "empty":
@@ -85,14 +85,52 @@ def validate_scope_cargo_args(scope: dict[str, object]) -> list[str]:
     for crate_name in crates:
       expected.extend(["-p", crate_name])
   else:
-    messages.append(f"::error::scope.mode invalid in planner output: {mode!r}")
+    messages.append(f"::error::{label}.mode invalid in planner output: {mode!r}")
     return messages
 
   if cargo_args != expected:
     messages.append(
-      "::error::scope.cargo_args does not match scope mode/crates: "
+      f"::error::{label}.cargo_args does not match scope mode/crates: "
       f"got {json.dumps(cargo_args)}, expected {json.dumps(expected)}"
     )
+  return messages
+
+
+def validate_plan(plan: dict[str, object], scope: dict[str, object]) -> list[str]:
+  messages: list[str] = []
+
+  inputs = plan.get("inputs")
+  if not isinstance(inputs, dict) or "snapshot_id" not in inputs:
+    messages.append("::error::inputs.snapshot_id missing in planner output")
+
+  plan_scope = plan.get("scope")
+  if plan_scope != scope:
+    messages.append("::error::plan.scope does not match scope_json")
+
+  surfaces = plan.get("surfaces")
+  if not isinstance(surfaces, dict):
+    messages.append("::error::plan.surfaces missing or invalid in planner output")
+    return messages
+
+  required_surfaces = {"bench", "build", "docs", "infra", "test"}
+  for name in sorted(required_surfaces - surfaces.keys()):
+    messages.append(f"::error::plan.surfaces.{name} missing or invalid in planner output")
+
+  for name, decision in sorted(surfaces.items()):
+    if not isinstance(decision, dict):
+      messages.append(f"::error::plan.surfaces.{name} missing or invalid in planner output")
+      continue
+    if not isinstance(decision.get("enabled"), bool):
+      messages.append(f"::error::plan.surfaces.{name}.enabled missing or invalid in planner output")
+    reasons = decision.get("reasons")
+    if not isinstance(reasons, list) or not all(isinstance(reason, int) for reason in reasons):
+      messages.append(f"::error::plan.surfaces.{name}.reasons missing or invalid in planner output")
+    surface_scope = decision.get("scope")
+    if not isinstance(surface_scope, dict):
+      messages.append(f"::error::plan.surfaces.{name}.scope missing or invalid in planner output")
+    else:
+      messages.extend(validate_scope_cargo_args(surface_scope, f"plan.surfaces.{name}.scope"))
+
   return messages
 
 
@@ -109,6 +147,7 @@ def main() -> int:
     classify_version(scope.get("scope_contract_version"), SUPPORTED_SCOPE_CONTRACT_VERSION, "scope_contract_version")
   )
   messages.extend(validate_scope_cargo_args(scope))
+  messages.extend(validate_plan(plan, scope))
 
   messages = [message for message in messages if message]
   if not messages:

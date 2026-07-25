@@ -11,7 +11,7 @@ run_summary() {
   python3 "$ROOT/scripts/render_summary.py" \
     --plan-json-file "$fixture" \
     --install-method binary \
-    --install-version 0.18.0 \
+    --install-version 0.19.0 \
     --base-ref origin/main >"$out"
 }
 
@@ -31,15 +31,24 @@ python3 - <<'PY' >"$TMP_DIR/plan_large.json"
 import json
 
 trace = []
-trace.append({"id": 1, "code": "FILE_KIND_RUST_SRC", "file": "crates/lib-01/src/lib.rs", "surface": "build"})
+trace.append(
+  {
+    "id": 1,
+    "code": "FILE_KIND_RUST_SRC",
+    "description": "Rust source file changed",
+    "file": "crates/lib-01/src/lib.rs",
+    "selected_surfaces": ["build", "test"],
+  }
+)
 for idx in range(2, 24):
   trace.append(
     {
       "id": idx,
       "code": "TRANSITIVE_DEPENDS_ON_DIRECT",
+      "description": "Transitive dependency of changed crate",
       "crate": f"lib-{idx:02d}",
       "depends_on": "lib-01",
-      "surface": "build",
+      "selected_surfaces": ["build", "test"],
     }
   )
 
@@ -47,16 +56,16 @@ plan = {
   "files": [{"path": "crates/lib-01/src/lib.rs"}],
   "impact": {
     "direct_crates": [f"lib-{idx:02d}" for idx in range(1, 15)],
-    "transitive_crates": [f"dep-{idx:02d}" for idx in range(1, 5)],
+    "build_transitive_crates": [f"dep-{idx:02d}" for idx in range(1, 5)],
+    "development_transitive_crates": [],
   },
   "surfaces": {
-    "build": {"enabled": True, "reasons": list(range(1, 24))},
-    "test": {"enabled": True, "reasons": list(range(1, 24))},
+    "build": {"enabled": True, "reasons": list(range(1, 24)), "scope": {"mode": "crates", "crates": [], "cargo_args": []}},
+    "test": {"enabled": True, "reasons": list(range(1, 24)), "scope": {"mode": "crates", "crates": [], "cargo_args": []}},
   },
   "scope": {
     "mode": "crates",
     "crates": [f"pkg-{idx:02d}" for idx in range(1, 17)],
-    "surfaces": {"build": True, "test": True},
   },
   "trace": trace,
 }

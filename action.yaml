@@ -8,10 +8,10 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.18.0; use 'latest' for
+    description: "cargo-rail version to install (default: 0.19.0; use 'latest' for
       floating installs)"
     required: false
-    default: "0.18.0"
+    default: "0.19.0"
 
   checksum:
     description: "Checksum verification mode for downloaded binaries:
@@ -51,6 +51,10 @@ outputs:
   scope-json:
     description: "Compact execution-scope payload emitted by the planner"
     value: ${{ steps.plan.outputs.scope_json }}
+
+  surfaces-json:
+    description: "Boolean map of built-in and custom planner surfaces"
+    value: ${{ steps.plan.outputs.surfaces_json }}
 
   cargo-args:
     description: "Cargo package selection args emitted by the planner scope"
@@ -397,6 +401,21 @@ runs:
           --plan-json-file "$PLAN_JSON_FILE" \
           --scope-json-file "$SCOPE_JSON_FILE"
 
+        SURFACES_JSON="$(
+          python3 - "$PLAN_JSON_FILE" <<'PY'
+        import json
+        import sys
+
+        with open(sys.argv[1], "r", encoding="utf-8") as handle:
+          plan = json.load(handle)
+        surfaces = {
+          name: decision["enabled"]
+          for name, decision in sorted(plan["surfaces"].items())
+        }
+        print(json.dumps(surfaces, separators=(",", ":")))
+        PY
+        )"
+
         {
           echo "build=${BUILD:-false}"
           echo "test=${TEST:-false}"
@@ -405,6 +424,7 @@ runs:
           echo "infra=${INFRA:-false}"
           echo "cargo_args=${CARGO_ARGS}"
           echo "scope_json=${SCOPE_JSON}"
+          echo "surfaces_json=${SURFACES_JSON}"
         } >> "$GITHUB_OUTPUT"
 
         if [[ "$MODE" == "debug" ]]; then
@@ -417,26 +437,6 @@ runs:
         SUMMARY_PLAN_JSON_FILE="${RUNNER_TEMP}/cargo-rail-plan.json"
         printf '%s' "$PLAN_JSON" > "$SUMMARY_PLAN_JSON_FILE"
         echo "plan_json_file=${SUMMARY_PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
-
-        # Emit individual outputs for custom surfaces as custom_<name>, with punctuation normalized to _.
-        python3 - "$GITHUB_OUTPUT" "$SCOPE_JSON" <<'PY'
-        import json
-        import re
-        import sys
-
-        output_path = sys.argv[1]
-        scope = json.loads(sys.argv[2])
-        surfaces = scope.get("surfaces", {})
-
-        with open(output_path, "a", encoding="utf-8") as out:
-          for name, enabled in sorted(surfaces.items()):
-            if not name.startswith("custom:"):
-              continue
-            sanitized = re.sub(r"[^A-Za-z0-9]+", "_", name.removeprefix("custom:")).strip("_").lower()
-            if not sanitized:
-              continue
-            out.write(f"custom_{sanitized}={str(bool(enabled)).lower()}\n")
-        PY
 
     # Generate Job Summary
     - name: Summary

@@ -1,5 +1,5 @@
 {
-  "plan_contract_version": 3,
+  "plan_contract_version": 5,
   "files": [
     {
       "path": "README.md",
@@ -10,22 +10,16 @@
   ],
   "impact": {
     "direct_crates": [],
-    "transitive_crates": []
+    "build_transitive_crates": [],
+    "development_transitive_crates": []
   },
   "scope": {
-    "scope_contract_version": 2,
+    "scope_contract_version": 3,
     "resolved_base": "origin/main",
     "resolved_head": "WORKTREE",
     "mode": "empty",
     "crates": [],
-    "cargo_args": [],
-    "surfaces": {
-      "bench": false,
-      "build": false,
-      "docs": true,
-      "infra": false,
-      "test": false
-    }
+    "cargo_args": []
   },
   "inputs": {
     "refs": {
@@ -36,43 +30,82 @@
       "resolved_base": "origin/main",
       "resolved_head": "WORKTREE"
     },
+    "snapshot_id": "<SNAPSHOT_ID>",
     "workspace_root": "<WORKSPACE_ROOT>",
-    "config_fingerprint": "none",
-    "toolchain_fingerprint": "none"
+    "config_fingerprint": "<CONFIG_FP>",
+    "toolchain_fingerprint": "<TOOLCHAIN_FP>",
+    "confidence_profile": "balanced",
+    "confidence_profile_source": "config"
   },
   "surfaces": {
     "bench": {
       "enabled": false,
-      "reasons": []
+      "reasons": [],
+      "scope": {
+        "mode": "empty",
+        "crates": [],
+        "cargo_args": []
+      }
     },
     "build": {
       "enabled": false,
-      "reasons": []
+      "reasons": [],
+      "scope": {
+        "mode": "empty",
+        "crates": [],
+        "cargo_args": []
+      }
     },
     "docs": {
       "enabled": true,
       "reasons": [
-        1
-      ]
+        2
+      ],
+      "scope": {
+        "mode": "empty",
+        "crates": [],
+        "cargo_args": []
+      }
     },
     "infra": {
       "enabled": false,
-      "reasons": []
+      "reasons": [],
+      "scope": {
+        "mode": "empty",
+        "crates": [],
+        "cargo_args": []
+      }
     },
     "test": {
       "enabled": false,
-      "reasons": []
+      "reasons": [],
+      "scope": {
+        "mode": "empty",
+        "crates": [],
+        "cargo_args": []
+      }
     }
   },
   "trace": [
     {
       "id": 1,
+      "code": "CONFIDENCE_PROFILE_BALANCED",
+      "description": "Balanced confidence profile active",
+      "selected_surfaces": []
+    },
+    {
+      "id": 2,
       "code": "FILE_KIND_DOCS",
+      "description": "Documentation changed",
       "file": "README.md",
-      "surface": "docs"
+      "selected_surfaces": [
+        "docs"
+      ]
     }
   ],
   "reproducibility": {
-    "cargo_rail_version": "0.18.0"
+    "cargo_rail_version": "0.19.0",
+    "config_hash": "<CONFIG_HASH>",
+    "git_shallow_clone": false
   }
 }

@@ -55,11 +55,20 @@ jobs:
           echo "build: ${{ steps.rail.outputs.build }}"
           echo "test: ${{ steps.rail.outputs.test }}"
           echo "scope-json: ${{ steps.rail.outputs.scope-json }}"
+          echo "surfaces-json: ${{ steps.rail.outputs.surfaces-json }}"
           echo "plan-json: ${{ steps.rail.outputs.plan-json }}"
 
           [[ "${{ steps.rail.outputs.build }}" == "true" ]] || { echo "expected build=true"; exit 1; }
           [[ "${{ steps.rail.outputs.test }}" == "true" ]] || { echo "expected test=true"; exit 1; }
           echo '${{ steps.rail.outputs.scope-json }}' | jq . || { echo "scope-json not valid JSON"; exit 1; }
+          [[ "$(echo '${{ steps.rail.outputs.surfaces-json }}' | jq -r '.build')" == "true" ]] || {
+            echo "expected surfaces-json build=true"
+            exit 1
+          }
+          [[ "$(echo '${{ steps.rail.outputs.surfaces-json }}' | jq -r '.test')" == "true" ]] || {
+            echo "expected surfaces-json test=true"
+            exit 1
+          }
           echo '${{ steps.rail.outputs.plan-json }}' | jq . || { echo "plan-json not valid JSON"; exit 1; }
           [[ -n "${{ steps.rail.outputs.base-ref }}" ]] || { echo "base-ref missing"; exit 1; }
 
@@ -97,4 +106,5 @@ jobs:
           echo "Platform: ${{ matrix.os }}"
           echo "Scope JSON: ${{ steps.rail.outputs.scope-json }}"
           echo '${{ steps.rail.outputs.scope-json }}' | jq . >/dev/null || exit 1
+          echo '${{ steps.rail.outputs.surfaces-json }}' | jq . >/dev/null || exit 1
           echo "Platform test passed!"

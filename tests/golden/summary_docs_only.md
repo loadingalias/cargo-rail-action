@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | `0.18.0` |
+| **Version** | `0.19.0` |
 | **Install** | Binary download |
 | **Base** | `origin/main` |
 | **Changed files** | 1 |
@@ -12,12 +12,14 @@
 
 **Top reasons:** Documentation changed
 
-<details><summary>Trace summary (1 reasons)</summary>
+<details><summary>Trace summary (2 reasons)</summary>
 
 **Reason counts**
+- Balanced confidence profile active: 1
 - Documentation changed: 1
 
-**Sample trace entries (1 of 1)**
-- r1 FILE_KIND_DOCS file=README.md surface=docs
+**Sample trace entries (2 of 2)**
+- r1 CONFIDENCE_PROFILE_BALANCED
+- r2 FILE_KIND_DOCS file=README.md surfaces=docs
 
 </details>

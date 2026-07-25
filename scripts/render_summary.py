@@ -19,31 +19,6 @@ LIST_PREVIEW_LIMIT = 12
 TRACE_PREVIEW_LIMIT = 20
 REASON_COUNT_PREVIEW_LIMIT = 8
 
-# Fallback descriptions for older planner contracts that don't ship descriptions inline.
-REASON_DESCRIPTIONS = {
-  "FILE_KIND_RUST_SRC": "Rust source file changed",
-  "FILE_KIND_RUST_TEST": "Rust test file changed",
-  "FILE_KIND_RUST_BENCH": "Rust benchmark file changed",
-  "FILE_KIND_TOML_MANIFEST": "Cargo.toml changed",
-  "FILE_KIND_TOML_WORKSPACE": "Workspace Cargo.toml changed",
-  "FILE_KIND_TOML_TOOLING": "Tooling config changed",
-  "FILE_KIND_CI": "CI/workflow file changed",
-  "FILE_KIND_SCRIPT": "Script file changed",
-  "FILE_KIND_DOCS": "Documentation changed",
-  "FILE_KIND_CUSTOM": "Custom pattern matched",
-  "FILE_KIND_UNCLASSIFIED": "Unclassified file changed",
-  "FILE_OWNS_CRATE_DIRECT": "File directly owns crate",
-  "TRANSITIVE_DEPENDS_ON_DIRECT": "Transitive dependency of changed crate",
-  "OWNER_UNCERTAIN_FALLBACK": "Conservative fallback for uncertain ownership",
-  "CONFIDENCE_PROFILE_STRICT": "Strict confidence profile active",
-  "CONFIDENCE_PROFILE_BALANCED": "Balanced confidence profile active",
-  "CONFIDENCE_PROFILE_FAST": "Fast confidence profile active",
-  "CONFIDENCE_STRICT_OWNER_EXPANSION": "Strict mode expands owned crates",
-  "CONFIDENCE_FAST_SKIP_TRANSITIVE": "Fast mode skips transitive expansion",
-  "BOT_PR_CONFIDENCE_OVERRIDE": "Bot PR confidence override applied",
-}
-
-
 def parse_args() -> argparse.Namespace:
   p = argparse.ArgumentParser()
   p.add_argument("--plan-json", default="")
@@ -92,7 +67,7 @@ def summarize_surface_reasons(reasons: list[int], lookup: dict[int, dict]) -> st
         for rid, entry in lookup.items()
         if rid in reasons and entry.get("code") == code and entry.get("description")
       ),
-      REASON_DESCRIPTIONS.get(code, code),
+      code,
     )
     if count > 1:
       parts.append(f"{desc} ({count}x)")
@@ -135,7 +110,7 @@ def reason_description(code: str, trace: list[dict]) -> str:
   for item in trace:
     if item.get("code") == code and item.get("description"):
       return item["description"]
-  return REASON_DESCRIPTIONS.get(code, code)
+  return code
 
 
 def render_trace_entry(item: dict) -> str:
@@ -145,7 +120,7 @@ def render_trace_entry(item: dict) -> str:
   file_path = item.get("file")
   crate_name = item.get("crate")
   depends_on = item.get("depends_on")
-  surface = item.get("surface")
+  selected_surfaces = item.get("selected_surfaces", [])
 
   parts = [f"r{rid}", code]
   if file_path:
@@ -154,8 +129,8 @@ def render_trace_entry(item: dict) -> str:
     parts.append(f"crate={crate_name}")
   if depends_on:
     parts.append(f"depends_on={depends_on}")
-  if surface:
-    parts.append(f"surface={surface}")
+  if selected_surfaces:
+    parts.append(f"surfaces={','.join(selected_surfaces)}")
   return f"- {' '.join(parts)}"
 
 
@@ -169,15 +144,18 @@ def render(args: argparse.Namespace, plan: dict) -> str:
 
   # Build reason lookup
   reason_lookup = build_reason_lookup(trace)
-  scope_surfaces = scope.get("surfaces", {})
   scope_mode = scope.get("mode", "empty")
   scope_crates = list(scope.get("crates", []))
 
   active_builtin_surfaces = sorted(
-    name for name, enabled in scope_surfaces.items() if enabled is True and not name.startswith("custom:")
+    name
+    for name, decision in surfaces.items()
+    if isinstance(decision, dict) and decision.get("enabled") is True and not name.startswith("custom:")
   )
   active_custom_surfaces = sorted(
-    name for name, enabled in scope_surfaces.items() if enabled is True and name.startswith("custom:")
+    name
+    for name, decision in surfaces.items()
+    if isinstance(decision, dict) and decision.get("enabled") is True and name.startswith("custom:")
   )
   top_reasons = summarize_surface_reasons(collect_active_reason_ids(surfaces), reason_lookup)
 

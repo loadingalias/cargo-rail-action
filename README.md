@@ -31,10 +31,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: loadingalias/cargo-rail-action@v5.1.0
+      - uses: loadingalias/cargo-rail-action@v6.0.0
         id: rail
         with:
-          version: 0.18.0
+          version: 0.19.0
 
   test:
     needs: plan
@@ -60,21 +60,21 @@ Minimal mode publishes:
 - `docs`
 - `infra`
 - `scope-json`
+- `surfaces-json`
 - `cargo-args`
 - `base-ref`
-- `custom_<name>` for custom surfaces
 
 Debug mode adds:
 
 - `plan-json`
 
-`scope-json` is the stable execution handoff. `cargo-args` is its Cargo package selection: `--workspace`, one or more `-p <crate>` arguments, or an empty string. `plan-json` contains diagnostic detail and is available only in debug mode.
+`scope-json` is the stable execution handoff. `cargo-args` is its Cargo package selection: `--workspace`, one or more `-p <crate>` arguments, or an empty string. `surfaces-json` contains every built-in and custom surface as a boolean map. `plan-json` contains diagnostic detail and is available only in debug mode.
 
 ## Inputs
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `0.18.0` | Published `cargo-rail` release tested by default; override only with a contract-compatible release |
+| `version` | `0.19.0` | Published `cargo-rail` release tested by default; override only with a contract-compatible release |
 | `checksum` | `required` | `required`, `if-available`, or `off` |
 | `since` | auto | Git ref for planner comparison |
 | `args` | `""` | Extra planner args except format/output flags |
@@ -96,7 +96,7 @@ The contracts version independently. Diagnostic fields can be added to `plan-jso
 - Checksum verification is on by default.
 - The action fetches missing history when a shallow checkout does not contain the selected base ref.
 - Installation tries a matching cached binary, a release archive, `cargo-binstall`, then `cargo install`.
-- `@v5.1.0` supports cargo-rail v0.18 and scope contract v2 when `version: 0.18.0` is explicit; pin its commit SHA for immutable action execution.
+- `@v6.0.0` supports cargo-rail v0.19, planner contract v5, and scope contract v3; pin its commit SHA for immutable action execution.
 - Linux x86-64/ARM64, Windows x86-64/ARM64, and Apple Silicon macOS use published release binaries. Intel macOS is not supported.
 
 ## Getting Help
