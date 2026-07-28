@@ -1,5 +1,5 @@
-name: "cargo-rail"
-description: "Planner-first CI transport for cargo rail plan surfaces and scope."
+name: "Rail planner"
+description: "Use Rail to select affected Cargo work and expose planner scope to later jobs."
 author: "loadingalias"
 
 branding:
@@ -8,10 +8,10 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.19.0; use 'latest' for
+    description: "cargo-rail version to install (default: 0.19.1; use 'latest' for
       floating installs)"
     required: false
-    default: "0.19.0"
+    default: "0.19.1"
 
   checksum:
     description: "Checksum verification mode for downloaded binaries:
