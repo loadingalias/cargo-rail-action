@@ -41,7 +41,3 @@ ruby -ryaml -e 'YAML.load_file("action.yaml")'
 - Include the commands used to verify it.
 - Call out changes to inputs, outputs, defaults, planner contracts, supported runners, or checksum handling.
 - Link the issue when one exists.
-
-## Security
-
-Do not open public issues for vulnerabilities. See [SECURITY.md](SECURITY.md).

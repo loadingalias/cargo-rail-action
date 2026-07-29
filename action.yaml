@@ -1,5 +1,5 @@
-name: "Rail planner"
-description: "Use Rail to select affected Cargo work and expose planner scope to later jobs."
+name: "Cargo-Rail planner"
+description: "Use Cargo-Rail to select affected Cargo work and expose planner scope to later jobs."
 author: "loadingalias"
 
 branding:

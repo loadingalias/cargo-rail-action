@@ -1,20 +1,13 @@
-# Rail planner for GitHub Actions
+# Cargo-Rail for GitHub Actions
 
-`cargo-rail-action` runs Rail's planner and exports affected Cargo scope to later GitHub Actions jobs. It does not
-replace those jobs.
+**Run the planner once. Make every CI job do less.**
 
-[![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## What the action does
+Rust CI often duplicates Cargo's package graph in path filters and package-selection scripts. `cargo-rail-action` installs Cargo-Rail, runs its read-only planner against one base ref, validates the planner contracts, and exports the affected surfaces and Cargo package scope.
 
-The action runs `cargo rail plan` against the current checkout and a base Git ref. It publishes two kinds of output:
-
-- Boolean surfaces such as `build`, `test`, and `docs` for job or step conditions.
-- Execution scope as `scope-json` and `cargo-args`, so existing Cargo commands can target the affected workspace packages.
-
-The action does not build, test, or publish crates. Keep those commands in your workflow and gate them with the planner outputs. This separates change detection from execution and lets each job use its existing toolchain, cache, runner, and test backend.
-
-In a multi-crate workspace, changing a crate can select that crate and affected dependents. In a single-crate repository, package scope resolves to that package or no Rust work, while surface outputs can still distinguish source, documentation, and infrastructure changes.
+**The action does not build, test, cache, release, or publish crates.** Keep those commands in their existing jobs and gate them with planner output. Your jobs keep their current toolchains, runners, caches, and test backends.
 
 ## Quick start
 
@@ -26,13 +19,12 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
-      build: ${{ steps.rail.outputs.build }}
       test: ${{ steps.rail.outputs.test }}
       cargo_args: ${{ steps.rail.outputs.cargo-args }}
     steps:
       - uses: actions/checkout@v6
 
-      - uses: loadingalias/cargo-rail-action@v6.0.1
+      - uses: loadingalias/cargo-rail-action@v6
         id: rail
         with:
           version: 0.19.1
@@ -49,70 +41,52 @@ jobs:
         run: cargo test $CARGO_ARGS
 ```
 
-The default `version` is the cargo-rail release tested with this action major. Set `version` to test or hold another published release.
+The action maps source changes through Cargo's resolved dependency graph. In a multi-crate workspace, scope contains the changed crates and affected dependents. In a single-crate repository, scope contains that crate or no Rust work. Documentation and infrastructure surfaces remain independent of package scope.
+
+Use the floating `@v6` tag for the current action major, or pin a full commit SHA for immutable execution. The `version` input selects the installed `cargo-rail` release independently.
 
 ## Outputs
 
 Minimal mode publishes:
 
-- `build`
-- `test`
-- `bench`
-- `docs`
-- `infra`
-- `scope-json`
-- `surfaces-json`
-- `cargo-args`
-- `base-ref`
+| Output | Meaning |
+|---|---|
+| `build`, `test`, `bench`, `docs`, `infra` | Boolean built-in surface decisions |
+| `surfaces-json` | Boolean map of every built-in and custom surface |
+| `scope-json` | Versioned execution-scope handoff |
+| `cargo-args` | Cargo projection: `--workspace`, one or more `-p <crate>` arguments, or an empty string |
+| `base-ref` | Git ref used for the plan |
 
-Debug mode adds:
-
-- `plan-json`
-
-`scope-json` is the stable execution handoff. `cargo-args` is its Cargo package selection: `--workspace`, one or more `-p <crate>` arguments, or an empty string. `surfaces-json` contains every built-in and custom surface as a boolean map. `plan-json` contains diagnostic detail and is available only in debug mode.
+Debug mode also publishes `plan-json`, the full diagnostic planner payload. Use `scope-json` or `cargo-args` for execution. Use `plan-json` to inspect file classification, graph impact, and reason codes.
 
 ## Inputs
 
-| Input | Default | Description |
+| Input | Default | Meaning |
 |---|---|---|
-| `version` | `0.19.1` | Published `cargo-rail` release tested by default; override only with a contract-compatible release |
-| `checksum` | `required` | `required`, `if-available`, or `off` |
-| `since` | auto | Git ref for planner comparison |
-| `args` | `""` | Extra planner args except format/output flags |
-| `working-directory` | `.` | Workspace directory |
-| `token` | `${{ github.token }}` | Token for release download API |
-| `mode` | `minimal` | `minimal` or `debug` |
+| `version` | `0.19.1` | `cargo-rail` release to install; `latest` opts into a floating core version |
+| `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
+| `since` | automatic | Explicit Git comparison ref |
+| `args` | `""` | Additional planner arguments; format and output overrides are rejected |
+| `working-directory` | `.` | Directory containing the workspace `Cargo.toml` |
+| `token` | `${{ github.token }}` | Token used to download release assets |
+| `mode` | `minimal` | `minimal` or `debug` output surface |
 
-## Compatibility
+Without `since`, the action selects the pull-request base, `origin/main`, `origin/master`, or `HEAD~1`, in that order. If a shallow checkout lacks the selected ref, the action fetches the missing history before planning.
 
-The action validates both planner contracts before publishing outputs.
+## Trust and compatibility
 
-- `plan_contract_version` covers the full diagnostic planner payload
-- `scope_contract_version` covers the execution handoff payload
+- Checksum verification is required by default.
+- Installation tries an already matching binary, a release archive, `cargo-binstall`, then `cargo install`.
+- The action validates `plan_contract_version` and `scope_contract_version` before publishing outputs.
+- Action major v6 consumes planner contract v5 and scope contract v3.
+- Linux x86-64/ARM64, Windows x86-64/ARM64, and Apple Silicon macOS use release binaries. Intel macOS is rejected.
 
-The contracts version independently. Diagnostic fields can be added to `plan-json` without changing the smaller execution handoff in `scope-json`.
+The planner and scope contracts version independently. Diagnostic fields can evolve without changing the smaller execution handoff.
 
-## Operational behavior
+## Project
 
-- Checksum verification is on by default.
-- The action fetches missing history when a shallow checkout does not contain the selected base ref.
-- Installation tries a matching cached binary, a release archive, `cargo-binstall`, then `cargo install`.
-- `@v6.0.1` supports cargo-rail v0.19.1, planner contract v5, and scope contract v3; pin its commit SHA for immutable action execution.
-- Linux x86-64/ARM64, Windows x86-64/ARM64, and Apple Silicon macOS use published release binaries. Intel macOS is not supported.
-
-## Get help
-
-- Action Issues: [GitHub Issues](https://github.com/loadingalias/cargo-rail-action/issues)
-- Core Issues: [loadingalias/cargo-rail](https://github.com/loadingalias/cargo-rail/issues)
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Security
-
-See [SECURITY.md](SECURITY.md).
-
-## License
-
-Licensed under [MIT](LICENSE).
+- [Cargo-Rail](https://github.com/loadingalias/cargo-rail)
+- [Action issues](https://github.com/loadingalias/cargo-rail-action/issues)
+- [Core issues](https://github.com/loadingalias/cargo-rail/issues)
+- [Contributing](CONTRIBUTING.md)
+- [MIT license](LICENSE)
