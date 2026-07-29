@@ -148,7 +148,7 @@
     }
   ],
   "reproducibility": {
-    "cargo_rail_version": "0.19.1",
+    "cargo_rail_version": "0.20.0",
     "config_hash": "<CONFIG_HASH>",
     "git_shallow_clone": false
   }

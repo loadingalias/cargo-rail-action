@@ -11,7 +11,7 @@ run_summary() {
   python3 "$ROOT/scripts/render_summary.py" \
     --plan-json-file "$fixture" \
     --install-method binary \
-    --install-version 0.19.1 \
+    --install-version 0.20.0 \
     --base-ref origin/main >"$out"
 }
 

@@ -8,10 +8,10 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.19.1; use 'latest' for
+    description: "cargo-rail version to install (default: 0.20.0; use 'latest' for
       floating installs)"
     required: false
-    default: "0.19.1"
+    default: "0.20.0"
 
   checksum:
     description: "Checksum verification mode for downloaded binaries:
@@ -127,10 +127,7 @@ runs:
         case "$RUNNER_OS-$RUNNER_ARCH" in
           Linux-X64)   TARGET="x86_64-unknown-linux-gnu" ;;
           Linux-ARM64) TARGET="aarch64-unknown-linux-gnu" ;;
-          macOS-X64)
-            echo "::error::Intel macOS is not supported; use an Apple Silicon runner"
-            exit 1
-            ;;
+          macOS-X64)   TARGET="x86_64-apple-darwin" ;;
           macOS-ARM64) TARGET="aarch64-apple-darwin" ;;
           Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
           Windows-ARM64) TARGET="aarch64-pc-windows-msvc" ;;

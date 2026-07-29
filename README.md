@@ -27,7 +27,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v6
         id: rail
         with:
-          version: 0.19.1
+          version: 0.20.0
 
   test:
     needs: plan
@@ -63,7 +63,7 @@ Debug mode also publishes `plan-json`, the full diagnostic planner payload. Use 
 
 | Input | Default | Meaning |
 |---|---|---|
-| `version` | `0.19.1` | `cargo-rail` release to install; `latest` opts into a floating core version |
+| `version` | `0.20.0` | `cargo-rail` release to install; `latest` opts into a floating core version |
 | `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
 | `since` | automatic | Explicit Git comparison ref |
 | `args` | `""` | Additional planner arguments; format and output overrides are rejected |
@@ -79,7 +79,7 @@ Without `since`, the action selects the pull-request base, `origin/main`, `origi
 - Installation tries an already matching binary, a release archive, `cargo-binstall`, then `cargo install`.
 - The action validates `plan_contract_version` and `scope_contract_version` before publishing outputs.
 - Action major v6 consumes planner contract v5 and scope contract v3.
-- Linux x86-64/ARM64, Windows x86-64/ARM64, and Apple Silicon macOS use release binaries. Intel macOS is rejected.
+- Linux, Windows, and macOS use release binaries on x86-64 and ARM64.
 
 The planner and scope contracts version independently. Diagnostic fields can evolve without changing the smaller execution handoff.
 

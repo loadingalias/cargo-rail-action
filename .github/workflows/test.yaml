@@ -45,7 +45,6 @@ jobs:
         uses: ./
         with:
           mode: debug
-          checksum: if-available
           since: HEAD~1
           working-directory: test-workspace
 
@@ -60,6 +59,10 @@ jobs:
 
           [[ "${{ steps.rail.outputs.build }}" == "true" ]] || { echo "expected build=true"; exit 1; }
           [[ "${{ steps.rail.outputs.test }}" == "true" ]] || { echo "expected test=true"; exit 1; }
+          [[ "$(cargo-rail rail --version)" == "cargo-rail 0.20.0" ]] || {
+            echo "expected cargo-rail 0.20.0"
+            exit 1
+          }
           echo '${{ steps.rail.outputs.scope-json }}' | jq . || { echo "scope-json not valid JSON"; exit 1; }
           [[ "$(echo '${{ steps.rail.outputs.surfaces-json }}' | jq -r '.build')" == "true" ]] || {
             echo "expected surfaces-json build=true"
@@ -82,7 +85,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
+        os: [ubuntu-latest, macos-15, macos-15-intel, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -96,7 +99,6 @@ jobs:
         uses: ./
         with:
           mode: minimal
-          checksum: if-available
           since: HEAD~1
           working-directory: test-workspace
 
@@ -105,6 +107,10 @@ jobs:
         run: |
           echo "Platform: ${{ matrix.os }}"
           echo "Scope JSON: ${{ steps.rail.outputs.scope-json }}"
+          [[ "$(cargo-rail rail --version)" == "cargo-rail 0.20.0" ]] || {
+            echo "expected cargo-rail 0.20.0"
+            exit 1
+          }
           echo '${{ steps.rail.outputs.scope-json }}' | jq . >/dev/null || exit 1
           echo '${{ steps.rail.outputs.surfaces-json }}' | jq . >/dev/null || exit 1
           echo "Platform test passed!"
