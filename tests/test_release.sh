@@ -58,7 +58,7 @@ run_release() {
       GH_STATE_DIR="$GH_STATE_DIR" \
       GITHUB_REF="refs/heads/main" \
       GITHUB_STEP_SUMMARY="$SUMMARY" \
-      VERSION="6.1.1" \
+      VERSION="6.1.2" \
       bash "$SCRIPT"
   )
 }
@@ -77,7 +77,7 @@ if run_release >"$TMP_DIR/atomic.out" 2>&1; then
   echo "expected atomic tag push to fail"
   exit 1
 fi
-if git --git-dir="$REMOTE" rev-parse --verify "refs/tags/v6.1.1" >/dev/null 2>&1; then
+if git --git-dir="$REMOTE" rev-parse --verify "refs/tags/v6.1.2" >/dev/null 2>&1; then
   echo "version tag escaped a rejected atomic push"
   exit 1
 fi
@@ -91,18 +91,18 @@ if GH_FAIL_CREATE=true run_release >"$TMP_DIR/partial.out" 2>&1; then
   echo "expected GitHub release creation to fail"
   exit 1
 fi
-[[ "$(git --git-dir="$REMOTE" rev-parse "refs/tags/v6.1.1^{commit}")" == "$RELEASE_SHA" ]]
+[[ "$(git --git-dir="$REMOTE" rev-parse "refs/tags/v6.1.2^{commit}")" == "$RELEASE_SHA" ]]
 [[ "$(git --git-dir="$REMOTE" rev-parse "refs/tags/v6^{commit}")" == "$RELEASE_SHA" ]]
 MAJOR_TAG_OBJECT="$(git --git-dir="$REMOTE" rev-parse "refs/tags/v6")"
 
 run_release
-[[ -f "$GH_STATE_DIR/v6.1.1" ]]
-CREATE_CALLS="$(grep -c '^release create v6.1.1' "$GH_LOG")"
+[[ -f "$GH_STATE_DIR/v6.1.2" ]]
+CREATE_CALLS="$(grep -c '^release create v6.1.2' "$GH_LOG")"
 [[ "$CREATE_CALLS" == "2" ]]
 [[ "$(git --git-dir="$REMOTE" rev-parse "refs/tags/v6")" == "$MAJOR_TAG_OBJECT" ]]
 
 run_release
-[[ "$(grep -c '^release create v6.1.1' "$GH_LOG")" == "$CREATE_CALLS" ]]
+[[ "$(grep -c '^release create v6.1.2' "$GH_LOG")" == "$CREATE_CALLS" ]]
 [[ "$(git --git-dir="$REMOTE" rev-parse "refs/tags/v6")" == "$MAJOR_TAG_OBJECT" ]]
 
 printf 'new head\n' >> "$WORK/action.txt"
@@ -114,7 +114,7 @@ if run_release >"$TMP_DIR/drift.out" 2>&1; then
   exit 1
 fi
 grep -Fq "expected $(git -C "$WORK" rev-parse HEAD)" "$TMP_DIR/drift.out"
-[[ "$(git --git-dir="$REMOTE" rev-parse "refs/tags/v6.1.1^{commit}")" == "$RELEASE_SHA" ]]
+[[ "$(git --git-dir="$REMOTE" rev-parse "refs/tags/v6.1.2^{commit}")" == "$RELEASE_SHA" ]]
 [[ "$(git --git-dir="$REMOTE" rev-parse "refs/tags/v6^{commit}")" == "$RELEASE_SHA" ]]
 
 echo "release tests passed"

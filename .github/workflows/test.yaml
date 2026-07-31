@@ -61,8 +61,8 @@ jobs:
 
           [[ "${{ steps.rail.outputs.build }}" == "true" ]] || { echo "expected build=true"; exit 1; }
           [[ "${{ steps.rail.outputs.test }}" == "true" ]] || { echo "expected test=true"; exit 1; }
-          [[ "$(cargo-rail rail --version)" == "cargo-rail 0.20.0" ]] || {
-            echo "expected cargo-rail 0.20.0"
+          [[ "$(cargo-rail rail --version)" == "cargo-rail 0.20.1" ]] || {
+            echo "expected cargo-rail 0.20.1"
             exit 1
           }
           echo '${{ steps.rail.outputs.scope-json }}' | jq . || { echo "scope-json not valid JSON"; exit 1; }
@@ -109,8 +109,8 @@ jobs:
         run: |
           echo "Platform: ${{ matrix.os }}"
           echo "Scope JSON: ${{ steps.rail.outputs.scope-json }}"
-          [[ "$(cargo-rail rail --version)" == "cargo-rail 0.20.0" ]] || {
-            echo "expected cargo-rail 0.20.0"
+          [[ "$(cargo-rail rail --version)" == "cargo-rail 0.20.1" ]] || {
+            echo "expected cargo-rail 0.20.1"
             exit 1
           }
           echo '${{ steps.rail.outputs.scope-json }}' | jq . >/dev/null || exit 1

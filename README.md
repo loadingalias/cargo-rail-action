@@ -27,7 +27,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v6
         id: rail
         with:
-          version: 0.20.0
+          version: 0.20.1
 
   test:
     needs: plan
@@ -63,7 +63,7 @@ Debug mode also publishes `plan-json`, the full diagnostic planner payload. Use 
 
 | Input | Default | Meaning |
 |---|---|---|
-| `version` | `0.20.0` | `cargo-rail` release to install; `latest` opts into a floating core version |
+| `version` | `0.20.1` | `cargo-rail` release to install; `latest` opts into a floating core version |
 | `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
 | `since` | automatic | Explicit Git comparison ref |
 | `args` | `""` | Additional planner arguments; format and output overrides are rejected |
