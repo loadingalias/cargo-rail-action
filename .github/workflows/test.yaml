@@ -26,6 +26,8 @@ jobs:
         run: bash ./tests/test_contracts.sh
       - name: Run history fixture tests
         run: bash ./tests/test_ensure_history.sh
+      - name: Run release fixture tests
+        run: bash ./tests/test_release.sh
 
   # ============================================================================
   # Self-test: Create minimal workspace, no external dependencies

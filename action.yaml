@@ -296,14 +296,19 @@ runs:
     - name: Detect base ref
       id: base
       shell: bash
+      env:
+        INPUT_SINCE: ${{ inputs.since }}
       run: |
-        INPUT_SINCE="${{ inputs.since }}"
-
         # Handle null SHA (first push on new branch or force push)
         # GitHub sets before to 0000...0000 in these cases
         if [[ "$INPUT_SINCE" =~ ^0+$ ]]; then
           echo "Null SHA detected (first push or force push), falling back to auto-detect"
           INPUT_SINCE=""
+        fi
+
+        if [[ "$INPUT_SINCE" == *$'\n'* || "$INPUT_SINCE" == *$'\r'* ]]; then
+          echo "::error::since must be a single-line Git ref"
+          exit 1
         fi
 
         if [[ -n "$INPUT_SINCE" ]]; then

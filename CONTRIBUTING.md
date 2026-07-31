@@ -13,12 +13,13 @@ Optional:
 
 - `actionlint`
 
-Run all contract, summary, and git-history tests:
+Run all contract, summary, Git-history, and release tests:
 
 ```bash
 bash tests/test_summary.sh
 bash tests/test_contracts.sh
 bash tests/test_ensure_history.sh
+bash tests/test_release.sh
 ```
 
 Validate `action.yaml` after changing inputs, outputs, or composite steps:

@@ -5,6 +5,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+ruby -ryaml - "$ROOT/action.yaml" <<'RUBY'
+action = YAML.load_file(ARGV.fetch(0))
+violations = action.fetch("runs").fetch("steps").each_with_object([]) do |step, found|
+  found << step["name"] if step.fetch("run", "").match?(/\$\{\{\s*inputs\./)
+end
+abort "action run blocks interpolate inputs directly: #{violations.join(', ')}" unless violations.empty?
+RUBY
+
 PLAN_FIXTURE="$(cat "$ROOT/tests/fixtures/plan_rust_src.json")"
 SCOPE_FIXTURE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json
