@@ -22,7 +22,7 @@ jobs:
       test: ${{ steps.rail.outputs.test }}
       cargo_args: ${{ steps.rail.outputs.cargo-args }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: loadingalias/cargo-rail-action@v6
         id: rail
@@ -34,7 +34,7 @@ jobs:
     if: needs.plan.outputs.test == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Test affected packages
         env:
           CARGO_ARGS: ${{ needs.plan.outputs.cargo_args }}
