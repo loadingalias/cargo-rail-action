@@ -52,6 +52,7 @@ run_release() {
   (
     cd "$WORK"
     env \
+      BASH_ENV=/dev/null \
       PATH="$BIN:$PATH" \
       GH_FAIL_CREATE="${GH_FAIL_CREATE:-false}" \
       GH_LOG="$GH_LOG" \
