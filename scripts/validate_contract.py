@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 
-SUPPORTED_PLAN_CONTRACT_VERSION = 5
-SUPPORTED_SCOPE_CONTRACT_VERSION = 3
+SUPPORTED_PLAN_CONTRACT_VERSION = 6
+SUPPORTED_SCOPE_CONTRACT_VERSION = 4
+SUPPORTED_RESOLUTION_UNIVERSE_MODE = "declared_dependencies"
+RESOLUTION_UNIVERSE_IDENTITY = re.compile(r"^resolution-universe-v1:sha256:[0-9a-f]{64}$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,6 +109,19 @@ def validate_plan(plan: dict[str, object], scope: dict[str, object]) -> list[str
   plan_scope = plan.get("scope")
   if plan_scope != scope:
     messages.append("::error::plan.scope does not match scope_json")
+
+  universe = plan.get("resolution_universe")
+  if not isinstance(universe, dict):
+    messages.append("::error::plan.resolution_universe missing or invalid in planner output")
+  else:
+    if universe.get("mode") != SUPPORTED_RESOLUTION_UNIVERSE_MODE:
+      messages.append(
+        "::error::plan.resolution_universe.mode invalid in planner output: "
+        f"{universe.get('mode')!r}"
+      )
+    identity = universe.get("identity")
+    if not isinstance(identity, str) or RESOLUTION_UNIVERSE_IDENTITY.fullmatch(identity) is None:
+      messages.append("::error::plan.resolution_universe.identity missing or invalid in planner output")
 
   surfaces = plan.get("surfaces")
   if not isinstance(surfaces, dict):

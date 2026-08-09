@@ -1,5 +1,5 @@
 {
-  "plan_contract_version": 5,
+  "plan_contract_version": 6,
   "files": [
     {
       "path": "README.md",
@@ -14,7 +14,7 @@
     "development_transitive_crates": []
   },
   "scope": {
-    "scope_contract_version": 3,
+    "scope_contract_version": 4,
     "resolved_base": "origin/main",
     "resolved_head": "WORKTREE",
     "mode": "empty",
@@ -36,6 +36,10 @@
     "toolchain_fingerprint": "<TOOLCHAIN_FP>",
     "confidence_profile": "balanced",
     "confidence_profile_source": "config"
+  },
+  "resolution_universe": {
+    "mode": "declared_dependencies",
+    "identity": "resolution-universe-v1:sha256:d9951bcb0228ff1649b59fc0ef804e75b2f9c6cbb6736197b851a3e542a98d95"
   },
   "surfaces": {
     "bench": {
@@ -104,7 +108,7 @@
     }
   ],
   "reproducibility": {
-    "cargo_rail_version": "0.20.1",
+    "cargo_rail_version": "0.22.0",
     "config_hash": "<CONFIG_HASH>",
     "git_shallow_clone": false
   }

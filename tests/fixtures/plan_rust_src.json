@@ -1,5 +1,5 @@
 {
-  "plan_contract_version": 5,
+  "plan_contract_version": 6,
   "files": [
     {
       "path": "crates/lib-a/src/lib.rs",
@@ -21,7 +21,7 @@
     "development_transitive_crates": []
   },
   "scope": {
-    "scope_contract_version": 3,
+    "scope_contract_version": 4,
     "resolved_base": "origin/main",
     "resolved_head": "WORKTREE",
     "mode": "workspace",
@@ -46,14 +46,25 @@
     "confidence_profile": "balanced",
     "confidence_profile_source": "config"
   },
+  "resolution_universe": {
+    "mode": "declared_dependencies",
+    "identity": "resolution-universe-v1:sha256:d9951bcb0228ff1649b59fc0ef804e75b2f9c6cbb6736197b851a3e542a98d95"
+  },
   "surfaces": {
     "bench": {
-      "enabled": false,
-      "reasons": [],
+      "enabled": true,
+      "reasons": [
+        4
+      ],
       "scope": {
-        "mode": "empty",
-        "crates": [],
-        "cargo_args": []
+        "mode": "crates",
+        "crates": [
+          "lib-b"
+        ],
+        "cargo_args": [
+          "-p",
+          "lib-b"
+        ]
       }
     },
     "build": {
@@ -142,13 +153,14 @@
       "optional": false,
       "uses_default_features": true,
       "selected_surfaces": [
+        "bench",
         "build",
         "test"
       ]
     }
   ],
   "reproducibility": {
-    "cargo_rail_version": "0.20.1",
+    "cargo_rail_version": "0.22.0",
     "config_hash": "<CONFIG_HASH>",
     "git_shallow_clone": false
   }

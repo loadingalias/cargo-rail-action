@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | `0.20.1` |
+| **Version** | `0.22.0` |
 | **Install** | Binary download |
 | **Base** | `origin/main` |
 | **Changed files** | 1 |

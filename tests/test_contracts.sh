@@ -42,7 +42,7 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as f:
   plan = json.load(f)
-plan["plan_contract_version"] = 4
+plan["plan_contract_version"] = 5
 print(json.dumps(plan))
 PY
 )"
@@ -51,7 +51,7 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$OLD_PLAN" --scope-
   echo "expected plan contract validation to fail for old contract"
   exit 1
 fi
-grep -Fq "plan_contract_version too old: got 4, expected 5" "$TMP_DIR/out.txt"
+grep -Fq "plan_contract_version too old: got 5, expected 6" "$TMP_DIR/out.txt"
 
 NEW_PLAN="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json
@@ -59,7 +59,7 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as f:
   plan = json.load(f)
-plan["plan_contract_version"] = 6
+plan["plan_contract_version"] = 7
 print(json.dumps(plan))
 PY
 )"
@@ -68,7 +68,7 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$NEW_PLAN" --scope-
   echo "expected plan contract validation to fail for new contract"
   exit 1
 fi
-grep -Fq "plan_contract_version too new: got 6, expected 5" "$TMP_DIR/out.txt"
+grep -Fq "plan_contract_version too new: got 7, expected 6" "$TMP_DIR/out.txt"
 
 OLD_SCOPE_PLAN="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json
@@ -76,7 +76,7 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as f:
   plan = json.load(f)
-plan["scope"]["scope_contract_version"] = 2
+plan["scope"]["scope_contract_version"] = 3
 print(json.dumps(plan))
 PY
 )"
@@ -92,7 +92,7 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$OLD_SCOPE_PLAN" --
   echo "expected scope contract validation to fail for old contract"
   exit 1
 fi
-grep -Fq "scope_contract_version too old: got 2, expected 3" "$TMP_DIR/out.txt"
+grep -Fq "scope_contract_version too old: got 3, expected 4" "$TMP_DIR/out.txt"
 
 NEW_SCOPE_PLAN="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json
@@ -100,7 +100,7 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as f:
   plan = json.load(f)
-plan["scope"]["scope_contract_version"] = 4
+plan["scope"]["scope_contract_version"] = 5
 print(json.dumps(plan))
 PY
 )"
@@ -116,7 +116,7 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$NEW_SCOPE_PLAN" --
   echo "expected scope contract validation to fail for new contract"
   exit 1
 fi
-grep -Fq "scope_contract_version too new: got 4, expected 3" "$TMP_DIR/out.txt"
+grep -Fq "scope_contract_version too new: got 5, expected 4" "$TMP_DIR/out.txt"
 
 BAD_CARGO_ARGS="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json
@@ -151,6 +151,41 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$MISSING_SNAPSHOT" 
   exit 1
 fi
 grep -Fq "inputs.snapshot_id missing in planner output" "$TMP_DIR/out.txt"
+
+MISSING_UNIVERSE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+  plan = json.load(f)
+del plan["resolution_universe"]
+print(json.dumps(plan))
+PY
+)"
+
+if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$MISSING_UNIVERSE" --scope-json "$SCOPE_FIXTURE" >"$TMP_DIR/out.txt" 2>&1; then
+  echo "expected plan contract validation to fail without a resolution universe"
+  exit 1
+fi
+grep -Fq "plan.resolution_universe missing or invalid in planner output" "$TMP_DIR/out.txt"
+
+BAD_UNIVERSE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+  plan = json.load(f)
+plan["resolution_universe"] = {"mode": "exact", "identity": "not-a-versioned-digest"}
+print(json.dumps(plan))
+PY
+)"
+
+if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$BAD_UNIVERSE" --scope-json "$SCOPE_FIXTURE" >"$TMP_DIR/out.txt" 2>&1; then
+  echo "expected plan contract validation to fail for an invalid resolution universe"
+  exit 1
+fi
+grep -Fq "plan.resolution_universe.mode invalid in planner output" "$TMP_DIR/out.txt"
+grep -Fq "plan.resolution_universe.identity missing or invalid in planner output" "$TMP_DIR/out.txt"
 
 BAD_SURFACE_SCOPE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json

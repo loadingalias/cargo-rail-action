@@ -34,7 +34,7 @@ That creates a shadow workspace model in YAML. It drifts from Cargo, disagrees a
 └──────────────────────────────────────────────────────────┘
 ```
 
-The action does **not** build, test, cache, release, or publish crates. That separation is deliberate. Your jobs keep their current toolchains, runners, caches, nextest configs, matrices, and task runners. The action replaces duplicated selection logic, not the execution stack that already works.
+The action does **not** build, test, cache, release, or publish crates. That separation is deliberate. Your jobs keep their current toolchains, runners, caches, nextest configs, matrices, and task runners. The action replaces duplicated selection logic, not the execution stack that already works. Cargo-Rail 0.22.0's local and shared native caches apply when an execution job runs `cargo rail run`; configuring this planner action alone does not intercept direct `cargo` commands. See [Share native compiler results across CI and SSH](https://github.com/loadingalias/cargo-rail/blob/main/docs/cache-sharing.md).
 
 ## Quick Start
 
@@ -63,7 +63,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v6
         id: rail
         with:
-          version: 0.20.1
+          version: 0.22.0
           # Push: compare with the previous SHA from the event.
           # Pull request: pass empty and let the action use the PR base.
           since: ${{ github.event_name == 'push' && github.event.before || '' }}
@@ -146,7 +146,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v6
         id: rail
         with:
-          version: 0.20.1
+          version: 0.22.0
           since: ${{ github.event_name == 'push' && github.event.before || '' }}
 
   frontend:
@@ -178,7 +178,7 @@ GitHub uses an all-zero `before` SHA for some first-push and force-push cases. T
 
 | Input | Default | Meaning |
 |---|---|---|
-| `version` | `0.20.1` | Cargo-Rail release to install; `latest` explicitly opts into a floating core version |
+| `version` | `0.22.0` | Cargo-Rail release to install; `latest` explicitly opts into a floating core version |
 | `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
 | `since` | automatic | Explicit Git comparison ref |
 | `args` | `""` | Additional planner arguments; format and output overrides are rejected |
@@ -191,7 +191,9 @@ GitHub uses an all-zero `before` SHA for some first-push and force-push cases. T
 - Checksum verification is required by default.
 - Installation tries an already matching binary, a release archive, `cargo-binstall`, then `cargo install --locked`.
 - Planner and scope contracts are validated before outputs are published.
-- Action major `v6` consumes planner contract `v5` and scope contract `v3`.
+- Action major `v6` consumes planner contract `v6` and scope contract `v4`.
+- Planner scopes already include optional-feature and target-gated dependents; the action transports those scopes without
+  reinterpreting Cargo features or targets.
 - The action and the installed Cargo-Rail version are selected independently.
 - Release binaries support Linux, Windows, and macOS on x86-64 and ARM64.
 - Additional planner arguments cannot override the action-owned output format or path.

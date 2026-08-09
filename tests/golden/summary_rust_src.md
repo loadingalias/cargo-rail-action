@@ -2,13 +2,13 @@
 
 | | |
 |---|---|
-| **Version** | `0.20.1` |
+| **Version** | `0.22.0` |
 | **Install** | Binary download |
 | **Base** | `origin/main` |
 | **Changed files** | 1 |
 | **Scope mode** | `workspace` |
 | **Direct crates** | 1 |
-| **Active surfaces** | build, test |
+| **Active surfaces** | bench, build, test |
 
 **Changed direct crates (1):** `lib-a`
 **Execution scope:** full workspace
@@ -26,6 +26,6 @@
 - r1 CONFIDENCE_PROFILE_BALANCED
 - r2 FILE_OWNS_CRATE_DIRECT file=crates/lib-a/src/lib.rs crate=lib-a
 - r3 FILE_KIND_RUST_SRC file=crates/lib-a/src/lib.rs surfaces=build,test
-- r4 TRANSITIVE_DEPENDS_ON_DIRECT crate=lib-b depends_on=lib-a surfaces=build,test
+- r4 TRANSITIVE_DEPENDS_ON_DIRECT crate=lib-b depends_on=lib-a surfaces=bench,build,test
 
 </details>
