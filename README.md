@@ -34,7 +34,11 @@ That creates a shadow workspace model in YAML. It drifts from Cargo, disagrees a
 └──────────────────────────────────────────────────────────┘
 ```
 
-The action does **not** build, test, cache, release, or publish crates. That separation is deliberate. Your jobs keep their current toolchains, runners, caches, nextest configs, matrices, and task runners. The action replaces duplicated selection logic, not the execution stack that already works. Cargo-Rail 0.22.0's local and shared native caches apply when an execution job runs `cargo rail run`; configuring this planner action alone does not intercept direct `cargo` commands. See [Share native compiler results across CI and SSH](https://github.com/loadingalias/cargo-rail/blob/main/docs/cache-sharing.md).
+The planner action does **not** build, test, release, publish crates, or configure later jobs. Your jobs keep their
+current toolchains, runners, matrices, and task runners. Add `loadingalias/cargo-rail-action/cache@v6` once in each
+execution job that should share compiler results. Every later ordinary `cargo`, nextest, Just, or IDE-driven Cargo
+command in that job uses the verified local and remote cache without a wrapper command. See
+[Share native compiler results across CI and SSH](https://github.com/loadingalias/cargo-rail/blob/main/docs/cache-sharing.md).
 
 ## Quick Start
 
@@ -75,6 +79,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - uses: loadingalias/cargo-rail-action/cache@v6
+        with:
+          url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          # Use read for untrusted jobs; trusted jobs may publish.
+          mode: read-write
 
       - name: Run tests
         env:
@@ -185,6 +195,27 @@ GitHub uses an all-zero `before` SHA for some first-push and force-push cases. T
 | `working-directory` | `.` | Directory containing the workspace `Cargo.toml` |
 | `token` | `${{ github.token }}` | Token used to download release assets |
 | `mode` | `minimal` | `minimal` or `debug`; legacy `full` maps to `debug` with a warning |
+
+## Compiler Cache Action
+
+The cache action owns machine setup, so it belongs in the execution job—not the planner job. Its `url` input accepts
+an AWS `s3://`, Cloudflare `r2://`, or Azure `azure://` authority and contains no credentials. Setup persists that
+authority in the job's private Cargo-Rail installation; subsequent Cargo commands need no cache-specific arguments or
+environment.
+
+| Input | Default | Meaning |
+|---|---|---|
+| `url` | required | AWS S3, Azure Blob Storage, or Cloudflare R2 cache authority |
+| `mode` | `read-write` | Maximum remote authority: `read` or `read-write` |
+| `max-size` | `10GiB` | Positive binary size bound for the job-local verified cache |
+| `local-dir` | Cargo home | Optional base directory for the job-local verified cache |
+| `version` | `0.22.0` | Cargo-Rail release to install |
+| `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
+| `token` | `${{ github.token }}` | Token used to download release assets |
+| `working-directory` | `.` | Workspace directory used for setup |
+
+Provide AWS, Azure, or R2 credentials through the provider's standard job environment. Use read-only credentials for
+untrusted pull requests; grant writes only to trusted jobs and only for the selected bucket, container, or prefix.
 
 ## Trust and Compat
 

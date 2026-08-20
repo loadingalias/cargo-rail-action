@@ -5,13 +5,31 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-ruby -ryaml - "$ROOT/action.yaml" <<'RUBY'
-action = YAML.load_file(ARGV.fetch(0))
-violations = action.fetch("runs").fetch("steps").each_with_object([]) do |step, found|
-  found << step["name"] if step.fetch("run", "").match?(/\$\{\{\s*inputs\./)
+ruby -ryaml - "$ROOT/action.yaml" "$ROOT/cache/action.yaml" <<'RUBY'
+planner = YAML.load_file(ARGV.fetch(0))
+cache = YAML.load_file(ARGV.fetch(1))
+violations = [planner, cache].flat_map do |action|
+  action.fetch("runs").fetch("steps").each_with_object([]) do |step, found|
+    found << step["name"] if step.fetch("run", "").match?(/\$\{\{\s*inputs\./)
+  end
 end
 abort "action run blocks interpolate inputs directly: #{violations.join(', ')}" unless violations.empty?
+abort "planner action still owns execution-job cache setup" if planner.fetch("inputs").key?("cache-url")
+inputs = cache.fetch("inputs")
+abort "cache URL is not required" unless inputs.fetch("url").fetch("required")
+url_description = inputs.fetch("url").fetch("description")
+abort "cache URL provider surface drifted" unless url_description.include?("AWS S3") && url_description.include?("Azure Blob Storage") && url_description.include?("Cloudflare R2")
+abort "cache action advertises generic S3 compatibility" if url_description.include?("S3-compatible")
+abort "cache mode default drifted" unless inputs.fetch("mode").fetch("default") == "read-write"
+cache_step = cache.fetch("runs").fetch("steps").find { |step| step["name"] == "Configure compiler cache" }
+abort "compiler-cache setup step missing" unless cache_step
+abort "compiler-cache setup does not pass the persisted URL" unless cache_step.fetch("run").include?('--remote "$CACHE_URL"')
+installer = cache.fetch("runs").fetch("steps").find { |step| step["name"] == "Install cargo-rail" }
+abort "cache action does not share the installer" unless installer.fetch("run").include?("../scripts/install.sh")
 RUBY
+
+bash -n "$ROOT/scripts/install.sh"
+grep -Fq 'cargo-rail-native-rustc-wrapper cargo-rail-native-rustc-worker' "$ROOT/scripts/install.sh"
 
 PLAN_FIXTURE="$(cat "$ROOT/tests/fixtures/plan_rust_src.json")"
 SCOPE_FIXTURE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
