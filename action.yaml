@@ -44,9 +44,9 @@ inputs:
     default: "minimal"
 
 outputs:
-  plan-json:
-    description: "Full planner contract (debug mode only)"
-    value: ${{ steps.plan.outputs.plan_json }}
+  plan-file:
+    description: "Path to the full planner contract for same-job consumers (debug mode only)"
+    value: ${{ steps.plan.outputs.plan_file }}
 
   scope-json:
     description: "Compact execution-scope payload emitted by the planner"
@@ -189,8 +189,13 @@ runs:
         DOCS="$(read_kv docs)"
         INFRA="$(read_kv infra)"
         CARGO_ARGS="$(read_kv cargo_args)"
+        SURFACES_JSON="$(read_kv surfaces_json)"
         SCOPE_JSON="$(read_kv scope_json)"
         PLAN_JSON="$(read_kv plan_json)"
+        if [[ -z "${SURFACES_JSON:-}" ]]; then
+          echo "::error::planner output missing surfaces_json"
+          exit 1
+        fi
         if [[ -z "${SCOPE_JSON:-}" ]]; then
           echo "::error::planner output missing scope_json"
           exit 1
@@ -200,30 +205,15 @@ runs:
           exit 1
         fi
 
-        PLAN_JSON_FILE="$(mktemp)"
+        PLAN_JSON_FILE="$(mktemp "${RUNNER_TEMP}/cargo-rail-plan.XXXXXX")"
         SCOPE_JSON_FILE="$(mktemp)"
         printf '%s' "$PLAN_JSON" > "$PLAN_JSON_FILE"
         printf '%s' "$SCOPE_JSON" > "$SCOPE_JSON_FILE"
-        trap 'rm -f "$TMP_OUTPUT" "$PLAN_JSON_FILE" "$SCOPE_JSON_FILE"' EXIT
+        trap 'rm -f "$TMP_OUTPUT" "$SCOPE_JSON_FILE"' EXIT
 
         python3 "$GITHUB_ACTION_PATH/scripts/validate_contract.py" \
           --plan-json-file "$PLAN_JSON_FILE" \
           --scope-json-file "$SCOPE_JSON_FILE"
-
-        SURFACES_JSON="$(
-          python3 - "$PLAN_JSON_FILE" <<'PY'
-        import json
-        import sys
-
-        with open(sys.argv[1], "r", encoding="utf-8") as handle:
-          plan = json.load(handle)
-        surfaces = {
-          name: decision["enabled"]
-          for name, decision in sorted(plan["surfaces"].items())
-        }
-        print(json.dumps(surfaces, separators=(",", ":")))
-        PY
-        )"
 
         {
           echo "build=${BUILD:-false}"
@@ -237,15 +227,12 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
         if [[ "$MODE" == "debug" ]]; then
-          echo "plan_json=${PLAN_JSON}" >> "$GITHUB_OUTPUT"
+          echo "plan_file=${PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
         fi
 
-        # Write plan JSON to a temp file for the Summary step.
-        # Passing it as an env var can exceed Linux's ARG_MAX (~2MB) and
-        # cause E2BIG ("Argument list too long") on large workspaces.
-        SUMMARY_PLAN_JSON_FILE="${RUNNER_TEMP}/cargo-rail-plan.json"
-        printf '%s' "$PLAN_JSON" > "$SUMMARY_PLAN_JSON_FILE"
-        echo "plan_json_file=${SUMMARY_PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
+        # Keep the unbounded diagnostic contract file-scoped. Expanding it into a
+        # process environment can fail with E2BIG on large workspaces.
+        echo "plan_json_file=${PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
 
     # Generate Job Summary
     - name: Summary

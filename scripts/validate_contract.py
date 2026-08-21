@@ -8,7 +8,7 @@ import json
 import re
 import sys
 
-SUPPORTED_PLAN_CONTRACT_VERSION = 6
+SUPPORTED_PLAN_CONTRACT_VERSION = 7
 SUPPORTED_SCOPE_CONTRACT_VERSION = 4
 SUPPORTED_RESOLUTION_UNIVERSE_MODE = "declared_dependencies"
 RESOLUTION_UNIVERSE_IDENTITY = re.compile(r"^resolution-universe-v1:sha256:[0-9a-f]{64}$")

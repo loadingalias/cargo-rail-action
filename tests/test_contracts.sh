@@ -60,7 +60,7 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as f:
   plan = json.load(f)
-plan["plan_contract_version"] = 5
+plan["plan_contract_version"] = 6
 print(json.dumps(plan))
 PY
 )"
@@ -69,7 +69,7 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$OLD_PLAN" --scope-
   echo "expected plan contract validation to fail for old contract"
   exit 1
 fi
-grep -Fq "plan_contract_version too old: got 5, expected 6" "$TMP_DIR/out.txt"
+grep -Fq "plan_contract_version too old: got 6, expected 7" "$TMP_DIR/out.txt"
 
 NEW_PLAN="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json
@@ -77,7 +77,7 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as f:
   plan = json.load(f)
-plan["plan_contract_version"] = 7
+plan["plan_contract_version"] = 8
 print(json.dumps(plan))
 PY
 )"
@@ -86,7 +86,7 @@ if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$NEW_PLAN" --scope-
   echo "expected plan contract validation to fail for new contract"
   exit 1
 fi
-grep -Fq "plan_contract_version too new: got 7, expected 6" "$TMP_DIR/out.txt"
+grep -Fq "plan_contract_version too new: got 8, expected 7" "$TMP_DIR/out.txt"
 
 OLD_SCOPE_PLAN="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
 import json

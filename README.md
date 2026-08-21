@@ -122,7 +122,7 @@ GitHub Actions outputs are strings. Compare convenience booleans with `'true'` w
 | `scope-json` | Versioned union execution scope across active package-scoped surfaces |
 | `cargo-args` | Shell projection of that union scope: `--workspace`, one or more `-p <crate>` arguments, or an empty string |
 | `base-ref` | Git ref used as the comparison base |
-| `plan-json` | Full diagnostic planner payload; published only with `mode: debug` |
+| `plan-file` | Path to the full planner contract for same-job consumers; published only with `mode: debug` |
 
 Every invocation writes a GitHub job summary with the installed version, comparison base, changed-file count, scope mode, direct and execution crates, active surfaces, top reasons, and a bounded trace preview.
 
@@ -130,7 +130,7 @@ Every invocation writes a GitHub job summary with the installed version, compari
 
 `cargo-args` is the conservative compat union of all active package-scoped surfaces. That is correct for a combined build-and-test job, but an individual surface can be narrower.
 
-Use `mode: debug` and consume `plan-json` at `.surfaces.<name>.scope` when a task runner needs the exact scope for one surface. Use `scope` for execution; use `impact` and `trace` to explain the decision. See [Planning and execution](https://github.com/loadingalias/cargo-rail/blob/main/docs/planning.md).
+Use `mode: debug` and read `plan-file` at `.surfaces.<name>.scope` when a same-job task runner needs the exact scope for one surface. Use `scope` for execution; use `impact` and `trace` to explain the decision. The full plan is deliberately not a GitHub output: its size grows with the workspace. If another job needs the diagnostic contract, transfer `plan-file` as an artifact. See [Planning and execution](https://github.com/loadingalias/cargo-rail/blob/main/docs/planning.md).
 
 ## Custom Repo Surfaces
 
@@ -153,7 +153,7 @@ jobs:
       surfaces: ${{ steps.rail.outputs.surfaces-json }}
     steps:
       - uses: actions/checkout@v7
-      - uses: loadingalias/cargo-rail-action@v6
+      - uses: loadingalias/cargo-rail-action@v7
         id: rail
         with:
           version: 0.22.0

@@ -51,13 +51,15 @@ jobs:
           working-directory: test-workspace
 
       - name: Verify outputs
+        env:
+          PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
         run: |
           echo "=== Outputs ==="
           echo "build: ${{ steps.rail.outputs.build }}"
           echo "test: ${{ steps.rail.outputs.test }}"
           echo "scope-json: ${{ steps.rail.outputs.scope-json }}"
           echo "surfaces-json: ${{ steps.rail.outputs.surfaces-json }}"
-          echo "plan-json: ${{ steps.rail.outputs.plan-json }}"
+          echo "plan-file: $PLAN_FILE"
 
           [[ "${{ steps.rail.outputs.build }}" == "true" ]] || { echo "expected build=true"; exit 1; }
           [[ "${{ steps.rail.outputs.test }}" == "true" ]] || { echo "expected test=true"; exit 1; }
@@ -74,7 +76,7 @@ jobs:
             echo "expected surfaces-json test=true"
             exit 1
           }
-          echo '${{ steps.rail.outputs.plan-json }}' | jq . || { echo "plan-json not valid JSON"; exit 1; }
+          jq . "$PLAN_FILE" >/dev/null || { echo "plan-file does not contain valid JSON"; exit 1; }
           [[ -n "${{ steps.rail.outputs.base-ref }}" ]] || { echo "base-ref missing"; exit 1; }
 
           echo "Self-test passed!"
