@@ -42,3 +42,15 @@ ruby -ryaml -e 'YAML.load_file("action.yaml")'
 - Include the commands used to verify it.
 - Call out changes to inputs, outputs, defaults, planner contracts, supported runners, or checksum handling.
 - Link the issue when one exists.
+
+## Coordinated releases
+
+When an action release defaults to a new Cargo-Rail version, release the repositories in this order:
+
+1. Publish the Cargo-Rail crate and all native release archives.
+2. Rerun this repository's `Test Action` workflow and require every platform job to pass with that exact version.
+3. Dispatch this repository's `Release` workflow from `main` with the new action version.
+
+The integration matrix intentionally installs the action's default Cargo-Rail version. A 404 for the release archive
+followed by a missing crates.io version means the core release is not available yet; it is not a platform-specific
+action failure. The `Release` workflow's `version` input is the action version, not the Cargo-Rail version.

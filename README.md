@@ -5,7 +5,8 @@
 [![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-GitHub Actions does not understand Cargo package ownership, active dependency edges, or reverse impact. We all compensate w/ path filters and package selection scripts, often with separate logic in each job.
+GitHub Actions does not understand Cargo package ownership, active dependency edges, or reverse impact. Teams
+compensate with path filters and package-selection scripts, often with separate logic in each job.
 
 That creates a shadow workspace model in YAML. It drifts from Cargo, disagrees across jobs, and turns every manifest or shared-crate change into a choice between overbuilding and undertesting.
 
@@ -35,7 +36,7 @@ That creates a shadow workspace model in YAML. It drifts from Cargo, disagrees a
 ```
 
 The planner action does **not** build, test, release, publish crates, or configure later jobs. Your jobs keep their
-current toolchains, runners, matrices, and task runners. Add `loadingalias/cargo-rail-action/cache@v6` once in each
+current toolchains, runners, matrices, and task runners. Add `loadingalias/cargo-rail-action/cache@v7` once in each
 execution job that should share compiler results. Every later ordinary `cargo`, nextest, Just, or IDE-driven Cargo
 command in that job uses the verified local and remote cache without a wrapper command. See
 [Share native compiler results across CI and SSH](https://github.com/loadingalias/cargo-rail/blob/main/docs/cache-sharing.md).
@@ -64,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: loadingalias/cargo-rail-action@v6
+      - uses: loadingalias/cargo-rail-action@v7
         id: rail
         with:
           version: 0.22.0
@@ -80,7 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: loadingalias/cargo-rail-action/cache@v6
+      - uses: loadingalias/cargo-rail-action/cache@v7
         with:
           url: ${{ vars.CARGO_RAIL_CACHE_URL }}
           # Use read for untrusted jobs; trusted jobs may publish.
@@ -217,19 +218,20 @@ environment.
 Provide AWS, Azure, or R2 credentials through the provider's standard job environment. Use read-only credentials for
 untrusted pull requests; grant writes only to trusted jobs and only for the selected bucket, container, or prefix.
 
-## Trust and Compat
+## Trust and Compatibility
 
 - Checksum verification is required by default.
 - Installation tries an already matching binary, a release archive, `cargo-binstall`, then `cargo install --locked`.
 - Planner and scope contracts are validated before outputs are published.
-- Action major `v6` consumes planner contract `v6` and scope contract `v4`.
+- Action major `v7` consumes planner contract `v7` and scope contract `v4`.
 - Planner scopes already include optional-feature and target-gated dependents; the action transports those scopes without
   reinterpreting Cargo features or targets.
 - The action and the installed Cargo-Rail version are selected independently.
 - Release binaries support Linux, Windows, and macOS on x86-64 and ARM64.
 - Additional planner arguments cannot override the action-owned output format or path.
 
-Use the floating `@v6` tag to follow compatible fixes within the current action major. Pin a full commit SHA when immutable third-party action execution is required.
+Use the floating `@v7` tag to follow compatible fixes within the current action major. Pin a full commit SHA when
+immutable third-party action execution is required.
 
 ## Project
 

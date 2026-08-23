@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ACTION_MAJOR="7"
+
 if [[ -z "${VERSION:-}" ]]; then
   echo "::error::VERSION is required"
   exit 1
@@ -13,6 +15,10 @@ fi
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "::error::Invalid version format. Use x.y.z (e.g., 1.0.2)"
+  exit 1
+fi
+if [[ "${VERSION%%.*}" != "$ACTION_MAJOR" ]]; then
+  echo "::error::Action version $VERSION does not match this release line (v$ACTION_MAJOR)"
   exit 1
 fi
 
