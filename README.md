@@ -68,7 +68,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v7
         id: rail
         with:
-          version: 0.22.0
+          version: 0.22.1
           # Push: compare with the previous SHA from the event.
           # Pull request: pass empty and let the action use the PR base.
           since: ${{ github.event_name == 'push' && github.event.before || '' }}
@@ -157,7 +157,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v7
         id: rail
         with:
-          version: 0.22.0
+          version: 0.22.1
           since: ${{ github.event_name == 'push' && github.event.before || '' }}
 
   frontend:
@@ -189,7 +189,7 @@ GitHub uses an all-zero `before` SHA for some first-push and force-push cases. T
 
 | Input | Default | Meaning |
 |---|---|---|
-| `version` | `0.22.0` | Cargo-Rail release to install; `latest` explicitly opts into a floating core version |
+| `version` | `0.22.1` | Cargo-Rail release to install; `latest` explicitly opts into a floating core version |
 | `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
 | `since` | automatic | Explicit Git comparison ref |
 | `args` | `""` | Additional planner arguments; format and output overrides are rejected |
@@ -210,7 +210,7 @@ environment.
 | `mode` | `read-write` | Maximum remote authority: `read` or `read-write` |
 | `max-size` | `10GiB` | Positive binary size bound for the job-local verified cache |
 | `local-dir` | Cargo home | Optional base directory for the job-local verified cache |
-| `version` | `0.22.0` | Cargo-Rail release to install |
+| `version` | `0.22.1` | Cargo-Rail release to install |
 | `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
 | `token` | `${{ github.token }}` | Token used to download release assets |
 | `working-directory` | `.` | Workspace directory used for setup |
