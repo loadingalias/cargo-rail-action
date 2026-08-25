@@ -2,6 +2,11 @@
 set -euo pipefail
 
 ACTION_MAJOR="7"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(git rev-parse --show-toplevel)"
+
+python3 "$SCRIPT_DIR/sync-release-train.py" --check --root "$ROOT"
+CARGO_RAIL_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["cargo_rail_version"])' "$ROOT/release-train.json")"
 
 if [[ -z "${VERSION:-}" ]]; then
   echo "::error::VERSION is required"
@@ -64,5 +69,6 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo ""
     echo "- Tag: \`$VERSION_TAG\`"
     echo "- Floating tag: \`$MAJOR_TAG\` → $VERSION_TAG"
+    echo "- Cargo-Rail: \`v$CARGO_RAIL_VERSION\`"
   } >> "$GITHUB_STEP_SUMMARY"
 fi

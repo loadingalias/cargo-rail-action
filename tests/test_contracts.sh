@@ -5,9 +5,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-ruby -ryaml - "$ROOT/action.yaml" "$ROOT/cache/action.yaml" <<'RUBY'
+ruby -rjson -ryaml - "$ROOT/action.yaml" "$ROOT/cache/action.yaml" "$ROOT/release-train.json" <<'RUBY'
 planner = YAML.load_file(ARGV.fetch(0))
 cache = YAML.load_file(ARGV.fetch(1))
+release_train = JSON.parse(File.read(ARGV.fetch(2)))
+planner_version = planner.fetch("inputs").fetch("version").fetch("default")
+cache_version = cache.fetch("inputs").fetch("version").fetch("default")
+abort "unsupported release-train schema" unless release_train == {
+  "schema_version" => 1,
+  "cargo_rail_version" => release_train["cargo_rail_version"],
+}
+abort "planner version default drifted" unless planner_version == release_train.fetch("cargo_rail_version")
+abort "planner and cache version defaults disagree" unless cache_version == planner_version
 violations = [planner, cache].flat_map do |action|
   action.fetch("runs").fetch("steps").each_with_object([]) do |step, found|
     found << step["name"] if step.fetch("run", "").match?(/\$\{\{\s*inputs\./)
@@ -26,10 +35,20 @@ abort "compiler-cache setup step missing" unless cache_step
 abort "compiler-cache setup does not pass the persisted URL" unless cache_step.fetch("run").include?('--remote "$CACHE_URL"')
 installer = cache.fetch("runs").fetch("steps").find { |step| step["name"] == "Install cargo-rail" }
 abort "cache action does not share the installer" unless installer.fetch("run").include?("../scripts/install.sh")
+planner_components = planner.fetch("inputs").fetch("components")
+abort "planner component default drifted" unless planner_components.fetch("default") == "core"
+abort "planner does not request its selected component set" unless planner.fetch("runs").fetch("steps").first.fetch("env").fetch("COMPONENT_SET") == "${{ inputs.components }}"
+abort "cache action does not request the cache component set" unless installer.fetch("env").fetch("COMPONENT_SET") == "cache"
+surface_step = planner.fetch("runs").fetch("steps").find { |step| step["name"] == "Prepare Surface" }
+abort "planner action does not prepare a selected Surface component" unless surface_step
+abort "Surface preparation condition drifted" unless surface_step.fetch("if") == "inputs.components == 'surface' || inputs.components == 'complete'"
+abort "Surface preparation does not use the readiness command" unless surface_step.fetch("run") == "cargo rail surface --prepare -f json"
 RUBY
 
 bash -n "$ROOT/scripts/install.sh"
-grep -Fq 'cargo-rail-native-rustc-wrapper cargo-rail-native-rustc-worker' "$ROOT/scripts/install.sh"
+python3 "$ROOT/scripts/sync-release-train.py" --check
+grep -Fq 'cargo-rail-components-v1.tsv' "$ROOT/scripts/install.sh"
+grep -Fq 'cargo-rail-installed-components-v1' "$ROOT/scripts/install.sh"
 
 PLAN_FIXTURE="$(cat "$ROOT/tests/fixtures/plan_rust_src.json")"
 SCOPE_FIXTURE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"

@@ -29,7 +29,7 @@ inputs:
   version:
     description: "cargo-rail version to install"
     required: false
-    default: "0.22.1"
+    default: "0.22.3"
 
   checksum:
     description: "Release checksum policy: required, if-available, or off"
@@ -65,6 +65,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         REQUESTED_VERSION: ${{ inputs.version }}
         CHECKSUM_MODE: ${{ inputs.checksum }}
+        COMPONENT_SET: cache
       run: bash "$GITHUB_ACTION_PATH/../scripts/install.sh"
 
     - name: Configure compiler cache

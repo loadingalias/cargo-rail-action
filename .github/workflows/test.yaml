@@ -24,6 +24,8 @@ jobs:
         run: ./tests/test_summary.sh
       - name: Run contract fixture tests
         run: bash ./tests/test_contracts.sh
+      - name: Run installer component-set tests
+        run: bash ./tests/test_install.sh
       - name: Run history fixture tests
         run: bash ./tests/test_ensure_history.sh
       - name: Run release fixture tests
@@ -37,6 +39,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bind release train
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          print("EXPECTED_CARGO_RAIL_VERSION=" + json.load(open("release-train.json"))["cargo_rail_version"])
+          PY
 
       - name: Create test workspace
         shell: bash
@@ -63,8 +73,8 @@ jobs:
 
           [[ "${{ steps.rail.outputs.build }}" == "true" ]] || { echo "expected build=true"; exit 1; }
           [[ "${{ steps.rail.outputs.test }}" == "true" ]] || { echo "expected test=true"; exit 1; }
-          [[ "$(cargo-rail rail --version)" == "cargo-rail 0.22.1" ]] || {
-            echo "expected cargo-rail 0.22.1"
+          [[ "$(cargo-rail rail --version)" == "cargo-rail $EXPECTED_CARGO_RAIL_VERSION" ]] || {
+            echo "expected cargo-rail $EXPECTED_CARGO_RAIL_VERSION"
             exit 1
           }
           echo '${{ steps.rail.outputs.scope-json }}' | jq . || { echo "scope-json not valid JSON"; exit 1; }
@@ -94,6 +104,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Bind release train
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          print("EXPECTED_CARGO_RAIL_VERSION=" + json.load(open("release-train.json"))["cargo_rail_version"])
+          PY
+
       - name: Create test workspace
         shell: bash
         run: bash tests/create_workspace.sh test-workspace
@@ -111,8 +129,8 @@ jobs:
         run: |
           echo "Platform: ${{ matrix.os }}"
           echo "Scope JSON: ${{ steps.rail.outputs.scope-json }}"
-          [[ "$(cargo-rail rail --version)" == "cargo-rail 0.22.1" ]] || {
-            echo "expected cargo-rail 0.22.1"
+          [[ "$(cargo-rail rail --version)" == "cargo-rail $EXPECTED_CARGO_RAIL_VERSION" ]] || {
+            echo "expected cargo-rail $EXPECTED_CARGO_RAIL_VERSION"
             exit 1
           }
           echo '${{ steps.rail.outputs.scope-json }}' | jq . >/dev/null || exit 1

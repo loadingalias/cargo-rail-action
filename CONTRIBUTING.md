@@ -1,6 +1,6 @@
 # Contributing to cargo-rail-action
 
-## Before changing the action
+## Setup
 
 Required tools:
 
@@ -13,7 +13,7 @@ Optional:
 
 - `actionlint`
 
-Run all contract, summary, Git-history, and release tests:
+Run the contract, summary, Git-history, and release tests:
 
 ```bash
 bash tests/test_summary.sh
@@ -51,6 +51,6 @@ When an action release defaults to a new Cargo-Rail version, release the reposit
 2. Rerun this repository's `Test Action` workflow and require every platform job to pass with that exact version.
 3. Dispatch this repository's `Release` workflow from `main` with the new action version.
 
-The integration matrix intentionally installs the action's default Cargo-Rail version. A 404 for the release archive
-followed by a missing crates.io version means the core release is not available yet; it is not a platform-specific
-action failure. The `Release` workflow's `version` input is the action version, not the Cargo-Rail version.
+The integration matrix installs the action's default Cargo-Rail version. A release-archive 404 followed by a missing
+crates.io version means the core release is unavailable; it is not a platform failure. The `Release` workflow's
+`version` input is the action version, not the Cargo-Rail version.

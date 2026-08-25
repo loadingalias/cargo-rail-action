@@ -18,7 +18,17 @@ git clone "$REMOTE" "$WORK" >/dev/null
 git -C "$WORK" config user.name "Test User"
 git -C "$WORK" config user.email "test@example.com"
 printf 'release fixture\n' > "$WORK/action.txt"
-git -C "$WORK" add action.txt
+mkdir -p "$WORK/cache" "$WORK/tests/fixtures" "$WORK/tests/golden"
+cp "$ROOT/action.yaml" "$WORK/action.yaml"
+cp "$ROOT/cache/action.yaml" "$WORK/cache/action.yaml"
+cp "$ROOT/release-train.json" "$WORK/release-train.json"
+cp "$ROOT/README.md" "$WORK/README.md"
+cp "$ROOT/tests/test_summary.sh" "$WORK/tests/test_summary.sh"
+cp "$ROOT/tests/fixtures/plan_docs_only.json" "$WORK/tests/fixtures/plan_docs_only.json"
+cp "$ROOT/tests/fixtures/plan_rust_src.json" "$WORK/tests/fixtures/plan_rust_src.json"
+cp "$ROOT/tests/golden/summary_docs_only.md" "$WORK/tests/golden/summary_docs_only.md"
+cp "$ROOT/tests/golden/summary_rust_src.md" "$WORK/tests/golden/summary_rust_src.md"
+git -C "$WORK" add action.txt action.yaml cache/action.yaml release-train.json README.md tests
 git -C "$WORK" commit -m "initial" >/dev/null
 git -C "$WORK" push -u origin main >/dev/null
 RELEASE_SHA="$(git -C "$WORK" rev-parse HEAD)"
@@ -73,6 +83,22 @@ if [[ "$1" == "refs/tags/v7" ]]; then
 fi
 SH
 chmod +x "$HOOKS_DIR/update"
+
+python3 - "$WORK/action.yaml" "$WORK/release-train.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+version = json.loads(pathlib.Path(sys.argv[2]).read_text())["cargo_rail_version"]
+path.write_text(path.read_text().replace(f'default: "{version}"', 'default: "9.9.9"', 1))
+PY
+if run_release >"$TMP_DIR/train-drift.out" 2>&1; then
+  echo "expected release-train drift to fail"
+  exit 1
+fi
+grep -Fq "release-train projections are stale" "$TMP_DIR/train-drift.out"
+cp "$ROOT/action.yaml" "$WORK/action.yaml"
 
 if run_release >"$TMP_DIR/atomic.out" 2>&1; then
   echo "expected atomic tag push to fail"

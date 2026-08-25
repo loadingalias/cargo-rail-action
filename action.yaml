@@ -8,16 +8,21 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.22.1; use 'latest' for
+    description: "cargo-rail version to install (default: 0.22.3; use 'latest' for
       floating installs)"
     required: false
-    default: "0.22.1"
+    default: "0.22.3"
 
   checksum:
     description: "Checksum verification mode for downloaded binaries:
       required/if-available/off"
     required: false
     default: "required"
+
+  components:
+    description: "Verified component set to install; surface and complete also prepare the exact selected toolchain"
+    required: false
+    default: "core"
 
   since:
     description: "Git ref to compare against (auto-detects PR base or origin/main)"
@@ -97,7 +102,14 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         REQUESTED_VERSION: ${{ inputs.version }}
         CHECKSUM_MODE: ${{ inputs.checksum }}
+        COMPONENT_SET: ${{ inputs.components }}
       run: bash "$GITHUB_ACTION_PATH/scripts/install.sh"
+
+    - name: Prepare Surface
+      if: inputs.components == 'surface' || inputs.components == 'complete'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: cargo rail surface --prepare -f json
 
     # Detect Base Reference for Comparison; Explicit Input > PR Base > Origin/Main > Origin/Master > HEAD~1
     - name: Detect base ref
