@@ -5,10 +5,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-ruby -rjson -ryaml - "$ROOT/action.yaml" "$ROOT/cache/action.yaml" "$ROOT/release-train.json" <<'RUBY'
+ruby -rjson -ryaml - "$ROOT/action.yaml" "$ROOT/cache/action.yaml" "$ROOT/release-train.json" \
+  "$ROOT/.github/workflows/test.yaml" <<'RUBY'
 planner = YAML.load_file(ARGV.fetch(0))
 cache = YAML.load_file(ARGV.fetch(1))
 release_train = JSON.parse(File.read(ARGV.fetch(2)))
+test_workflow = YAML.load_file(ARGV.fetch(3))
 planner_version = planner.fetch("inputs").fetch("version").fetch("default")
 cache_version = cache.fetch("inputs").fetch("version").fetch("default")
 abort "unsupported release-train schema" unless release_train == {
@@ -43,12 +45,18 @@ surface_step = planner.fetch("runs").fetch("steps").find { |step| step["name"] =
 abort "planner action does not prepare a selected Surface component" unless surface_step
 abort "Surface preparation condition drifted" unless surface_step.fetch("if") == "inputs.components == 'surface' || inputs.components == 'complete'"
 abort "Surface preparation does not use the readiness command" unless surface_step.fetch("run") == "cargo rail surface --prepare -f json"
+platforms = test_workflow.fetch("jobs").fetch("test-platforms").fetch("strategy").fetch("matrix").fetch("os")
+abort "hosted CI must remain Linux/Windows only" unless platforms == ["ubuntu-latest", "windows-latest"]
 RUBY
 
 bash -n "$ROOT/scripts/install.sh"
 python3 "$ROOT/scripts/sync-release-train.py" --check
 grep -Fq 'cargo-rail-components-v1.tsv' "$ROOT/scripts/install.sh"
 grep -Fq 'cargo-rail-installed-components-v1' "$ROOT/scripts/install.sh"
+if grep -Fq 'x86_64-apple-darwin' "$ROOT/scripts/install.sh"; then
+  echo "action installer still requests an unsupported Intel macOS archive"
+  exit 1
+fi
 
 PLAN_FIXTURE="$(cat "$ROOT/tests/fixtures/plan_rust_src.json")"
 SCOPE_FIXTURE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"

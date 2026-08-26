@@ -29,7 +29,7 @@ inputs:
   version:
     description: "cargo-rail version to install"
     required: false
-    default: "0.22.3"
+    default: "0.23.0"
 
   checksum:
     description: "Release checksum policy: required, if-available, or off"

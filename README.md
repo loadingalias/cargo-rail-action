@@ -38,7 +38,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v7
         id: rail
         with:
-          version: 0.22.3
+          version: 0.23.0
           # Push: compare with the previous SHA from the event.
           # Pull request: pass empty and let the action use the PR base.
           since: ${{ github.event_name == 'push' && github.event.before || '' }}
@@ -113,7 +113,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v7
         id: rail
         with:
-          version: 0.22.3
+          version: 0.23.0
           since: ${{ github.event_name == 'push' && github.event.before || '' }}
 
   frontend:
@@ -146,7 +146,7 @@ GitHub uses an all-zero `before` SHA for some first-push and force-push cases. T
 
 | Input | Default | Meaning |
 |---|---|---|
-| `version` | `0.22.3` | Cargo-Rail release to install; `latest` explicitly opts into a floating core version |
+| `version` | `0.23.0` | Cargo-Rail release to install; `latest` explicitly opts into a floating core version |
 | `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
 | `components` | `core` | Verified component set: `core`, `surface`, `distributed`, or `complete`; Surface selections run the exact-toolchain readiness preflight |
 | `since` | automatic | Explicit Git comparison ref |
@@ -170,7 +170,7 @@ Add the cache action to each execution job that should reuse compiler results:
 ```yaml
 - uses: loadingalias/cargo-rail-action/cache@v7
   with:
-    version: 0.22.3
+    version: 0.23.0
     url: ${{ vars.CARGO_RAIL_CACHE_URL }}
     mode: read
 ```
@@ -185,7 +185,7 @@ Later Cargo commands need no cache arguments or wrapper command.
 | `mode` | `read-write` | Maximum remote authority: `read` or `read-write` |
 | `max-size` | `10GiB` | Positive binary size bound for the job-local verified cache |
 | `local-dir` | Cargo home | Optional base directory for the job-local verified cache |
-| `version` | `0.22.3` | Cargo-Rail release to install |
+| `version` | `0.23.0` | Cargo-Rail release to install |
 | `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
 | `token` | `${{ github.token }}` | Token used to download release assets |
 | `working-directory` | `.` | Workspace directory used for setup |
@@ -203,7 +203,7 @@ and trust boundaries.
 - Action major `v7` consumes planner contract `v7` and scope contract `v4`.
 - Planner scopes include optional-feature and target-gated dependents; the action does not reinterpret them.
 - The action and the installed Cargo-Rail version are selected independently.
-- Release binaries support Linux, Windows, and macOS on x86-64 and ARM64.
+- Release binaries support Linux and Windows on x86-64 and ARM64, plus macOS on ARM64.
 - Additional planner arguments cannot override the action-owned output format or path.
 
 Use `@v7` to follow compatible fixes within the action major. Pin a full commit SHA for immutable execution.

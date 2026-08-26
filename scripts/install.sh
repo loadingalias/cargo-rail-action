@@ -28,7 +28,6 @@ fi
 case "$RUNNER_OS-$RUNNER_ARCH" in
   Linux-X64) TARGET="x86_64-unknown-linux-gnu"; SUFFIX="" ;;
   Linux-ARM64) TARGET="aarch64-unknown-linux-gnu"; SUFFIX="" ;;
-  macOS-X64) TARGET="x86_64-apple-darwin"; SUFFIX="" ;;
   macOS-ARM64) TARGET="aarch64-apple-darwin"; SUFFIX="" ;;
   Windows-X64) TARGET="x86_64-pc-windows-msvc"; SUFFIX=".exe" ;;
   Windows-ARM64) TARGET="aarch64-pc-windows-msvc"; SUFFIX=".exe" ;;

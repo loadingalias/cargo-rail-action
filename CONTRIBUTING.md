@@ -13,11 +13,12 @@ Optional:
 
 - `actionlint`
 
-Run the contract, summary, Git-history, and release tests:
+Run the installer, contract, summary, Git-history, and release tests:
 
 ```bash
 bash tests/test_summary.sh
 bash tests/test_contracts.sh
+bash tests/test_install.sh
 bash tests/test_ensure_history.sh
 bash tests/test_release.sh
 ```
@@ -48,7 +49,8 @@ ruby -ryaml -e 'YAML.load_file("action.yaml")'
 When an action release defaults to a new Cargo-Rail version, release the repositories in this order:
 
 1. Publish the Cargo-Rail crate and all native release archives.
-2. Rerun this repository's `Test Action` workflow and require every platform job to pass with that exact version.
+2. Rerun this repository's `Test Action` workflow and require its Linux and Windows jobs to pass with that exact
+   version. Validate macOS ARM64 on the local Apple machine.
 3. Dispatch this repository's `Release` workflow from `main` with the new action version.
 
 The integration matrix installs the action's default Cargo-Rail version. A release-archive 404 followed by a missing
