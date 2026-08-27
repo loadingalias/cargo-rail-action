@@ -9,7 +9,6 @@ import re
 import sys
 from pathlib import Path
 
-
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 SEMVER_TEXT = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?"
@@ -26,14 +25,6 @@ def projected(path: Path, version: str) -> str:
     text = path.read_text()
     relative = path.relative_to(DEFAULT_ROOT if path.is_relative_to(DEFAULT_ROOT) else path.parent)
     if path.name == "action.yaml":
-        if path.parent.name != "cache":
-            text = replace_owned(
-                text,
-                r'(description: "cargo-rail version to install \(default: )[0-9A-Za-z.+-]+(; use)',
-                rf"\g<1>{version}\g<2>",
-                1,
-                path,
-            )
         return replace_owned(
             text,
             r'(?m)^(  version:\n(?:    .*\n)*?    default: ")[^"]+("$)',
@@ -42,20 +33,12 @@ def projected(path: Path, version: str) -> str:
             path,
         )
     if path.name == "README.md":
-        text = replace_owned(text, rf"(?m)^(\s+version: ){SEMVER_TEXT}$", rf"\g<1>{version}", 3, path)
+        text = replace_owned(text, rf"(?m)^(\s+version: ){SEMVER_TEXT}$", rf"\g<1>{version}", 2, path)
         return replace_owned(
             text,
-            rf"(?m)^(\| `version` \| `){SEMVER_TEXT}(` \| Cargo-Rail)",
+            rf"(?m)^(\| `version` \| `){SEMVER_TEXT}(` \|)",
             rf"\g<1>{version}\g<2>",
             2,
-            path,
-        )
-    if path.name == "test_summary.sh":
-        return replace_owned(
-            text,
-            rf"(?m)^(\s*--install-version ){SEMVER_TEXT}( \\)$",
-            rf"\g<1>{version}\g<2>",
-            1,
             path,
         )
     if path.suffix == ".json":
@@ -110,11 +93,6 @@ def main() -> int:
         "action.yaml",
         "cache/action.yaml",
         "README.md",
-        "tests/test_summary.sh",
-        "tests/fixtures/plan_docs_only.json",
-        "tests/fixtures/plan_rust_src.json",
-        "tests/golden/summary_docs_only.md",
-        "tests/golden/summary_rust_src.md",
     ):
         path = root / relative
         expected = projected(path, version)

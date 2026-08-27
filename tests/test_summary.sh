@@ -2,81 +2,54 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+TEMPORARY="$(mktemp -d)"
+trap 'rm -rf "$TEMPORARY"' EXIT
+PLAN="$TEMPORARY/plan.json"
+OUTPUT="$TEMPORARY/output"
+SUMMARY="$TEMPORARY/summary.md"
+HEAD_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+VERIFIER="$ROOT/tests/fixtures/fake-plan-verifier.sh"
 
-run_summary() {
-  local fixture="$1"
-  local out="$2"
-  python3 "$ROOT/scripts/render_summary.py" \
-    --plan-json-file "$fixture" \
+python3 "$ROOT/tests/make_plan.py" rust "$PLAN" --head "$HEAD_COMMIT"
+(
+  cd "$ROOT"
+  CARGO_RAIL_BIN="$VERIFIER" python3 scripts/plan.py publish "$PLAN" \
+    --github-output "$OUTPUT" \
+    --summary "$SUMMARY" \
+    --reader "$ROOT/scripts/plan.py" \
     --install-method binary \
-    --install-version 0.23.0 \
-    --base-ref origin/main >"$out"
-}
-
-# Determinism: same fixture => byte-identical summary output.
-run_summary "$ROOT/tests/fixtures/plan_rust_src.json" "$TMP_DIR/summary_1.md"
-run_summary "$ROOT/tests/fixtures/plan_rust_src.json" "$TMP_DIR/summary_2.md"
-diff -u "$TMP_DIR/summary_1.md" "$TMP_DIR/summary_2.md"
-
-# Golden regression checks.
-run_summary "$ROOT/tests/fixtures/plan_rust_src.json" "$TMP_DIR/summary_rust_src.md"
-diff -u "$ROOT/tests/golden/summary_rust_src.md" "$TMP_DIR/summary_rust_src.md"
-
-run_summary "$ROOT/tests/fixtures/plan_docs_only.json" "$TMP_DIR/summary_docs_only.md"
-diff -u "$ROOT/tests/golden/summary_docs_only.md" "$TMP_DIR/summary_docs_only.md"
-
-python3 - <<'PY' >"$TMP_DIR/plan_large.json"
-import json
-
-trace = []
-trace.append(
-  {
-    "id": 1,
-    "code": "FILE_KIND_RUST_SRC",
-    "description": "Rust source file changed",
-    "file": "crates/lib-01/src/lib.rs",
-    "selected_surfaces": ["build", "test"],
-  }
+    --install-version 0.24.0
 )
-for idx in range(2, 24):
-  trace.append(
-    {
-      "id": idx,
-      "code": "TRANSITIVE_DEPENDS_ON_DIRECT",
-      "description": "Transitive dependency of changed crate",
-      "crate": f"lib-{idx:02d}",
-      "depends_on": "lib-01",
-      "selected_surfaces": ["build", "test"],
-    }
-  )
 
-plan = {
-  "files": [{"path": "crates/lib-01/src/lib.rs"}],
-  "impact": {
-    "direct_crates": [f"lib-{idx:02d}" for idx in range(1, 15)],
-    "build_transitive_crates": [f"dep-{idx:02d}" for idx in range(1, 5)],
-    "development_transitive_crates": [],
-  },
-  "surfaces": {
-    "build": {"enabled": True, "reasons": list(range(1, 24)), "scope": {"mode": "crates", "crates": [], "cargo_args": []}},
-    "test": {"enabled": True, "reasons": list(range(1, 24)), "scope": {"mode": "crates", "crates": [], "cargo_args": []}},
-  },
-  "scope": {
-    "mode": "crates",
-    "crates": [f"pkg-{idx:02d}" for idx in range(1, 17)],
-  },
-  "trace": trace,
-}
+grep -Eq '^plan_file=/.+/plan\.json$' "$OUTPUT"
+grep -Eq '^plan_reader=/.+/scripts/plan\.py$' "$OUTPUT"
+grep -Eq '^plan_identity=plan-v8:sha256:[0-9a-f]{64}$' "$OUTPUT"
+grep -Fxq 'required_work=["cargo.build","cargo.test","miri"]' "$OUTPUT"
+grep -Fxq "head_commit=$HEAD_COMMIT" "$OUTPUT"
+grep -Fq '## Cargo-Rail plan' "$SUMMARY"
+grep -Fq '| Work | 3 required, 1 skipped |' "$SUMMARY"
+grep -Fq "widened because complete evidence was unavailable: \`cargo.test\`" "$SUMMARY"
+grep -Fq "| \`miri\` | \`changed_input\` | 1 Cargo package, 1 exact target |" "$SUMMARY"
+if grep -Fq 'demo/src/lib.rs' "$SUMMARY"; then
+  echo "summary leaked changed path details" >&2
+  exit 1
+fi
 
-print(json.dumps(plan))
-PY
-
-run_summary "$TMP_DIR/plan_large.json" "$TMP_DIR/summary_large.md"
-grep -F "**Changed direct crates (14):** \`lib-01, lib-02, lib-03, lib-04, lib-05, lib-06, lib-07, lib-08, lib-09, lib-10, lib-11, lib-12, ... +2 more\`" "$TMP_DIR/summary_large.md"
-grep -F "**Execution crates (16):** \`pkg-01, pkg-02, pkg-03, pkg-04, pkg-05, pkg-06, pkg-07, pkg-08, pkg-09, pkg-10, pkg-11, pkg-12, ... +4 more\`" "$TMP_DIR/summary_large.md"
-grep -F "**Sample trace entries (20 of 23)**" "$TMP_DIR/summary_large.md"
-grep -F -- "- ... +3 more trace entries" "$TMP_DIR/summary_large.md"
+python3 "$ROOT/tests/make_plan.py" docs "$TEMPORARY/mismatch.json"
+if (
+  cd "$ROOT"
+  CARGO_RAIL_BIN="$VERIFIER" FAKE_CARGO_RAIL_STATUS=2 \
+    FAKE_CARGO_RAIL_STDERR='saved head commit does not match current authority' \
+    python3 scripts/plan.py publish "$TEMPORARY/mismatch.json" \
+    --github-output "$TEMPORARY/mismatch-output" \
+    --summary "$TEMPORARY/mismatch-summary" \
+    --reader "$ROOT/scripts/plan.py"
+) > "$TEMPORARY/mismatch.log" 2>&1; then
+  echo "publisher accepted a plan bound to another checkout" >&2
+  exit 1
+fi
+grep -Fq 'saved head commit does not match current authority' "$TEMPORARY/mismatch.log"
+test ! -e "$TEMPORARY/mismatch-output"
+test ! -e "$TEMPORARY/mismatch-summary"
 
 echo "summary tests passed"

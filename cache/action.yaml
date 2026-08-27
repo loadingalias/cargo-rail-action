@@ -1,5 +1,5 @@
 name: "Cargo-Rail compiler cache"
-description: "Install Cargo-Rail once so ordinary Cargo commands share verified compiler results."
+description: "Configure explicit remote compiler-cache authority for ordinary Cargo commands."
 author: "loadingalias"
 
 branding:
@@ -8,16 +8,15 @@ branding:
 
 inputs:
   url:
-    description: "AWS S3, Azure Blob Storage, or Cloudflare R2 cache URL"
+    description: "AWS S3, Azure Blob Storage, or Cloudflare R2 cache authority"
     required: true
 
   mode:
-    description: "Remote authority: read or read-write"
-    required: false
-    default: "read-write"
+    description: "Explicit remote authority: read or read-write"
+    required: true
 
   max-size:
-    description: "Job-local verified cache bound, such as 10GiB"
+    description: "Job-local verified-cache bound, such as 10GiB"
     required: false
     default: "10GiB"
 
@@ -27,22 +26,17 @@ inputs:
     default: ""
 
   version:
-    description: "cargo-rail version to install"
+    description: "Exact Cargo-Rail release to install"
     required: false
-    default: "0.23.0"
-
-  checksum:
-    description: "Release checksum policy: required, if-available, or off"
-    required: false
-    default: "required"
+    default: "0.24.0"
 
   token:
-    description: "GitHub token for downloading Cargo-Rail releases"
+    description: "GitHub token used only to download Cargo-Rail releases"
     required: false
     default: ${{ github.token }}
 
   working-directory:
-    description: "Working directory containing Cargo.toml"
+    description: "Workspace directory used for cache setup"
     required: false
     default: "."
 
@@ -55,20 +49,44 @@ outputs:
     description: "Installed Cargo-Rail version"
     value: ${{ steps.install.outputs.version }}
 
+  status-json:
+    description: "Versioned redacted projection of local setup and remote policy"
+    value: ${{ steps.setup.outputs.status_json }}
+
+  healthy:
+    description: "Whether the installed cache integration is healthy"
+    value: ${{ steps.setup.outputs.healthy }}
+
+  provider:
+    description: "Selected remote provider"
+    value: ${{ steps.setup.outputs.provider }}
+
+  mode:
+    description: "Selected remote authority"
+    value: ${{ steps.setup.outputs.mode }}
+
+  activation:
+    description: "Selected remote transport state"
+    value: ${{ steps.setup.outputs.activation }}
+
+  max-bytes:
+    description: "Effective local L1 byte bound"
+    value: ${{ steps.setup.outputs.max_bytes }}
+
 runs:
   using: "composite"
   steps:
-    - name: Install cargo-rail
+    - name: Install Cargo-Rail cache components
       id: install
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
         REQUESTED_VERSION: ${{ inputs.version }}
-        CHECKSUM_MODE: ${{ inputs.checksum }}
         COMPONENT_SET: cache
       run: bash "$GITHUB_ACTION_PATH/../scripts/install.sh"
 
-    - name: Configure compiler cache
+    - name: Configure and verify compiler cache
+      id: setup
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -76,17 +94,15 @@ runs:
         CACHE_MODE: ${{ inputs.mode }}
         CACHE_MAX_SIZE: ${{ inputs.max-size }}
         CACHE_LOCAL_DIR: ${{ inputs.local-dir }}
-      run: |
-        set -euo pipefail
-        case "$CACHE_MODE" in
-          read|read-write) ;;
-          *)
-            echo "::error::mode must be read or read-write"
-            exit 1
-            ;;
-        esac
-        SETUP_ARGS=(--remote "$CACHE_URL" --remote-mode "$CACHE_MODE" --max-size "$CACHE_MAX_SIZE")
-        if [[ -n "$CACHE_LOCAL_DIR" ]]; then
-          SETUP_ARGS+=(--local-dir "$CACHE_LOCAL_DIR")
-        fi
-        cargo rail cache setup "${SETUP_ARGS[@]}"
+        INSTALL_METHOD: ${{ steps.install.outputs.method }}
+        INSTALL_VERSION: ${{ steps.install.outputs.version }}
+      run: >-
+        python3 "$GITHUB_ACTION_PATH/../scripts/cache_setup.py"
+        --url "$CACHE_URL"
+        --mode "$CACHE_MODE"
+        --max-size "$CACHE_MAX_SIZE"
+        --local-dir "$CACHE_LOCAL_DIR"
+        --install-method "$INSTALL_METHOD"
+        --install-version "$INSTALL_VERSION"
+        --github-output "$GITHUB_OUTPUT"
+        --summary "$GITHUB_STEP_SUMMARY"

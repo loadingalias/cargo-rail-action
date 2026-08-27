@@ -5,40 +5,99 @@ on:
     branches:
       - "**"
   pull_request:
-  workflow_call: # Allow other workflows to call this
+  workflow_dispatch:
+    inputs:
+      require-release:
+        description: Fail unless the release-train Cargo-Rail assets are available
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      require-release:
+        description: Fail unless the release-train Cargo-Rail assets are available
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
 
 jobs:
   lint-action-yaml:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Validate action.yaml
-        run: ruby -ryaml -e 'YAML.load_file("action.yaml")'
+        run: ruby -ryaml -e 'YAML.load_file("action.yaml"); YAML.load_file("cache/action.yaml")'
 
   fixture-tests:
     needs: lint-action-yaml
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Run summary fixture tests
         run: ./tests/test_summary.sh
       - name: Run contract fixture tests
         run: bash ./tests/test_contracts.sh
+      - name: Run saved-plan verification tests
+        run: bash ./tests/test_plan_verification.sh
       - name: Run installer component-set tests
         run: bash ./tests/test_install.sh
+      - name: Run cache setup tests
+        run: bash ./tests/test_cache_setup.sh
       - name: Run history fixture tests
         run: bash ./tests/test_ensure_history.sh
       - name: Run release fixture tests
         run: bash ./tests/test_release.sh
+      - name: Run release-availability tests
+        run: bash ./tests/test_release_availability.sh
 
-  # ============================================================================
-  # Self-test: Create minimal workspace, no external dependencies
-  # ============================================================================
+  contract-platforms:
+    needs: lint-action-yaml
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify strict reader on native Windows
+        shell: bash
+        run: |
+          bash tests/test_contracts.sh
+          bash tests/test_plan_verification.sh
+
+  release-availability:
+    needs: lint-action-yaml
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.release.outputs.available }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check exact Cargo-Rail release assets
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRE_RELEASE: ${{ inputs.require-release }}
+        run: >-
+          python3 scripts/check_release.py
+          --release-train release-train.json
+          --require "$REQUIRE_RELEASE"
+          --github-output "$GITHUB_OUTPUT"
+
   self-test:
-    needs: [lint-action-yaml, fixture-tests]
+    needs: [lint-action-yaml, fixture-tests, contract-platforms, release-availability]
+    if: needs.release-availability.outputs.available == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Bind release train
         shell: bash
@@ -56,46 +115,46 @@ jobs:
         id: rail
         uses: ./
         with:
-          mode: debug
           since: HEAD~1
           working-directory: test-workspace
 
       - name: Verify outputs
+        working-directory: test-workspace
         env:
           PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
+          PLAN_READER: ${{ steps.rail.outputs.plan-reader }}
+          REQUIRED_WORK: ${{ steps.rail.outputs.required-work }}
+          PLAN_IDENTITY: ${{ steps.rail.outputs.plan-identity }}
+          HEAD_COMMIT: ${{ steps.rail.outputs.head-commit }}
         run: |
           echo "=== Outputs ==="
-          echo "build: ${{ steps.rail.outputs.build }}"
-          echo "test: ${{ steps.rail.outputs.test }}"
-          echo "scope-json: ${{ steps.rail.outputs.scope-json }}"
-          echo "surfaces-json: ${{ steps.rail.outputs.surfaces-json }}"
+          echo "required work: $REQUIRED_WORK"
+          echo "plan identity: $PLAN_IDENTITY"
           echo "plan-file: $PLAN_FILE"
 
-          [[ "${{ steps.rail.outputs.build }}" == "true" ]] || { echo "expected build=true"; exit 1; }
-          [[ "${{ steps.rail.outputs.test }}" == "true" ]] || { echo "expected test=true"; exit 1; }
+          jq -e 'index("cargo.build") != null' <<< "$REQUIRED_WORK" >/dev/null
+          jq -e 'index("cargo.test") != null' <<< "$REQUIRED_WORK" >/dev/null
           [[ "$(cargo-rail rail --version)" == "cargo-rail $EXPECTED_CARGO_RAIL_VERSION" ]] || {
             echo "expected cargo-rail $EXPECTED_CARGO_RAIL_VERSION"
             exit 1
           }
-          echo '${{ steps.rail.outputs.scope-json }}' | jq . || { echo "scope-json not valid JSON"; exit 1; }
-          [[ "$(echo '${{ steps.rail.outputs.surfaces-json }}' | jq -r '.build')" == "true" ]] || {
-            echo "expected surfaces-json build=true"
-            exit 1
-          }
-          [[ "$(echo '${{ steps.rail.outputs.surfaces-json }}' | jq -r '.test')" == "true" ]] || {
-            echo "expected surfaces-json test=true"
-            exit 1
-          }
-          jq . "$PLAN_FILE" >/dev/null || { echo "plan-file does not contain valid JSON"; exit 1; }
-          [[ -n "${{ steps.rail.outputs.base-ref }}" ]] || { echo "base-ref missing"; exit 1; }
+          python3 "$PLAN_READER" validate "$PLAN_FILE"
+          python3 "$PLAN_READER" verify-checkout "$PLAN_FILE"
+          [[ "$HEAD_COMMIT" == "$(git rev-parse HEAD)" ]]
+          [[ "$PLAN_IDENTITY" =~ ^plan-v8:sha256:[0-9a-f]{64}$ ]]
 
           echo "Self-test passed!"
 
-  # ============================================================================
-  # Multi-platform test
-  # ============================================================================
+      - name: Reject complete worktree drift
+        shell: bash
+        env:
+          PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
+          PLAN_READER: ${{ steps.rail.outputs.plan-reader }}
+        run: bash tests/test_plan_drift.sh test-workspace "$PLAN_FILE" "$PLAN_READER"
+
   test-platforms:
-    needs: [lint-action-yaml, fixture-tests]
+    needs: [lint-action-yaml, fixture-tests, contract-platforms, release-availability]
+    if: needs.release-availability.outputs.available == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -103,6 +162,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Bind release train
         shell: bash
@@ -120,19 +181,58 @@ jobs:
         id: rail
         uses: ./
         with:
-          mode: minimal
           since: HEAD~1
           working-directory: test-workspace
 
       - name: Verify
         shell: bash
+        working-directory: test-workspace
+        env:
+          REQUIRED_WORK: ${{ steps.rail.outputs.required-work }}
+          PLAN_READER: ${{ steps.rail.outputs.plan-reader }}
+          PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
         run: |
           echo "Platform: ${{ matrix.os }}"
-          echo "Scope JSON: ${{ steps.rail.outputs.scope-json }}"
+          echo "Required work: $REQUIRED_WORK"
           [[ "$(cargo-rail rail --version)" == "cargo-rail $EXPECTED_CARGO_RAIL_VERSION" ]] || {
             echo "expected cargo-rail $EXPECTED_CARGO_RAIL_VERSION"
             exit 1
           }
-          echo '${{ steps.rail.outputs.scope-json }}' | jq . >/dev/null || exit 1
-          echo '${{ steps.rail.outputs.surfaces-json }}' | jq . >/dev/null || exit 1
+          jq . <<< "$REQUIRED_WORK" >/dev/null
+          python3 "$PLAN_READER" validate "$PLAN_FILE"
+          python3 "$PLAN_READER" verify-checkout "$PLAN_FILE"
           echo "Platform test passed!"
+
+  cache-action-smoke:
+    needs: [lint-action-yaml, fixture-tests, contract-platforms, release-availability]
+    if: needs.release-availability.outputs.available == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Bind release train and fake network-free cache status
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/fake-cargo"
+          cp tests/fixtures/fake-cache-cargo.sh "$RUNNER_TEMP/fake-cargo/cargo"
+          chmod +x "$RUNNER_TEMP/fake-cargo/cargo"
+          echo "$RUNNER_TEMP/fake-cargo" >> "$GITHUB_PATH"
+          echo "FAKE_CARGO_LOG=$RUNNER_TEMP/cache-cargo.log" >> "$GITHUB_ENV"
+          echo 'FAKE_STATUS_JSON={"status":{"schema_version":13,"installation":{"state":"installed","healthy":true,"max_bytes":10737418240},"remote":{"provider":"aws-s3","authority":"remote-authority-v1-sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mode":"read","activation":"direct_transport_selected"}}}' >> "$GITHUB_ENV"
+      - name: Invoke public cache Action
+        id: cache
+        uses: ./cache
+        with:
+          url: s3://cache-fixture/path?region=us-east-1&owner=123456789012
+          mode: read
+      - name: Verify cache Action outputs
+        shell: bash
+        env:
+          HEALTHY: ${{ steps.cache.outputs.healthy }}
+          MODE: ${{ steps.cache.outputs.mode }}
+          STATUS_JSON: ${{ steps.cache.outputs.status-json }}
+        run: |
+          [[ "$HEALTHY" == true ]]
+          [[ "$MODE" == read ]]
+          jq -e '.cache_action_status_version == 1' <<< "$STATUS_JSON" >/dev/null

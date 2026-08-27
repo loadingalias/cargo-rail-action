@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ACTION_MAJOR="7"
+ACTION_MAJOR="8"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(git rev-parse --show-toplevel)"
 
@@ -50,6 +50,7 @@ if MAJOR_SHA="$(git rev-parse --verify "$MAJOR_TAG^{commit}" 2>/dev/null)" && [[
 else
   git tag -fa "$MAJOR_TAG" -m "$MAJOR_TAG: Latest ${MAJOR_TAG}.x release"
 fi
+gh auth setup-git
 git push --atomic origin \
   "refs/tags/$VERSION_TAG:refs/tags/$VERSION_TAG" \
   "+refs/tags/$MAJOR_TAG:refs/tags/$MAJOR_TAG"

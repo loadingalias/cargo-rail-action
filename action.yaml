@@ -1,5 +1,5 @@
 name: "Cargo-Rail planner"
-description: "Use Cargo-Rail to select affected Cargo work and expose planner scope to later jobs."
+description: "Create one validated named-work plan for exact CI routing and execution scope."
 author: "loadingalias"
 
 branding:
@@ -8,100 +8,74 @@ branding:
 
 inputs:
   version:
-    description: "cargo-rail version to install (default: 0.23.0; use 'latest' for
-      floating installs)"
+    description: "Exact Cargo-Rail release to install (default: 0.24.0)"
     required: false
-    default: "0.23.0"
-
-  checksum:
-    description: "Checksum verification mode for downloaded binaries:
-      required/if-available/off"
-    required: false
-    default: "required"
+    default: "0.24.0"
 
   components:
-    description: "Verified component set to install; surface and complete also prepare the exact selected toolchain"
+    description: "Verified component set; surface and complete also prepare the selected toolchain"
     required: false
     default: "core"
 
   since:
-    description: "Git ref to compare against (auto-detects PR base or origin/main)"
+    description: "Exact Git comparison ref; otherwise selected safely from the GitHub event"
     required: false
+    default: ""
 
-  args:
-    description: "Additional arguments to pass to cargo-rail"
+  all:
+    description: "Require every registered work item instead of comparing changes"
+    required: false
+    default: "false"
+
+  evidence:
+    description: "Optional planning-evidence-v1 JSON file in the workspace"
     required: false
     default: ""
 
   working-directory:
-    description: "Working directory containing Cargo.toml (default: repo root)"
+    description: "Workspace directory containing Cargo.toml"
     required: false
     default: "."
 
   token:
-    description: "GitHub token for downloading releases"
+    description: "GitHub token used only to download Cargo-Rail releases"
     required: false
     default: ${{ github.token }}
 
-  mode:
-    description: "Output mode: minimal (default) or debug"
-    required: false
-    default: "minimal"
-
 outputs:
   plan-file:
-    description: "Path to the full planner contract for same-job consumers (debug mode only)"
+    description: "Validated v8 plan path for same-job consumers and artifact upload"
     value: ${{ steps.plan.outputs.plan_file }}
 
-  scope-json:
-    description: "Compact execution-scope payload emitted by the planner"
-    value: ${{ steps.plan.outputs.scope_json }}
+  plan-reader:
+    description: "Bundled strict reader for work gates, typed Cargo argv, targets, matrices, and checkout verification"
+    value: ${{ steps.plan.outputs.plan_reader }}
 
-  surfaces-json:
-    description: "Boolean map of built-in and custom planner surfaces"
-    value: ${{ steps.plan.outputs.surfaces_json }}
+  plan-identity:
+    description: "Root-independent identity of the validated plan decisions"
+    value: ${{ steps.plan.outputs.plan_identity }}
 
-  cargo-args:
-    description: "Cargo package selection args emitted by the planner scope"
-    value: ${{ steps.plan.outputs.cargo_args }}
+  required-work:
+    description: "Compact JSON array of required named-work IDs"
+    value: ${{ steps.plan.outputs.required_work }}
 
-  # Convenience projections (pure projections of planner output)
-  build:
-    description: "'true' when build surface is active"
-    value: ${{ steps.plan.outputs.build }}
+  base:
+    description: "Authoritative comparison base captured by the plan"
+    value: ${{ steps.plan.outputs.base }}
 
-  test:
-    description: "'true' when test surface is active"
-    value: ${{ steps.plan.outputs.test }}
-
-  bench:
-    description: "'true' when bench surface is active"
-    value: ${{ steps.plan.outputs.bench }}
-
-  docs:
-    description: "'true' when docs surface is active"
-    value: ${{ steps.plan.outputs.docs }}
-
-  infra:
-    description: "'true' when infra surface is active"
-    value: ${{ steps.plan.outputs.infra }}
-
-  # Base Reference (for downstream jobs that need consistent change detection)
-  base-ref:
-    description: "Git ref used for comparison (set RAIL_SINCE env var for scripts)"
-    value: ${{ steps.base.outputs.ref }}
+  head-commit:
+    description: "Checkout commit bound to the plan"
+    value: ${{ steps.plan.outputs.head_commit }}
 
 runs:
   using: "composite"
   steps:
-    # Install; Cached > Binary Download > Cargo-Binstall > Cargo Install
-    - name: Install cargo-rail
+    - name: Install Cargo-Rail
       id: install
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
         REQUESTED_VERSION: ${{ inputs.version }}
-        CHECKSUM_MODE: ${{ inputs.checksum }}
         COMPONENT_SET: ${{ inputs.components }}
       run: bash "$GITHUB_ACTION_PATH/scripts/install.sh"
 
@@ -111,156 +85,58 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: cargo rail surface --prepare -f json
 
-    # Detect Base Reference for Comparison; Explicit Input > PR Base > Origin/Main > Origin/Master > HEAD~1
-    - name: Detect base ref
+    - name: Select comparison base
       id: base
       shell: bash
       env:
         INPUT_SINCE: ${{ inputs.since }}
-      run: |
-        # Handle null SHA (first push on new branch or force push)
-        # GitHub sets before to 0000...0000 in these cases
-        if [[ "$INPUT_SINCE" =~ ^0+$ ]]; then
-          echo "Null SHA detected (first push or force push), falling back to auto-detect"
-          INPUT_SINCE=""
-        fi
+        INPUT_ALL: ${{ inputs.all }}
+      run: >-
+        python3 "$GITHUB_ACTION_PATH/scripts/select_base.py"
+        --since "$INPUT_SINCE"
+        --all "$INPUT_ALL"
+        --github-output "$GITHUB_OUTPUT"
 
-        if [[ "$INPUT_SINCE" == *$'\n'* || "$INPUT_SINCE" == *$'\r'* ]]; then
-          echo "::error::since must be a single-line Git ref"
-          exit 1
-        fi
-
-        if [[ -n "$INPUT_SINCE" ]]; then
-          echo "ref=$INPUT_SINCE" >> "$GITHUB_OUTPUT"
-          echo "Using provided base: $INPUT_SINCE"
-        elif [[ -n "$GITHUB_BASE_REF" ]]; then
-          echo "ref=origin/$GITHUB_BASE_REF" >> "$GITHUB_OUTPUT"
-          echo "PR detected, using: origin/$GITHUB_BASE_REF"
-        elif git rev-parse --verify origin/main &>/dev/null; then
-          echo "ref=origin/main" >> "$GITHUB_OUTPUT"
-          echo "Using default: origin/main"
-        elif git rev-parse --verify origin/master &>/dev/null; then
-          echo "ref=origin/master" >> "$GITHUB_OUTPUT"
-          echo "Using fallback: origin/master"
-        else
-          echo "ref=HEAD~1" >> "$GITHUB_OUTPUT"
-          echo "::warning::No remote branch found, using HEAD~1"
-        fi
-
-    # Ensure git history is available for change detection
-    - name: Ensure git history
-      id: validate
+    - name: Fetch comparison history
+      id: history
+      if: steps.base.outputs.all != 'true'
       shell: bash
       env:
         BASE_REF: ${{ steps.base.outputs.ref }}
-      run: |
-        bash "$GITHUB_ACTION_PATH/scripts/ensure_history.sh"
+        USE_MERGE_BASE: ${{ steps.base.outputs.merge_base }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/ensure_history.sh"
 
-    # Run planner and emit selected output mode
-    - name: Run cargo-rail plan
+    - name: Create and publish plan
       id: plan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        MODE: ${{ inputs.mode }}
-        EXTRA_ARGS: ${{ inputs.args }}
-        BASE_REF: ${{ steps.base.outputs.ref }}
+        FORCE_ALL: ${{ steps.base.outputs.all }}
+        BASE_REF: ${{ steps.history.outputs.ref }}
+        EVIDENCE_FILE: ${{ inputs.evidence }}
         INSTALL_METHOD: ${{ steps.install.outputs.method }}
         INSTALL_VERSION: ${{ steps.install.outputs.version }}
       run: |
         set -euo pipefail
-
-        if [[ "$MODE" == "full" ]]; then
-          echo "::warning::mode=full is deprecated; using debug outputs instead"
-          MODE="debug"
+        PLAN_ROOT="$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/cargo-rail-plan.XXXXXX")"
+        chmod 700 "$PLAN_ROOT"
+        PLAN_FILE="$PLAN_ROOT/plan.json"
+        PLAN_READER="$PLAN_ROOT/read.py"
+        cp "$GITHUB_ACTION_PATH/scripts/plan.py" "$PLAN_READER"
+        chmod 700 "$PLAN_READER"
+        PLAN_ARGS=(rail plan --json)
+        if [[ "$FORCE_ALL" == "true" ]]; then
+          PLAN_ARGS+=(--all)
+        else
+          PLAN_ARGS+=(--since "$BASE_REF")
         fi
-
-        if [[ "$MODE" != "minimal" && "$MODE" != "debug" ]]; then
-          echo "::error::invalid mode: $MODE (expected minimal|debug)"
-          exit 1
+        if [[ -n "$EVIDENCE_FILE" ]]; then
+          PLAN_ARGS+=(--evidence "$EVIDENCE_FILE")
         fi
-
-        if printf '%s\n' "$EXTRA_ARGS" | grep -Eq '(^|[[:space:]])(--format|-f|--json|--output|-o)([[:space:]=]|$)'; then
-          echo "::error::inputs.args must not override planner format or output path"
-          exit 1
-        fi
-
-        TMP_OUTPUT="$(mktemp)"
-        trap 'rm -f "$TMP_OUTPUT"' EXIT
-
-        cargo rail plan --quiet --since "$BASE_REF" -f github-debug $EXTRA_ARGS -o "$TMP_OUTPUT"
-
-        read_kv() {
-          local key="$1"
-          grep "^${key}=" "$TMP_OUTPUT" | tail -n1 | cut -d= -f2- || true
-        }
-
-        BUILD="$(read_kv build)"
-        TEST="$(read_kv test)"
-        BENCH="$(read_kv bench)"
-        DOCS="$(read_kv docs)"
-        INFRA="$(read_kv infra)"
-        CARGO_ARGS="$(read_kv cargo_args)"
-        SURFACES_JSON="$(read_kv surfaces_json)"
-        SCOPE_JSON="$(read_kv scope_json)"
-        PLAN_JSON="$(read_kv plan_json)"
-        if [[ -z "${SURFACES_JSON:-}" ]]; then
-          echo "::error::planner output missing surfaces_json"
-          exit 1
-        fi
-        if [[ -z "${SCOPE_JSON:-}" ]]; then
-          echo "::error::planner output missing scope_json"
-          exit 1
-        fi
-        if [[ -z "${PLAN_JSON:-}" ]]; then
-          echo "::error::planner output missing plan_json"
-          exit 1
-        fi
-
-        PLAN_JSON_FILE="$(mktemp "${RUNNER_TEMP}/cargo-rail-plan.XXXXXX")"
-        SCOPE_JSON_FILE="$(mktemp)"
-        printf '%s' "$PLAN_JSON" > "$PLAN_JSON_FILE"
-        printf '%s' "$SCOPE_JSON" > "$SCOPE_JSON_FILE"
-        trap 'rm -f "$TMP_OUTPUT" "$SCOPE_JSON_FILE"' EXIT
-
-        python3 "$GITHUB_ACTION_PATH/scripts/validate_contract.py" \
-          --plan-json-file "$PLAN_JSON_FILE" \
-          --scope-json-file "$SCOPE_JSON_FILE"
-
-        {
-          echo "build=${BUILD:-false}"
-          echo "test=${TEST:-false}"
-          echo "bench=${BENCH:-false}"
-          echo "docs=${DOCS:-false}"
-          echo "infra=${INFRA:-false}"
-          echo "cargo_args=${CARGO_ARGS}"
-          echo "scope_json=${SCOPE_JSON}"
-          echo "surfaces_json=${SURFACES_JSON}"
-        } >> "$GITHUB_OUTPUT"
-
-        if [[ "$MODE" == "debug" ]]; then
-          echo "plan_file=${PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
-        fi
-
-        # Keep the unbounded diagnostic contract file-scoped. Expanding it into a
-        # process environment can fail with E2BIG on large workspaces.
-        echo "plan_json_file=${PLAN_JSON_FILE}" >> "$GITHUB_OUTPUT"
-
-    # Generate Job Summary
-    - name: Summary
-      if: always()
-      shell: bash
-      env:
-        INSTALL_METHOD: ${{ steps.install.outputs.method }}
-        INSTALL_VERSION: ${{ steps.install.outputs.version }}
-        BASE_REF: ${{ steps.base.outputs.ref }}
-        PLAN_JSON_FILE: ${{ steps.plan.outputs.plan_json_file }}
-      run: |
-        set -euo pipefail
-        PYTHON_BIN="python3"
-        command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
-        "$PYTHON_BIN" "${{ github.action_path }}/scripts/render_summary.py" \
-          --plan-json-file "$PLAN_JSON_FILE" \
+        cargo "${PLAN_ARGS[@]}" > "$PLAN_FILE"
+        python3 "$GITHUB_ACTION_PATH/scripts/plan.py" publish "$PLAN_FILE" \
+          --github-output "$GITHUB_OUTPUT" \
+          --summary "$GITHUB_STEP_SUMMARY" \
+          --reader "$PLAN_READER" \
           --install-method "$INSTALL_METHOD" \
-          --install-version "$INSTALL_VERSION" \
-          --base-ref "$BASE_REF" >> "$GITHUB_STEP_SUMMARY"
+          --install-version "$INSTALL_VERSION"

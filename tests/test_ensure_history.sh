@@ -2,110 +2,121 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$ROOT/scripts/ensure_history.sh"
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+HISTORY="$ROOT/scripts/ensure_history.sh"
+SELECT="$ROOT/scripts/select_base.py"
+TEMPORARY="$(mktemp -d)"
+trap 'rm -rf "$TEMPORARY"' EXIT
 
 init_remote_repo() {
   local name="$1"
-  INIT_REMOTE="$TMP_DIR/$name-remote.git"
-  INIT_WORK="$TMP_DIR/$name-work"
-
+  INIT_REMOTE="$TEMPORARY/$name-remote.git"
+  INIT_WORK="$TEMPORARY/$name-work"
   git init --bare --initial-branch=main "$INIT_REMOTE" >/dev/null
   git clone "$INIT_REMOTE" "$INIT_WORK" >/dev/null
-  git -C "$INIT_WORK" config user.email "test@example.com"
-  git -C "$INIT_WORK" config user.name "Test"
-  git -C "$INIT_WORK" branch -M main
+  git -C "$INIT_WORK" config user.email test@example.com
+  git -C "$INIT_WORK" config user.name Test
 }
 
-run_history_check() {
-  local repo="$1"
-  local base_ref="$2"
-  local output_file="$3"
-
+run_history() {
+  local repo="$1" base_ref="$2" output="$3" merge_base="${4:-false}"
   (
     cd "$repo"
-    BASE_REF="$base_ref" GITHUB_OUTPUT="$output_file" bash "$SCRIPT"
+    BASE_REF="$base_ref" USE_MERGE_BASE="$merge_base" GITHUB_OUTPUT="$output" bash "$HISTORY"
   )
 }
 
-repo_is_shallow() {
-  local repo="$1"
-  [[ "$(git -C "$repo" rev-parse --is-shallow-repository)" == "true" ]]
+make_diverged_remote() {
+  init_remote_repo "$1"
+  printf 'base\n' > "$INIT_WORK/file.txt"
+  git -C "$INIT_WORK" add file.txt
+  git -C "$INIT_WORK" commit -m base >/dev/null
+  BASE_SHA="$(git -C "$INIT_WORK" rev-parse HEAD)"
+  git -C "$INIT_WORK" tag -a base-v1 -m base-v1
+  git -C "$INIT_WORK" push -u origin main --tags >/dev/null
+  git -C "$INIT_WORK" checkout -b feature >/dev/null
+  printf 'feature\n' > "$INIT_WORK/feature.txt"
+  git -C "$INIT_WORK" add feature.txt
+  git -C "$INIT_WORK" commit -m feature >/dev/null
+  git -C "$INIT_WORK" push -u origin feature >/dev/null
+  git -C "$INIT_WORK" checkout main >/dev/null
+  printf 'main\n' > "$INIT_WORK/main.txt"
+  git -C "$INIT_WORK" add main.txt
+  git -C "$INIT_WORK" commit -m 'main advance' >/dev/null
+  git -C "$INIT_WORK" push >/dev/null
+  MAIN_SHA="$(git -C "$INIT_WORK" rev-parse HEAD)"
 }
 
-test_raw_sha_fetch_stays_shallow() {
-  init_remote_repo raw-sha
-  local remote="$INIT_REMOTE"
-  local work="$INIT_WORK"
-  local clone="$TMP_DIR/raw-sha-clone"
-  local output_file="$TMP_DIR/raw-sha-output.txt"
-  local base_sha
+make_diverged_remote history
+CLONE="$TEMPORARY/clone"
+git clone --depth 1 --branch feature "file://$INIT_REMOTE" "$CLONE" >/dev/null
 
-  printf 'one\n' > "$work/file.txt"
-  git -C "$work" add file.txt
-  git -C "$work" commit -m "one" >/dev/null
-  base_sha="$(git -C "$work" rev-parse HEAD)"
+run_history "$CLONE" "$BASE_SHA" "$TEMPORARY/raw.output"
+grep -Fxq "ref=$BASE_SHA" "$TEMPORARY/raw.output"
+[[ "$(git -C "$CLONE" rev-parse --is-shallow-repository)" == true ]]
 
-  printf 'two\n' > "$work/file.txt"
-  git -C "$work" add file.txt
-  git -C "$work" commit -m "two" >/dev/null
-  git -C "$work" push -u origin main >/dev/null
+run_history "$CLONE" origin/main "$TEMPORARY/origin.output"
+grep -Fxq "ref=$MAIN_SHA" "$TEMPORARY/origin.output"
+git -C "$CLONE" merge-base HEAD "$MAIN_SHA" >/dev/null
 
-  git clone --depth 1 --branch main "file://$remote" "$clone" >/dev/null
+run_history "$CLONE" origin/main "$TEMPORARY/merge-base.output" true
+grep -Fxq "ref=$BASE_SHA" "$TEMPORARY/merge-base.output"
 
-  if git -C "$clone" rev-parse --verify "$base_sha^{commit}" >/dev/null 2>&1; then
-    echo "raw SHA unexpectedly present before targeted fetch"
-    exit 1
-  fi
+rm -rf "$CLONE"
+git clone --depth 1 --branch feature "file://$INIT_REMOTE" "$CLONE" >/dev/null
+run_history "$CLONE" main "$TEMPORARY/branch.output"
+grep -Fxq "ref=$MAIN_SHA" "$TEMPORARY/branch.output"
 
-  run_history_check "$clone" "$base_sha" "$output_file"
+rm -rf "$CLONE"
+git clone --depth 1 --branch feature "file://$INIT_REMOTE" "$CLONE" >/dev/null
+run_history "$CLONE" base-v1 "$TEMPORARY/tag.output"
+grep -Fxq "ref=$BASE_SHA" "$TEMPORARY/tag.output"
 
-  git -C "$clone" rev-parse --verify "$base_sha^{commit}" >/dev/null
-  repo_is_shallow "$clone"
-  grep -qx 'shallow=true' "$output_file"
+if run_history "$CLONE" absent-ref "$TEMPORARY/missing.output" > "$TEMPORARY/missing.log" 2>&1; then
+  echo "history recovery accepted a missing ref" >&2
+  exit 1
+fi
+grep -Fq 'Cannot resolve absent-ref' "$TEMPORARY/missing.log"
+
+select_base() {
+  local output="$1"
+  shift
+  : > "$output"
+  (cd "$CLONE" && python3 "$SELECT" "$@" --github-output "$output")
 }
 
-test_branch_ref_falls_back_to_full_history() {
-  init_remote_repo branch-ref
-  local remote="$INIT_REMOTE"
-  local work="$INIT_WORK"
-  local clone="$TMP_DIR/branch-ref-clone"
-  local output_file="$TMP_DIR/branch-ref-output.txt"
+select_base "$TEMPORARY/explicit.output" --since "$BASE_SHA" --all false
+grep -Fxq "ref=$BASE_SHA" "$TEMPORARY/explicit.output"
+grep -Fxq 'all=false' "$TEMPORARY/explicit.output"
+grep -Fxq 'merge_base=false' "$TEMPORARY/explicit.output"
 
-  printf 'base\n' > "$work/file.txt"
-  git -C "$work" add file.txt
-  git -C "$work" commit -m "base" >/dev/null
-  git -C "$work" push -u origin main >/dev/null
+printf '{"before":"%s"}\n' "$BASE_SHA" > "$TEMPORARY/push.json"
+(cd "$CLONE" && GITHUB_EVENT_NAME=push GITHUB_EVENT_PATH="$TEMPORARY/push.json" \
+  python3 "$SELECT" --all false --github-output "$TEMPORARY/push.output")
+grep -Fxq "ref=$BASE_SHA" "$TEMPORARY/push.output"
+grep -Fxq 'merge_base=false' "$TEMPORARY/push.output"
 
-  git -C "$work" checkout -b feature >/dev/null
-  printf 'feature\n' > "$work/feature.txt"
-  git -C "$work" add feature.txt
-  git -C "$work" commit -m "feature" >/dev/null
-  git -C "$work" push -u origin feature >/dev/null
+(cd "$CLONE" && GITHUB_BASE_REF=main \
+  python3 "$SELECT" --all false --github-output "$TEMPORARY/pull-request.output")
+grep -Fxq 'ref=origin/main' "$TEMPORARY/pull-request.output"
+grep -Fxq 'merge_base=true' "$TEMPORARY/pull-request.output"
 
-  git -C "$work" checkout main >/dev/null
-  printf 'main\n' > "$work/main.txt"
-  git -C "$work" add main.txt
-  git -C "$work" commit -m "main advance" >/dev/null
-  git -C "$work" push >/dev/null
+printf '{"before":"%040d"}\n' 0 > "$TEMPORARY/zero.json"
+(cd "$CLONE" && GITHUB_EVENT_NAME=push GITHUB_EVENT_PATH="$TEMPORARY/zero.json" \
+  python3 "$SELECT" --all false --github-output "$TEMPORARY/zero.output")
+grep -Fxq 'ref=' "$TEMPORARY/zero.output"
+grep -Fxq 'all=true' "$TEMPORARY/zero.output"
 
-  git clone --depth 1 --branch feature "file://$remote" "$clone" >/dev/null
+select_base "$TEMPORARY/all.output" --since 'ignored' --all true
+grep -Fxq 'all=true' "$TEMPORARY/all.output"
 
-  if git -C "$clone" rev-parse --verify "origin/main^{commit}" >/dev/null 2>&1; then
-    echo "origin/main unexpectedly present before branch fetch"
-    exit 1
-  fi
+select_base "$TEMPORARY/single-zero.output" --since '0' --all false
+grep -Fxq 'ref=0' "$TEMPORARY/single-zero.output"
+grep -Fxq 'all=false' "$TEMPORARY/single-zero.output"
 
-  run_history_check "$clone" "origin/main" "$output_file"
+if select_base "$TEMPORARY/invalid.output" --since $'bad\nref' --all false > "$TEMPORARY/invalid.log" 2>&1; then
+  echo "base selection accepted a multiline ref" >&2
+  exit 1
+fi
+grep -Fq 'since must be one non-empty Git ref' "$TEMPORARY/invalid.log"
 
-  git -C "$clone" rev-parse --verify "origin/main^{commit}" >/dev/null
-  git -C "$clone" merge-base HEAD origin/main >/dev/null
-  [[ "$(git -C "$clone" rev-parse --is-shallow-repository)" == "false" ]]
-  grep -qx 'shallow=true' "$output_file"
-}
-
-test_raw_sha_fetch_stays_shallow
-test_branch_ref_falls_back_to_full_history
-
-echo "ensure_history tests passed"
+echo "history and base-selection tests passed"

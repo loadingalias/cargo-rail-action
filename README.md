@@ -1,217 +1,196 @@
 # Cargo-Rail for GitHub Actions
 
+**Plan less work. Reuse more compiler work.**
+
+`cargo-rail-action` brings two independent Cargo-Rail capabilities to GitHub Actions:
+
+| Action | What it removes |
+|---|---|
+| `loadingalias/cargo-rail-action` | Unaffected jobs, packages, targets, and matrix rows |
+| `loadingalias/cargo-rail-action/cache` | Verified compiler work already completed in local or remote cache authority |
+
 [![Test](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml/badge.svg)](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`cargo-rail-action` runs the Cargo-Rail planner once, validates its versioned contracts, and publishes affected
-surfaces and Cargo package scope to later jobs. Package ownership and reverse-dependency impact come from Cargo's
-resolved graph instead of path filters.
+The planner does not replace Cargo, nextest, Miri, Kani, Just, Make, Docker, or your CI commands. It creates one
+validated decision file. Your existing command remains the execution authority.
 
-The planner action does not build, test, release, publish, or configure later jobs. Existing jobs keep their
-toolchains, runners, matrices, and commands. The optional cache action installs verified compiler reuse in each
-execution job that needs it.
-
-## Quick start
-
-This workflow handles pull requests and pushes. Pull requests use the PR base; pushes use the event's previous SHA.
+## Plan Named Work
 
 ```yaml
-name: CI
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-on:
-  push:
-  pull_request:
+- uses: loadingalias/cargo-rail-action@v8
+  id: rail
+  with:
+    version: 0.24.0
 
-permissions:
-  contents: read
-
-jobs:
-  plan:
-    name: Plan affected work
-    runs-on: ubuntu-latest
-    outputs:
-      test: ${{ steps.rail.outputs.test }}
-      cargo_args: ${{ steps.rail.outputs.cargo-args }}
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: loadingalias/cargo-rail-action@v7
-        id: rail
-        with:
-          version: 0.23.0
-          # Push: compare with the previous SHA from the event.
-          # Pull request: pass empty and let the action use the PR base.
-          since: ${{ github.event_name == 'push' && github.event.before || '' }}
-
-  test:
-    name: Test affected packages
-    needs: plan
-    if: needs.plan.outputs.test == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Run tests
-        env:
-          CARGO_ARGS: ${{ needs.plan.outputs.cargo_args }}
-        run: |
-          # Intentional word splitting: cargo-args contains Cargo-Rail-generated Cargo arguments.
-          # shellcheck disable=SC2086
-          cargo test $CARGO_ARGS
+- name: Test affected packages
+  if: contains(fromJSON(steps.rail.outputs.required-work), 'cargo.test')
+  shell: bash
+  env:
+    PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
+    PLAN_READER: ${{ steps.rail.outputs.plan-reader }}
+  run: |
+    CARGO_ARGS=()
+    while IFS= read -r -d '' arg; do CARGO_ARGS+=("$arg"); done \
+      < <(python3 "$PLAN_READER" cargo-args "$PLAN_FILE" cargo.test)
+    python3 "$PLAN_READER" verify-checkout "$PLAN_FILE"
+    cargo nextest run "${CARGO_ARGS[@]}" --locked
 ```
 
-A shared-library change selects affected dependents. A docs-only change can skip package tests. Incomplete resolution
-evidence widens scope. The action fetches missing comparison history when a shallow checkout lacks the selected base.
+The Action selects a pull request's merge base, a push event's previous commit, or an available default-branch merge
+base; fetches missing shallow history; runs `cargo rail plan --json` once; validates the complete v8 identity and typed
+contract; verifies the captured execution authority; and publishes a bounded summary. An all-zero push base safely
+becomes `--all`.
 
-## Outputs
+For cross-job execution, export `required-work` from the planning job and upload `plan-file` plus `plan-reader` as one
+artifact. Install the exact Cargo-Rail release used by the planning job in every consumer, download the artifact to a
+fixed path, then run verification from the checked-out workspace root immediately before execution:
 
-GitHub Actions outputs are strings. Compare convenience booleans with `'true'` when crossing job boundaries.
+```bash
+python3 .cargo-rail-plan/read.py verify-checkout .cargo-rail-plan/plan.json
+```
+
+The reader resolves `cargo-rail` from `PATH` (or `CARGO_RAIL_BIN`) and delegates complete execution-authority
+verification to `cargo rail plan --verify`. It fails closed when the binary is unavailable, the verifier rejects the
+plan, or the verifier emits unexpected stdout. Do not reconstruct package scope from changed paths or transfer a
+second derived plan.
+
+### Work model
+
+Cargo-Rail owns the built-in Cargo decisions. A repository declares only the positive inputs for additional commands:
+
+```toml
+# .config/rail.toml
+[plan.work.miri]
+scope = "cargo"
+cargo = ["cargo.test"]
+paths = [".github/workflows/miri.yml", "scripts/miri/**"]
+
+[plan.work.kani]
+scope = "repository"
+cargo = ["cargo.test"]
+paths = [".github/workflows/kani.yml", "kani/**"]
+
+[plan.work.benchmarks]
+scope = "cargo"
+cargo = ["cargo.test"]
+paths = ["benches/**", "scripts/bench/**"]
+
+[plan.work.container]
+scope = "repository"
+cargo = ["cargo.build"]
+paths = ["Dockerfile", "docker/**"]
+```
+
+The distinction is deliberate:
+
+- `scope = "cargo"` emits exact package and target selectors. Use it when the command accepts Cargo-style package
+  selection, as `cargo test`, nextest, and Miri do.
+- `scope = "repository"` is only a yes/no gate. Use it when a command is indivisible or does not accept the emitted
+  selectors. Kani, a Docker build, or a legacy Make target can still avoid an unrelated job without pretending that
+  Cargo-Rail can partially execute it.
+- `scope = "variants"` selects checked-in matrix rows. It is for target/toolchain/feature/platform matrices, not shell
+  commands.
+
+Subscriptions such as `cargo = ["cargo.test"]` inherit that built-in's exact changed-input package scope. The
+declaration remains command-free: flags, profiles, environment, timeouts, and tool installation stay in Just, Make,
+scripts, or workflow YAML.
+
+This covers mixed test runners naturally. Use `cargo.test` scope with nextest or `cargo test`; consume
+`cargo.doctest` separately for `cargo test --doc`. Register Miri, Kani, benchmarks, profiling, generated-code checks,
+or containers only when they have policy different from a built-in.
+
+Markdown and arbitrary TOML do not trigger compilation merely because they changed. They trigger named work only
+when a positive path declaration owns them, when Cargo-Rail understands a semantic Cargo/configuration change, or
+when compatible compiler evidence proves the file is an observed input. `cargo.package` remains conservative over a
+package's source tree because packaging owns those bytes.
+
+### Planner outputs
 
 | Output | Meaning |
 |---|---|
-| `build`, `test`, `bench`, `docs`, `infra` | `'true'` or `'false'` for each built-in planner surface |
-| `surfaces-json` | Boolean map containing every built-in and configured custom surface |
-| `scope-json` | Versioned union execution scope across active package-scoped surfaces |
-| `cargo-args` | Shell projection of that union scope: `--workspace`, one or more `-p <crate>` arguments, or an empty string |
-| `base-ref` | Git ref used as the comparison base |
-| `plan-file` | Path to the full planner contract for same-job consumers; published only with `mode: debug` |
+| `required-work` | Compact JSON array used to route any built-in or repository-defined work ID |
+| `plan-file` | Complete validated v8 plan for same-job use or artifact upload |
+| `plan-reader` | Bundled strict consumer and final execution-authority verifier |
+| `plan-identity` | Root-independent identity of the plan decisions |
+| `base` | Authoritative comparison base recorded in the plan |
+| `head-commit` | Commit component of the complete saved-plan authority binding |
 
-Every invocation writes a job summary with the installed version, comparison base, changed-file count, scope mode,
-direct and execution crates, active surfaces, top reasons, and a bounded trace preview.
+The reader emits Cargo and target arguments as NUL-delimited argv. Never shell-split or `eval` them. `required-work`
+is bounded routing data; the complete plan stays file-scoped to avoid GitHub output limits.
 
-### Scope semantics
-
-`cargo-args` is the compatibility union of active package-scoped surfaces. It suits a combined build-and-test job, but
-one surface can be narrower.
-
-Use `mode: debug` and read `.surfaces.<name>.scope` from `plan-file` when a same-job task runner needs exact surface
-scope. Use `scope` for execution and `impact` or `trace` for explanation. The full plan is file-scoped because it can
-exceed process environment limits. Transfer `plan-file` as an artifact if another job needs it. See
-[Planning and execution](https://github.com/loadingalias/cargo-rail/blob/main/docs/planning.md).
-
-## Custom repository surfaces
-
-Cargo-Rail can classify non-Cargo work without pretending path globs define package ownership.
-
-```toml
-# rail.toml
-[change-detection.custom]
-frontend = ["web/**"]
-protos = ["proto/**"]
-```
-
-Export the complete map from the planner job:
-
-```yaml
-jobs:
-  plan:
-    runs-on: ubuntu-latest
-    outputs:
-      surfaces: ${{ steps.rail.outputs.surfaces-json }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: loadingalias/cargo-rail-action@v7
-        id: rail
-        with:
-          version: 0.23.0
-          since: ${{ github.event_name == 'push' && github.event.before || '' }}
-
-  frontend:
-    needs: plan
-    if: ${{ fromJSON(needs.plan.outputs.surfaces)['custom:frontend'] }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - run: npm test
-```
-
-Globs classify repository surfaces. Cargo package ownership and dependent impact still come from the resolved graph.
-
-## Base-ref rules
-
-The action selects the comparison base in this order:
-
-1. explicit `since` input;
-2. pull-request base as `origin/$GITHUB_BASE_REF`;
-3. `origin/main`;
-4. `origin/master`; or
-5. `HEAD~1`.
-
-For `push` workflows, pass `github.event.before` as shown above. Otherwise, the default branch can resolve to the
-checked-out commit and produce an empty comparison.
-
-GitHub uses an all-zero `before` SHA for some first-push and force-push cases. The action detects that value and falls back to automatic base selection.
-
-## Inputs
-
-| Input | Default | Meaning |
+| Planner input | Default | Meaning |
 |---|---|---|
-| `version` | `0.23.0` | Cargo-Rail release to install; `latest` explicitly opts into a floating core version |
-| `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
-| `components` | `core` | Verified component set: `core`, `surface`, `distributed`, or `complete`; Surface selections run the exact-toolchain readiness preflight |
-| `since` | automatic | Explicit Git comparison ref |
-| `args` | `""` | Additional planner arguments; format and output overrides are rejected |
-| `working-directory` | `.` | Directory containing the workspace `Cargo.toml` |
-| `token` | `${{ github.token }}` | Token used to download release assets |
-| `mode` | `minimal` | `minimal` or `debug`; legacy `full` maps to `debug` with a warning |
+| `version` | `0.24.0` | Exact compatible Cargo-Rail release |
+| `components` | `core` | Verified native component set |
+| `since` | event-aware | Explicit Git comparison ref |
+| `all` | `false` | Require every registered item with complete scope |
+| `evidence` | empty | Optional planning-evidence-v1 file |
+| `working-directory` | `.` | Workspace directory |
 
-The planner needs only `core`. Select `surface` before a same-job `cargo rail surface` invocation, `distributed`
-before configuring a distributed worker, or `complete` when the job needs every native capability. The installer
-authenticates the archive and records the exact selected inventory; the next action run repairs a damaged partial
-install. Selecting `surface` or `complete` makes the action run `cargo rail surface --prepare -f json` immediately
-after installation. The preflight installs `rustc-dev` when absent and authenticates the driver for the workspace's
-exact selected toolchain without changing the default toolchain, so the job fails before planning if that producer is
-not ready.
+Checksum verification is mandatory for downloaded release archives. The Action rejects floating versions and
+incompatible planner output before publishing any plan outputs.
 
-## Compiler cache
-
-Add the cache action to each execution job that should reuse compiler results:
+## Share Verified Compiler Work
 
 ```yaml
-- uses: loadingalias/cargo-rail-action/cache@v7
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+- uses: loadingalias/cargo-rail-action/cache@v8
+  id: cache
   with:
-    version: 0.23.0
+    version: 0.24.0
     url: ${{ vars.CARGO_RAIL_CACHE_URL }}
     mode: read
+
+- run: cargo test --workspace --locked
 ```
 
-Use `read-write` only in trusted jobs that cannot execute untrusted code. Configure provider credentials before the
-action. Its `url` accepts an AWS `s3://`, Cloudflare `r2://`, or Azure `azure://` authority and contains no credentials.
-Later Cargo commands need no cache arguments or wrapper command.
+`mode` is required. Use `read` in untrusted jobs. Grant `read-write` only to trusted cache-seeding jobs that cannot
+execute unreviewed code. Omitting the input never grants remote publication authority.
 
-| Input | Default | Meaning |
+The Action installs the authenticated cache component set, configures one bounded local L1 plus AWS S3, Cloudflare
+R2, or Azure Blob Storage L2, then runs a network-free local status check. Later Cargo invocations in that job inherit
+the setup, including Cargo launched by nextest, Just, or Make. Unsupported compiler shapes, incomplete observation,
+provider failures, and rejected results fall back to normal compilation.
+
+Host cache setup does not automatically enter `docker build`. Configure Cargo-Rail inside the container or explicitly
+mount the required machine-owned state and credentials. Planning can still gate the Docker command independently.
+Benchmark and profiling *results* are never compiler-cache objects; only eligible compilation leading to those runs
+can be reused.
+
+| Cache input | Default | Meaning |
 |---|---|---|
-| `url` | required | AWS S3, Azure Blob Storage, or Cloudflare R2 cache authority |
-| `mode` | `read-write` | Maximum remote authority: `read` or `read-write` |
-| `max-size` | `10GiB` | Positive binary size bound for the job-local verified cache |
-| `local-dir` | Cargo home | Optional base directory for the job-local verified cache |
-| `version` | `0.23.0` | Cargo-Rail release to install |
-| `checksum` | `required` | Release checksum policy: `required`, `if-available`, or `off` |
-| `token` | `${{ github.token }}` | Token used to download release assets |
-| `working-directory` | `.` | Workspace directory used for setup |
+| `url` | required | Secret-free S3, R2, or Azure cache authority |
+| `mode` | required | Explicit `read` or `read-write` authority |
+| `max-size` | `10GiB` | Job-local verified-cache bound |
+| `local-dir` | Cargo home | Optional local-cache base directory |
+| `version` | `0.24.0` | Exact Cargo-Rail release |
 
-Provide credentials through the provider's standard job environment. Limit them to the selected bucket, container,
-or prefix. See
-[Cache sharing](https://github.com/loadingalias/cargo-rail/blob/main/docs/cache-sharing.md) for provider permissions
-and trust boundaries.
+The cache Action publishes a small versioned `status-json` projection plus `healthy`, `provider`, `mode`, `activation`,
+and `max-bytes`. Outputs and the job summary exclude the input URL, credentials, local paths, complete status document,
+and cache object identities. A valid authenticated `complete` installation can satisfy a later `cache` request without
+a second download.
 
-## Trust and compatibility
+For L1-only reuse inside one job, run `cargo rail cache setup` directly. See Cargo-Rail's
+[planning](https://github.com/loadingalias/cargo-rail/blob/main/docs/planning.md),
+[cache execution matrix](https://github.com/loadingalias/cargo-rail/blob/main/docs/caching.md#execution-and-reuse-support),
+and [remote trust model](https://github.com/loadingalias/cargo-rail/blob/main/docs/cache-sharing.md).
 
-- Checksum verification is required by default.
-- Installation tries an already matching binary, a release archive, `cargo-binstall`, then `cargo install --locked`.
-- Planner and scope contracts are validated before outputs are published.
-- Action major `v7` consumes planner contract `v7` and scope contract `v4`.
-- Planner scopes include optional-feature and target-gated dependents; the action does not reinterpret them.
-- The action and the installed Cargo-Rail version are selected independently.
-- Release binaries support Linux and Windows on x86-64 and ARM64, plus macOS on ARM64.
-- Additional planner arguments cannot override the action-owned output format or path.
+## Compatibility and release
 
-Use `@v7` to follow compatible fixes within the action major. Pin a full commit SHA for immutable execution.
+Action v8 installs Cargo-Rail 0.24.0 by default and rejects incompatible planner output before publishing outputs.
+Use `@v8` for compatible Action fixes, or pin a full commit SHA for immutable execution. Core installation can fall
+back to `cargo-binstall` or `cargo install --locked`; native component sets require a matching verified release
+archive. The hosted release gate covers GNU Linux and Windows x86-64; qualify other published targets before relying
+on them for a release.
 
 ## Project
 
 - [Cargo-Rail](https://github.com/loadingalias/cargo-rail)
-- [Action Issues](https://github.com/loadingalias/cargo-rail-action/issues)
-- [Core Issues](https://github.com/loadingalias/cargo-rail/issues)
+- [Action issues](https://github.com/loadingalias/cargo-rail-action/issues)
+- [Core issues](https://github.com/loadingalias/cargo-rail/issues)
 - [Contributing](CONTRIBUTING.md)
 - [MIT license](LICENSE)

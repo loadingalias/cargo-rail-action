@@ -2,268 +2,59 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+TEMPORARY="$(mktemp -d)"
+trap 'rm -rf "$TEMPORARY"' EXIT
+PLAN="$TEMPORARY/plan.json"
 
-ruby -rjson -ryaml - "$ROOT/action.yaml" "$ROOT/cache/action.yaml" "$ROOT/release-train.json" \
-  "$ROOT/.github/workflows/test.yaml" <<'RUBY'
-planner = YAML.load_file(ARGV.fetch(0))
-cache = YAML.load_file(ARGV.fetch(1))
-release_train = JSON.parse(File.read(ARGV.fetch(2)))
-test_workflow = YAML.load_file(ARGV.fetch(3))
-planner_version = planner.fetch("inputs").fetch("version").fetch("default")
-cache_version = cache.fetch("inputs").fetch("version").fetch("default")
-abort "unsupported release-train schema" unless release_train == {
-  "schema_version" => 1,
-  "cargo_rail_version" => release_train["cargo_rail_version"],
+python3 "$ROOT/tests/make_plan.py" rust "$PLAN"
+python3 "$ROOT/scripts/plan.py" validate "$PLAN"
+python3 "$ROOT/scripts/plan.py" required "$PLAN" > "$TEMPORARY/actual-required"
+printf '%s\n' '["cargo.build","cargo.test","miri"]' > "$TEMPORARY/expected-required"
+cmp "$TEMPORARY/expected-required" "$TEMPORARY/actual-required"
+[[ "$(python3 "$ROOT/scripts/plan.py" required "$PLAN")" == '["cargo.build","cargo.test","miri"]' ]]
+[[ "$(python3 "$ROOT/scripts/plan.py" is-required "$PLAN" miri)" == true ]]
+[[ "$(python3 "$ROOT/scripts/plan.py" is-required "$PLAN" docs)" == false ]]
+[[ "$(python3 "$ROOT/scripts/plan.py" identity "$PLAN")" =~ ^plan-v8:sha256:[0-9a-f]{64}$ ]]
+
+python3 "$ROOT/scripts/plan.py" cargo-args "$PLAN" miri > "$TEMPORARY/actual-args"
+printf '%s\0%s\0' -p 'demo;echo-not-a-shell' > "$TEMPORARY/expected-args"
+cmp "$TEMPORARY/expected-args" "$TEMPORARY/actual-args"
+python3 "$ROOT/scripts/plan.py" target-args "$PLAN" miri > "$TEMPORARY/actual-targets"
+printf '%s\0%s\0' --test contract > "$TEMPORARY/expected-targets"
+cmp "$TEMPORARY/expected-targets" "$TEMPORARY/actual-targets"
+
+if python3 "$ROOT/scripts/plan.py" is-required "$PLAN" unknown > "$TEMPORARY/unknown.out" 2>&1; then
+  echo "reader accepted an unregistered work ID" >&2
+  exit 1
+fi
+grep -Fq 'plan does not register work unknown' "$TEMPORARY/unknown.out"
+
+mutate_and_reject() {
+  local expression="$1"
+  python3 - "$PLAN" "$TEMPORARY/invalid.json" "$expression" <<'PY'
+import json
+import sys
+
+source, destination, expression = sys.argv[1:]
+plan = json.load(open(source))
+exec(expression, {"plan": plan})
+json.dump(plan, open(destination, "w"))
+PY
+  if python3 "$ROOT/scripts/plan.py" validate "$TEMPORARY/invalid.json" > "$TEMPORARY/invalid.out" 2>&1; then
+    echo "reader accepted invalid plan mutation: $expression" >&2
+    exit 1
+  fi
 }
-abort "planner version default drifted" unless planner_version == release_train.fetch("cargo_rail_version")
-abort "planner and cache version defaults disagree" unless cache_version == planner_version
-violations = [planner, cache].flat_map do |action|
-  action.fetch("runs").fetch("steps").each_with_object([]) do |step, found|
-    found << step["name"] if step.fetch("run", "").match?(/\$\{\{\s*inputs\./)
-  end
-end
-abort "action run blocks interpolate inputs directly: #{violations.join(', ')}" unless violations.empty?
-abort "planner action still owns execution-job cache setup" if planner.fetch("inputs").key?("cache-url")
-inputs = cache.fetch("inputs")
-abort "cache URL is not required" unless inputs.fetch("url").fetch("required")
-url_description = inputs.fetch("url").fetch("description")
-abort "cache URL provider surface drifted" unless url_description.include?("AWS S3") && url_description.include?("Azure Blob Storage") && url_description.include?("Cloudflare R2")
-abort "cache action advertises generic S3 compatibility" if url_description.include?("S3-compatible")
-abort "cache mode default drifted" unless inputs.fetch("mode").fetch("default") == "read-write"
-cache_step = cache.fetch("runs").fetch("steps").find { |step| step["name"] == "Configure compiler cache" }
-abort "compiler-cache setup step missing" unless cache_step
-abort "compiler-cache setup does not pass the persisted URL" unless cache_step.fetch("run").include?('--remote "$CACHE_URL"')
-installer = cache.fetch("runs").fetch("steps").find { |step| step["name"] == "Install cargo-rail" }
-abort "cache action does not share the installer" unless installer.fetch("run").include?("../scripts/install.sh")
-planner_components = planner.fetch("inputs").fetch("components")
-abort "planner component default drifted" unless planner_components.fetch("default") == "core"
-abort "planner does not request its selected component set" unless planner.fetch("runs").fetch("steps").first.fetch("env").fetch("COMPONENT_SET") == "${{ inputs.components }}"
-abort "cache action does not request the cache component set" unless installer.fetch("env").fetch("COMPONENT_SET") == "cache"
-surface_step = planner.fetch("runs").fetch("steps").find { |step| step["name"] == "Prepare Surface" }
-abort "planner action does not prepare a selected Surface component" unless surface_step
-abort "Surface preparation condition drifted" unless surface_step.fetch("if") == "inputs.components == 'surface' || inputs.components == 'complete'"
-abort "Surface preparation does not use the readiness command" unless surface_step.fetch("run") == "cargo rail surface --prepare -f json"
-platforms = test_workflow.fetch("jobs").fetch("test-platforms").fetch("strategy").fetch("matrix").fetch("os")
-abort "hosted CI must remain Linux/Windows only" unless platforms == ["ubuntu-latest", "windows-latest"]
-RUBY
 
-bash -n "$ROOT/scripts/install.sh"
-python3 "$ROOT/scripts/sync-release-train.py" --check
-grep -Fq 'cargo-rail-components-v1.tsv' "$ROOT/scripts/install.sh"
-grep -Fq 'cargo-rail-installed-components-v1' "$ROOT/scripts/install.sh"
-if grep -Fq 'x86_64-apple-darwin' "$ROOT/scripts/install.sh"; then
-  echo "action installer still requests an unsupported Intel macOS archive"
-  exit 1
-fi
+mutate_and_reject 'plan["plan_contract_version"] = 7'
+mutate_and_reject 'plan["required"] = []'
+mutate_and_reject 'plan["inputs"]["unknown"] = True'
+mutate_and_reject 'plan["work"]["miri"]["scope"]["selection"]["cargo_args"] = ["--workspace"]'
+mutate_and_reject 'plan["evidence"][next(iter(plan["evidence"]))]["complete"] = False'
+mutate_and_reject 'plan["identity"] = "plan-v8:sha256:" + "0" * 64'
 
-PLAN_FIXTURE="$(cat "$ROOT/tests/fixtures/plan_rust_src.json")"
-SCOPE_FIXTURE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
+python3 "$ROOT/tests/make_plan.py" docs "$TEMPORARY/docs.json"
+python3 "$ROOT/scripts/plan.py" validate "$TEMPORARY/docs.json"
+[[ "$(python3 "$ROOT/scripts/plan.py" required "$TEMPORARY/docs.json")" == '["docs"]' ]]
 
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  print(json.dumps(json.load(f)["scope"]))
-PY
-)"
-
-python3 "$ROOT/scripts/validate_contract.py" \
-  --plan-json "$PLAN_FIXTURE" \
-  --scope-json "$SCOPE_FIXTURE"
-
-PLAN_FILE="$TMP_DIR/plan.json"
-SCOPE_FILE="$TMP_DIR/scope.json"
-printf '%s' "$PLAN_FIXTURE" > "$PLAN_FILE"
-printf '%s' "$SCOPE_FIXTURE" > "$SCOPE_FILE"
-
-python3 "$ROOT/scripts/validate_contract.py" \
-  --plan-json-file "$PLAN_FILE" \
-  --scope-json-file "$SCOPE_FILE"
-
-OLD_PLAN="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  plan = json.load(f)
-plan["plan_contract_version"] = 6
-print(json.dumps(plan))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$OLD_PLAN" --scope-json "$SCOPE_FIXTURE" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected plan contract validation to fail for old contract"
-  exit 1
-fi
-grep -Fq "plan_contract_version too old: got 6, expected 7" "$TMP_DIR/out.txt"
-
-NEW_PLAN="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  plan = json.load(f)
-plan["plan_contract_version"] = 8
-print(json.dumps(plan))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$NEW_PLAN" --scope-json "$SCOPE_FIXTURE" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected plan contract validation to fail for new contract"
-  exit 1
-fi
-grep -Fq "plan_contract_version too new: got 8, expected 7" "$TMP_DIR/out.txt"
-
-OLD_SCOPE_PLAN="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  plan = json.load(f)
-plan["scope"]["scope_contract_version"] = 3
-print(json.dumps(plan))
-PY
-)"
-OLD_SCOPE="$(python3 - <<'PY' "$OLD_SCOPE_PLAN"
-import json
-import sys
-
-print(json.dumps(json.loads(sys.argv[1])["scope"]))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$OLD_SCOPE_PLAN" --scope-json "$OLD_SCOPE" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected scope contract validation to fail for old contract"
-  exit 1
-fi
-grep -Fq "scope_contract_version too old: got 3, expected 4" "$TMP_DIR/out.txt"
-
-NEW_SCOPE_PLAN="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  plan = json.load(f)
-plan["scope"]["scope_contract_version"] = 5
-print(json.dumps(plan))
-PY
-)"
-NEW_SCOPE="$(python3 - <<'PY' "$NEW_SCOPE_PLAN"
-import json
-import sys
-
-print(json.dumps(json.loads(sys.argv[1])["scope"]))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$NEW_SCOPE_PLAN" --scope-json "$NEW_SCOPE" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected scope contract validation to fail for new contract"
-  exit 1
-fi
-grep -Fq "scope_contract_version too new: got 5, expected 4" "$TMP_DIR/out.txt"
-
-BAD_CARGO_ARGS="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  scope = json.load(f)["scope"]
-scope["cargo_args"] = []
-print(json.dumps(scope))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$PLAN_FIXTURE" --scope-json "$BAD_CARGO_ARGS" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected scope contract validation to fail for mismatched cargo_args"
-  exit 1
-fi
-grep -Fq "scope.cargo_args does not match scope mode/crates" "$TMP_DIR/out.txt"
-
-MISSING_SNAPSHOT="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  plan = json.load(f)
-del plan["inputs"]["snapshot_id"]
-print(json.dumps(plan))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$MISSING_SNAPSHOT" --scope-json "$SCOPE_FIXTURE" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected plan contract validation to fail without snapshot identity"
-  exit 1
-fi
-grep -Fq "inputs.snapshot_id missing in planner output" "$TMP_DIR/out.txt"
-
-MISSING_UNIVERSE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  plan = json.load(f)
-del plan["resolution_universe"]
-print(json.dumps(plan))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$MISSING_UNIVERSE" --scope-json "$SCOPE_FIXTURE" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected plan contract validation to fail without a resolution universe"
-  exit 1
-fi
-grep -Fq "plan.resolution_universe missing or invalid in planner output" "$TMP_DIR/out.txt"
-
-BAD_UNIVERSE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  plan = json.load(f)
-plan["resolution_universe"] = {"mode": "exact", "identity": "not-a-versioned-digest"}
-print(json.dumps(plan))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$BAD_UNIVERSE" --scope-json "$SCOPE_FIXTURE" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected plan contract validation to fail for an invalid resolution universe"
-  exit 1
-fi
-grep -Fq "plan.resolution_universe.mode invalid in planner output" "$TMP_DIR/out.txt"
-grep -Fq "plan.resolution_universe.identity missing or invalid in planner output" "$TMP_DIR/out.txt"
-
-BAD_SURFACE_SCOPE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  plan = json.load(f)
-plan["surfaces"]["build"]["scope"]["cargo_args"] = []
-print(json.dumps(plan))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$BAD_SURFACE_SCOPE" --scope-json "$SCOPE_FIXTURE" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected plan contract validation to fail for a mismatched surface scope"
-  exit 1
-fi
-grep -Fq "plan.surfaces.build.scope.cargo_args does not match scope mode/crates" "$TMP_DIR/out.txt"
-
-BAD_CUSTOM_SURFACE="$(python3 - <<'PY' "$ROOT/tests/fixtures/plan_rust_src.json"
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-  plan = json.load(f)
-plan["surfaces"]["custom:coverage"] = True
-print(json.dumps(plan))
-PY
-)"
-
-if python3 "$ROOT/scripts/validate_contract.py" --plan-json "$BAD_CUSTOM_SURFACE" --scope-json "$SCOPE_FIXTURE" >"$TMP_DIR/out.txt" 2>&1; then
-  echo "expected plan contract validation to fail for a malformed custom surface"
-  exit 1
-fi
-grep -Fq "plan.surfaces.custom:coverage missing or invalid in planner output" "$TMP_DIR/out.txt"
-
-echo "contract validation tests passed"
+echo "planner contract tests passed"

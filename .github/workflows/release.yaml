@@ -4,25 +4,30 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Action version to release (e.g., 7.0.0)"
+        description: "Action version to release (e.g., 8.0.0)"
         required: true
         type: string
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
-  # Tests must pass before releasing
   test:
     uses: ./.github/workflows/test.yaml
+    permissions:
+      contents: read
+    with:
+      require-release: true
 
   release:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Create release
         env:

@@ -18,22 +18,34 @@ Run the installer, contract, summary, Git-history, and release tests:
 ```bash
 bash tests/test_summary.sh
 bash tests/test_contracts.sh
+bash tests/test_plan_verification.sh
 bash tests/test_install.sh
+bash tests/test_cache_setup.sh
 bash tests/test_ensure_history.sh
 bash tests/test_release.sh
+bash tests/test_release_availability.sh
+```
+
+With the matching source-built Cargo-Rail binary, exercise the complete saved-plan authority boundary:
+
+```bash
+CARGO_RAIL_BIN=/absolute/path/to/cargo-rail bash tests/test_plan_drift.sh
 ```
 
 Validate `action.yaml` after changing inputs, outputs, or composite steps:
 
 ```bash
-ruby -ryaml -e 'YAML.load_file("action.yaml")'
+ruby -ryaml -e 'YAML.load_file("action.yaml"); YAML.load_file("cache/action.yaml")'
 ```
 
 ## Change requirements
 
 - Keep shell and Python behavior deterministic and independent of a developer's global configuration.
 - Update tests and README tables when an input, output, default, installation path, or planner contract changes.
-- Treat existing output names and meanings as public API. Breaking changes require a new action major.
+- Keep `scripts/plan.py` aligned with Cargo-Rail's strict v8 reference consumer. The Action may add bounded publication
+  and summary commands, but must not reclassify work.
+- Treat existing input and output names and meanings as public API. Breaking changes require a new action major.
+- Keep cache setup in `scripts/cache_setup.py`; composite metadata must not grow a second setup path.
 - Test shallow-history changes with `tests/test_ensure_history.sh`; local full clones do not exercise that path.
 - When a patch also changes cargo-rail, run `just check && just test` in the cargo-rail repository.
 
@@ -49,10 +61,14 @@ ruby -ryaml -e 'YAML.load_file("action.yaml")'
 When an action release defaults to a new Cargo-Rail version, release the repositories in this order:
 
 1. Publish the Cargo-Rail crate and all native release archives.
-2. Rerun this repository's `Test Action` workflow and require its Linux and Windows jobs to pass with that exact
-   version. Validate macOS ARM64 on the local Apple machine.
+2. Rerun this repository's `Test Action` workflow and require its planner, cache, Linux, and Windows jobs to pass with
+   that exact version. Qualify every additional archive target before claiming Action support for it.
 3. Dispatch this repository's `Release` workflow from `main` with the new action version.
 
 The integration matrix installs the action's default Cargo-Rail version. A release-archive 404 followed by a missing
 crates.io version means the core release is unavailable; it is not a platform failure. The `Release` workflow's
 `version` input is the action version, not the Cargo-Rail version.
+
+Before that Cargo-Rail release exists, push and pull-request workflows run the fixture suite and native-Windows reader
+contract, then defer release-dependent integration jobs with an explicit notice. The Action release workflow requires
+the exact Cargo-Rail release assets and cannot defer those jobs.
