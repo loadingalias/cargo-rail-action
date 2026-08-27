@@ -95,7 +95,7 @@ printf '{"before":"%s"}\n' "$BASE_SHA" > "$TEMPORARY/push.json"
 grep -Fxq "ref=$BASE_SHA" "$TEMPORARY/push.output"
 grep -Fxq 'merge_base=false' "$TEMPORARY/push.output"
 
-(cd "$CLONE" && GITHUB_BASE_REF=main \
+(cd "$CLONE" && GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH='' GITHUB_BASE_REF=main \
   python3 "$SELECT" --all false --github-output "$TEMPORARY/pull-request.output")
 grep -Fxq 'ref=origin/main' "$TEMPORARY/pull-request.output"
 grep -Fxq 'merge_base=true' "$TEMPORARY/pull-request.output"

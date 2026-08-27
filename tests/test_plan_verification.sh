@@ -11,15 +11,27 @@ FAKE_BIN="$TEMPORARY/bin"
 LOG="$TEMPORARY/cargo-rail.log"
 
 mkdir -p "$WORKSPACE" "$FAKE_BIN"
-cp "$ROOT/tests/fixtures/fake-plan-verifier.sh" "$FAKE_BIN/cargo-rail"
-chmod +x "$FAKE_BIN/cargo-rail"
+EXECUTABLE_SUFFIX=""
+if [[ "${OS:-}" == Windows_NT ]]; then
+  EXECUTABLE_SUFFIX=.exe
+fi
+rustc --edition=2021 "$ROOT/tests/fixtures/fake-plan-verifier.rs" \
+  -o "$FAKE_BIN/cargo-rail$EXECUTABLE_SUFFIX"
 python3 "$ROOT/tests/make_plan.py" rust "$PLAN"
 
-(
+if (
   cd "$WORKSPACE"
   PATH="$FAKE_BIN:$PATH" FAKE_CARGO_RAIL_LOG="$LOG" \
     python3 "$ROOT/scripts/plan.py" verify-checkout "$PLAN"
-) > "$TEMPORARY/accepted.out" 2> "$TEMPORARY/accepted.err"
+) > "$TEMPORARY/accepted.out" 2> "$TEMPORARY/accepted.err"; then
+  :
+else
+  status=$?
+  echo "native cargo-rail verifier fixture failed with exit code $status" >&2
+  cat "$TEMPORARY/accepted.out" >&2
+  cat "$TEMPORARY/accepted.err" >&2
+  exit "$status"
+fi
 test ! -s "$TEMPORARY/accepted.out"
 test ! -s "$TEMPORARY/accepted.err"
 printf 'rail\0plan\0--verify\0%s\0' "$PLAN_RESOLVED" > "$TEMPORARY/expected.log"

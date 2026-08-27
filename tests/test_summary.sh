@@ -8,7 +8,12 @@ PLAN="$TEMPORARY/plan.json"
 OUTPUT="$TEMPORARY/output"
 SUMMARY="$TEMPORARY/summary.md"
 HEAD_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
-VERIFIER="$ROOT/tests/fixtures/fake-plan-verifier.sh"
+EXECUTABLE_SUFFIX=""
+if [[ "${OS:-}" == Windows_NT ]]; then
+  EXECUTABLE_SUFFIX=.exe
+fi
+VERIFIER="$TEMPORARY/cargo-rail$EXECUTABLE_SUFFIX"
+rustc --edition=2021 "$ROOT/tests/fixtures/fake-plan-verifier.rs" -o "$VERIFIER"
 
 python3 "$ROOT/tests/make_plan.py" rust "$PLAN" --head "$HEAD_COMMIT"
 (
