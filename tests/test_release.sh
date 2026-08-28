@@ -99,6 +99,22 @@ fi
 grep -Fq "release-train projections are stale" "$TMP_DIR/train-drift.out"
 cp "$ROOT/action.yaml" "$WORK/action.yaml"
 
+python3 - "$WORK/README.md" "$WORK/release-train.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+version = json.loads(pathlib.Path(sys.argv[2]).read_text())["cargo_rail_version"]
+path.write_text(path.read_text().replace(f"Cargo-Rail {version} by default", "Cargo-Rail 9.9.9 by default", 1))
+PY
+if python3 "$ROOT/scripts/sync-release-train.py" --check --root "$WORK" >"$TMP_DIR/readme-drift.out" 2>&1; then
+  echo "expected README release-train drift to fail"
+  exit 1
+fi
+grep -Fq "release-train projections are stale: README.md" "$TMP_DIR/readme-drift.out"
+cp "$ROOT/README.md" "$WORK/README.md"
+
 if run_release >"$TMP_DIR/atomic.out" 2>&1; then
   echo "expected atomic tag push to fail"
   exit 1

@@ -33,12 +33,11 @@ def projected(path: Path, version: str) -> str:
             path,
         )
     if path.name == "README.md":
-        text = replace_owned(text, rf"(?m)^(\s+version: ){SEMVER_TEXT}$", rf"\g<1>{version}", 2, path)
         return replace_owned(
             text,
-            rf"(?m)^(\| `version` \| `){SEMVER_TEXT}(` \|)",
+            rf"(?m)^(- Action v[0-9]+ installs Cargo-Rail ){SEMVER_TEXT}( by default and accepts only v[0-9]+ plans\.)$",
             rf"\g<1>{version}\g<2>",
-            2,
+            1,
             path,
         )
     if path.suffix == ".json":
