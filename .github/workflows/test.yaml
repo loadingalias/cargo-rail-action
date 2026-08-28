@@ -31,7 +31,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Validate action.yaml
-        run: ruby -ryaml -e 'YAML.load_file("action.yaml"); YAML.load_file("cache/action.yaml")'
+        run: ruby tests/test_action_metadata.rb
 
   fixture-tests:
     needs: lint-action-yaml

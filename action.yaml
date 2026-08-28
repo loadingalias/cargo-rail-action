@@ -88,6 +88,7 @@ runs:
     - name: Select comparison base
       id: base
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         INPUT_SINCE: ${{ inputs.since }}
         INPUT_ALL: ${{ inputs.all }}
@@ -101,6 +102,7 @@ runs:
       id: history
       if: steps.base.outputs.all != 'true'
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         BASE_REF: ${{ steps.base.outputs.ref }}
         USE_MERGE_BASE: ${{ steps.base.outputs.merge_base }}
