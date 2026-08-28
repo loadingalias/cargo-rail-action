@@ -184,11 +184,15 @@ if [[ -n "$TARGET" ]]; then
     else
       tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
     fi
-    COMPONENT_DIR="$EXTRACT_DIR/cargo-rail-$TARGET"
-    MANIFEST="$COMPONENT_DIR/cargo-rail-components-v1.tsv"
-    [[ -f "$MANIFEST" && ! -L "$MANIFEST" ]] || {
-      echo "::error::$ARCHIVE does not use the required cargo-rail-$TARGET component layout"; exit 1
+    MANIFESTS=()
+    while IFS= read -r -d '' manifest; do
+      MANIFESTS+=("$manifest")
+    done < <(find "$EXTRACT_DIR" -type f -name cargo-rail-components-v1.tsv -print0)
+    [[ "${#MANIFESTS[@]}" == 1 ]] || {
+      echo "::error::$ARCHIVE must contain exactly one component manifest"; exit 1
     }
+    MANIFEST="${MANIFESTS[0]}"
+    COMPONENT_DIR="$(dirname "$MANIFEST")"
     HEADER="$(sed -n '1p' "$MANIFEST")"
     EXPECTED_HEADER="$(printf 'cargo-rail-components-v1\t%s\t%s' "$VERSION" "$TARGET")"
     [[ "$HEADER" == "$EXPECTED_HEADER" ]] || { echo "::error::Release component authority is incompatible"; exit 1; }
