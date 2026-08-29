@@ -34,8 +34,25 @@ Add the planner before commands you want to gate:
 `required-work` skips the step when `cargo.test` is unaffected. `cargo-args` emits exact NUL-delimited arguments.
 `verify-checkout` rejects drift before Cargo runs. Never shell-split or `eval` reader output.
 
+Use `cargo-scope PLAN WORK` before consuming package names. It emits exactly `skipped`, `workspace`, or `packages`.
+`package-names PLAN WORK` emits canonical NUL-delimited names only for package scope and rejects ambiguous duplicate
+names. It emits no bytes for skipped or workspace scope:
+
+```bash
+scope="$(python3 "$PLAN_READER" cargo-scope "$PLAN_FILE" cargo.test)"
+if [[ "$scope" == packages ]]; then
+  PACKAGES=()
+  while IFS= read -r -d '' package; do PACKAGES+=("$package"); done \
+    < <(python3 "$PLAN_READER" package-names "$PLAN_FILE" cargo.test)
+fi
+```
+
 The action selects and fetches a safe Git base, runs `cargo rail plan --json` once, validates the v8 plan, then
 publishes `required-work`, the exact plan, and its strict reader. An all-zero push base runs all work.
+
+For a machine-contract boundary, pin this Action by full commit SHA. Its major tag is convenient but mutable. Use the
+Action's exact default Cargo-Rail release, or set `version` to one exact compatible release; do not float the binary
+independently of the bundled reader.
 
 Cargo-Rail scopes work. Your existing commands execute it.
 

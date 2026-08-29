@@ -51,7 +51,7 @@ def create(scenario: str, head: str) -> dict[str, Any]:
             decision.update({"cause": cause, "scope": scope})
         work[work_id] = decision
 
-    if scenario == "rust":
+    if scenario in {"rust", "workspace", "duplicate", "punctuation"}:
         add("cargo.build", "required", cause="changed_input", scope=cargo_scope())
         add("cargo.test", "required", cause="incomplete_evidence", scope=cargo_scope(), complete=False)
         add("docs", "skipped")
@@ -63,6 +63,21 @@ def create(scenario: str, head: str) -> dict[str, Any]:
         add("docs", "required", cause="changed_input", scope={"kind": "repository"})
         add("miri", "skipped")
         files = [{"path": "README.md", "kind": "modified", "provenance": ["committed"]}]
+
+    if scenario == "workspace":
+        work["miri"]["scope"]["selection"] = {"kind": "workspace", "cargo_args": [], "targets": []}
+    elif scenario == "duplicate":
+        work["miri"]["scope"]["selection"] = {
+            "kind": "packages",
+            "packages": [
+                {"key": "demo@0.1.0#path:a", "name": "demo", "cargo_spec": "demo@0.1.0"},
+                {"key": "demo@0.2.0#path:b", "name": "demo", "cargo_spec": "demo@0.2.0"},
+            ],
+            "cargo_args": ["-p", "demo@0.1.0", "-p", "demo@0.2.0"],
+            "targets": [],
+        }
+    elif scenario == "punctuation":
+        work["miri"]["scope"]["selection"]["packages"][0]["name"] = "demo-name_123"
 
     required = sorted(work_id for work_id, decision in work.items() if decision["state"] == "required")
     plan: dict[str, Any] = {
@@ -101,7 +116,7 @@ def create(scenario: str, head: str) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=("rust", "docs"))
+    parser.add_argument("scenario", choices=("rust", "docs", "workspace", "duplicate", "punctuation"))
     parser.add_argument("output", type=pathlib.Path)
     parser.add_argument("--head", default="0" * 40)
     arguments = parser.parse_args()
