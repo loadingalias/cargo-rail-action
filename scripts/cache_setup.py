@@ -13,6 +13,7 @@ import sys
 from typing import Any
 
 PROJECTION_VERSION = 1
+PROBE_PROJECTION_VERSION = 1
 AUTHORITY = re.compile(r"remote-authority-v1-sha256-[0-9a-f]{64}")
 SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?")
 INSTALL_METHODS = {"binary", "binstall", "cargo-install", "cached"}
@@ -53,13 +54,20 @@ def string_field(value: dict[str, Any], field: str, subject: str) -> str:
     return selected
 
 
-def project_status(document: Any, install_method: str, install_version: str, requested_mode: str) -> dict[str, Any]:
+def project_status(
+    document: Any,
+    install_method: str,
+    install_version: str,
+    requested_mode: str,
+    requested_root_portability: str,
+) -> dict[str, Any]:
     status = object_field(document, "status", "cache status")
     require(isinstance(status.get("schema_version"), int), "cache status schema_version is missing or invalid")
     installation = object_field(status, "installation", "cache status")
     state = string_field(installation, "state", "cache status.installation")
     healthy = installation.get("healthy")
     max_bytes = installation.get("max_bytes")
+    root_portability = installation.get("root_portability")
     require(isinstance(healthy, bool), "cache status.installation.healthy is missing or invalid")
     require(
         isinstance(max_bytes, int) and not isinstance(max_bytes, bool) and 0 < max_bytes <= 2**64 - 1,
@@ -67,6 +75,10 @@ def project_status(document: Any, install_method: str, install_version: str, req
     )
     require(healthy, "Cargo-Rail cache installation is unhealthy after setup")
     require(state == "installed", "Cargo-Rail cache installation is not installed after setup")
+    require(
+        root_portability == requested_root_portability,
+        f"cache status root portability is {root_portability!r}, expected {requested_root_portability!r}",
+    )
 
     remote = object_field(status, "remote", "cache status")
     provider = string_field(remote, "provider", "cache status.remote")
@@ -87,6 +99,30 @@ def project_status(document: Any, install_method: str, install_version: str, req
     }
 
 
+def project_probe(document: Any, status: dict[str, Any]) -> dict[str, Any]:
+    require(isinstance(document, dict), "cache probe document is invalid")
+    require(document.get("schema_version") == 1, "cache probe schema_version is unsupported")
+    require(document.get("command") == "cache", "cache probe command is invalid")
+    require(document.get("mode") == "probe", "cache probe mode is invalid")
+    require(document.get("result") == "ready", "cache probe result is not ready")
+    require(document.get("exit_code") == 0, "cache probe exit_code is invalid")
+    require(document.get("ready") is True, "cache probe readiness is invalid")
+    marker = document.get("protocol_marker")
+    require(marker in {"existing", "initialized"}, "cache probe protocol_marker is invalid")
+    remote = object_field(document, "remote", "cache probe")
+    for field in ("provider", "authority", "mode", "activation"):
+        require(
+            remote.get(field) == status["remote"][field],
+            f"cache probe remote.{field} disagrees with configured status",
+        )
+    return {
+        "cache_action_probe_version": PROBE_PROJECTION_VERSION,
+        "ready": True,
+        "protocol_marker": marker,
+        "remote": dict(status["remote"]),
+    }
+
+
 def human_bytes(value: int) -> str:
     units = ["B", "KiB", "MiB", "GiB", "TiB"]
     selected = float(value)
@@ -97,31 +133,52 @@ def human_bytes(value: int) -> str:
     raise AssertionError("unreachable")
 
 
-def render_summary(projection: dict[str, Any]) -> str:
+def render_summary(
+    projection: dict[str, Any], root_portability: str, probe: dict[str, Any] | None
+) -> str:
     installation = projection["installation"]
     remote = projection["remote"]
-    return "\n".join(
-        [
-            "## Cargo-Rail cache",
-            "",
-            "| | |",
-            "|---|---|",
-            f"| Cargo-Rail | `{safe_inline(projection['cargo_rail_version'])}` via `{safe_inline(projection['install_method'])}` |",
-            f"| Installation | `{safe_inline(installation['state'])}`; healthy: `{str(installation['healthy']).lower()}` |",
-            f"| Local L1 bound | {human_bytes(installation['max_bytes'])} |",
-            f"| Remote provider | `{safe_inline(remote['provider'])}` |",
-            f"| Remote authority | `{safe_inline(remote['authority'])}` |",
-            f"| Remote mode | `{safe_inline(remote['mode'])}` |",
-            f"| Activation | `{safe_inline(remote['activation'])}` |",
-            "",
-            "Status inspection was local and did not contact the remote provider.",
-            "",
-        ]
-    )
+    rows = [
+        "## Cargo-Rail cache",
+        "",
+        "| | |",
+        "|---|---|",
+        f"| Cargo-Rail | `{safe_inline(projection['cargo_rail_version'])}` via `{safe_inline(projection['install_method'])}` |",
+        f"| Installation | `{safe_inline(installation['state'])}`; healthy: `{str(installation['healthy']).lower()}` |",
+        f"| Local L1 bound | {human_bytes(installation['max_bytes'])} |",
+        f"| Remote provider | `{safe_inline(remote['provider'])}` |",
+        f"| Remote authority | `{safe_inline(remote['authority'])}` |",
+        f"| Remote mode | `{safe_inline(remote['mode'])}` |",
+        f"| Activation | `{safe_inline(remote['activation'])}` |",
+        f"| Root portability | `{safe_inline(root_portability)}` |",
+    ]
+    if probe is not None:
+        rows.extend(
+            [
+                f"| Remote probe | `ready`; marker: `{safe_inline(probe['protocol_marker'])}` |",
+                "",
+                "The strict probe authenticated to the selected provider and validated the Cargo-Rail protocol marker.",
+                "",
+            ]
+        )
+    else:
+        rows.extend(
+            [
+                "",
+                "Status inspection was local; strict remote probing was not requested.",
+                "",
+            ]
+        )
+    return "\n".join(rows)
 
 
 def run(arguments: argparse.Namespace) -> None:
     require(arguments.mode in {"read", "read-write"}, "mode must be explicitly set to read or read-write")
+    require(
+        arguments.root_portability in {"physical", "remap"},
+        "root-portability must be explicitly set to physical or remap",
+    )
+    require(arguments.strict_probe in {"true", "false"}, "strict-probe must be true or false")
     require(arguments.install_method in INSTALL_METHODS, "install-method is invalid")
     require(SEMVER.fullmatch(arguments.install_version) is not None, "install-version must be an exact semantic version")
     require(arguments.url and len(arguments.url.encode("utf-8")) <= MAX_URL_BYTES, "url must be at most 4 KiB")
@@ -145,6 +202,8 @@ def run(arguments: argparse.Namespace) -> None:
         arguments.mode,
         "--max-size",
         arguments.max_size,
+        "--root-portability",
+        arguments.root_portability,
     ]
     if arguments.local_dir:
         require(
@@ -168,7 +227,27 @@ def run(arguments: argparse.Namespace) -> None:
         document = json.loads(completed.stdout.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise SetupError(f"cargo rail cache status returned invalid JSON: {error}") from error
-    projection = project_status(document, arguments.install_method, arguments.install_version, arguments.mode)
+    projection = project_status(
+        document,
+        arguments.install_method,
+        arguments.install_version,
+        arguments.mode,
+        arguments.root_portability,
+    )
+    probe = None
+    if arguments.strict_probe == "true":
+        completed = subprocess.run(
+            ["cargo", "rail", "cache", "probe", "-f", "json"],
+            check=False,
+            stdout=subprocess.PIPE,
+        )
+        require(completed.returncode == 0, f"cargo rail cache probe failed with exit code {completed.returncode}")
+        require(len(completed.stdout) <= MAX_STATUS_BYTES, "cargo rail cache probe exceeded the 1 MiB input bound")
+        try:
+            probe_document = json.loads(completed.stdout.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise SetupError(f"cargo rail cache probe returned invalid JSON: {error}") from error
+        probe = project_probe(probe_document, projection)
     compact = json.dumps(projection, separators=(",", ":"), sort_keys=True)
     outputs = {
         "status_json": compact,
@@ -177,11 +256,20 @@ def run(arguments: argparse.Namespace) -> None:
         "mode": projection["remote"]["mode"],
         "activation": projection["remote"]["activation"],
         "max_bytes": str(projection["installation"]["max_bytes"]),
+        "root_portability": arguments.root_portability,
     }
+    if probe is not None:
+        outputs.update(
+            {
+                "remote_ready": "true",
+                "protocol_marker": probe["protocol_marker"],
+                "probe_json": json.dumps(probe, separators=(",", ":"), sort_keys=True),
+            }
+        )
     for name, value in outputs.items():
         append_output(arguments.github_output, name, value)
     with arguments.summary.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(render_summary(projection))
+        handle.write(render_summary(projection, arguments.root_portability, probe))
 
 
 def parse_args() -> argparse.Namespace:
@@ -190,6 +278,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", required=True)
     parser.add_argument("--max-size", required=True)
     parser.add_argument("--local-dir", default="")
+    parser.add_argument("--root-portability", required=True)
+    parser.add_argument("--strict-probe", required=True)
     parser.add_argument("--install-method", required=True)
     parser.add_argument("--install-version", required=True)
     parser.add_argument("--github-output", required=True, type=pathlib.Path)

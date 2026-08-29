@@ -10,22 +10,25 @@ chmod +x "$TEMPORARY/bin/cargo"
 
 authority="remote-authority-v1-sha256-$(printf 'a%.0s' {1..64})"
 status_json() {
-  local mode="$1" healthy="${2:-true}" state="${3:-installed}"
-  printf '{"status":{"schema_version":13,"installation":{"state":"%s","healthy":%s,"max_bytes":10737418240},"remote":{"provider":"aws-s3","authority":"%s","mode":"%s","activation":"direct_transport_selected"}}}' \
-    "$state" "$healthy" "$authority" "$mode"
+  local mode="$1" healthy="${2:-true}" state="${3:-installed}" root_portability="${4:-physical}"
+  printf '{"status":{"schema_version":13,"installation":{"state":"%s","healthy":%s,"max_bytes":10737418240,"root_portability":"%s"},"remote":{"provider":"aws-s3","authority":"%s","mode":"%s","activation":"direct_transport_selected"}}}' \
+    "$state" "$healthy" "$root_portability" "$authority" "$mode"
 }
 
 run_setup() {
-  local mode="$1" url="$2" local_dir="${3:-}" name="${4:-run}"
+  local mode="$1" url="$2" local_dir="${3:-}" name="${4:-run}" root_portability="${5:-physical}" strict_probe="${6:-false}"
   : > "$TEMPORARY/$name.log"
   PATH="$TEMPORARY/bin:$PATH" \
     FAKE_CARGO_LOG="$TEMPORARY/$name.log" \
-    FAKE_STATUS_JSON="$(status_json "$mode")" \
+    FAKE_STATUS_JSON="$(status_json "$mode" true installed "$root_portability")" \
+    FAKE_PROBE_JSON="${FAKE_PROBE_JSON:-}" \
     python3 "$ROOT/scripts/cache_setup.py" \
       --url "$url" \
       --mode "$mode" \
       --max-size 10GiB \
       --local-dir "$local_dir" \
+      --root-portability "$root_portability" \
+      --strict-probe "$strict_probe" \
       --install-method cached \
       --install-version 0.24.0 \
       --github-output "$TEMPORARY/$name.output" \
@@ -43,7 +46,7 @@ import sys
 raw = pathlib.Path(sys.argv[1]).read_bytes()
 calls = [[arg.decode() for arg in call.split(b"\0") if arg] for call in raw.split(b"\0\0") if call]
 assert calls == [
-  ["rail", "cache", "setup", "--remote", sys.argv[2], "--remote-mode", "read", "--max-size", "10GiB", "--local-dir", sys.argv[3]],
+  ["rail", "cache", "setup", "--remote", sys.argv[2], "--remote-mode", "read", "--max-size", "10GiB", "--root-portability", "physical", "--local-dir", sys.argv[3]],
   ["rail", "cache", "status", "--scope", "local", "-f", "json"],
 ], calls
 PY
@@ -51,6 +54,7 @@ grep -Fxq 'healthy=true' "$TEMPORARY/read.output"
 grep -Fxq 'provider=aws-s3' "$TEMPORARY/read.output"
 grep -Fxq 'mode=read' "$TEMPORARY/read.output"
 grep -Fxq 'max_bytes=10737418240' "$TEMPORARY/read.output"
+grep -Fxq 'root_portability=physical' "$TEMPORARY/read.output"
 python3 - "$TEMPORARY/read.output" <<'PY'
 import json
 import pathlib
@@ -70,22 +74,101 @@ if grep -Fq "$sensitive_dir" "$TEMPORARY/read.output" || grep -Fq "$sensitive_di
   echo "cache output leaked its local path" >&2
   exit 1
 fi
-grep -Fq 'Status inspection was local and did not contact the remote provider.' "$TEMPORARY/read.summary"
+grep -Fq 'Status inspection was local; strict remote probing was not requested.' "$TEMPORARY/read.summary"
 
-run_setup read-write 'r2://account/bucket/prefix' '' write
+run_setup read-write 'r2://0123456789abcdef0123456789abcdef/bucket/prefix' '' write
 python3 - "$TEMPORARY/write.log" <<'PY'
 import pathlib
 import sys
 
 calls = [[arg.decode() for arg in call.split(b"\0") if arg] for call in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0") if call]
-assert calls[0][-4:] == ["--remote-mode", "read-write", "--max-size", "10GiB"]
+assert calls[0][-6:] == ["--remote-mode", "read-write", "--max-size", "10GiB", "--root-portability", "physical"]
 assert "--local-dir" not in calls[0]
 PY
+
+probe_json="$(printf '{"schema_version":1,"command":"cache","mode":"probe","result":"ready","exit_code":0,"ready":true,"remote":{"provider":"aws-s3","authority":"%s","mode":"read","activation":"direct_transport_selected"},"protocol_marker":"existing"}' "$authority")"
+FAKE_PROBE_JSON="$probe_json" run_setup read 's3://cache-bucket/team?owner=123456789012' '' strict remap true
+python3 - "$TEMPORARY/strict.log" <<'PY'
+import pathlib
+import sys
+
+calls = [[arg.decode() for arg in call.split(b"\0") if arg] for call in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0") if call]
+assert calls == [
+  ["rail", "cache", "setup", "--remote", "s3://cache-bucket/team?owner=123456789012", "--remote-mode", "read", "--max-size", "10GiB", "--root-portability", "remap"],
+  ["rail", "cache", "status", "--scope", "local", "-f", "json"],
+  ["rail", "cache", "probe", "-f", "json"],
+], calls
+PY
+grep -Fxq 'root_portability=remap' "$TEMPORARY/strict.output"
+grep -Fxq 'remote_ready=true' "$TEMPORARY/strict.output"
+grep -Fxq 'protocol_marker=existing' "$TEMPORARY/strict.output"
+grep -Fq 'cache_action_probe_version' "$TEMPORARY/strict.output"
+grep -Fq 'The strict probe authenticated to the selected provider' "$TEMPORARY/strict.summary"
+
+for root_portability in '' portable REMAP; do
+  : > "$TEMPORARY/invalid-root.log"
+  if PATH="$TEMPORARY/bin:$PATH" FAKE_CARGO_LOG="$TEMPORARY/invalid-root.log" FAKE_STATUS_JSON='{}' \
+    python3 "$ROOT/scripts/cache_setup.py" --url s3://bucket --mode read --max-size 1GiB \
+      --root-portability "$root_portability" --strict-probe false \
+      --install-method cached --install-version 0.24.0 \
+      --github-output "$TEMPORARY/invalid-root.output" --summary "$TEMPORARY/invalid-root.summary" \
+      > "$TEMPORARY/invalid-root.stdout" 2> "$TEMPORARY/invalid-root.stderr"; then
+    echo "cache setup accepted invalid root portability '$root_portability'" >&2
+    exit 1
+  fi
+  [[ ! -s "$TEMPORARY/invalid-root.log" ]]
+  grep -Fq 'root-portability must be explicitly set to physical or remap' "$TEMPORARY/invalid-root.stderr"
+done
+
+for strict_probe in '' TRUE 1; do
+  : > "$TEMPORARY/invalid-probe.log"
+  if PATH="$TEMPORARY/bin:$PATH" FAKE_CARGO_LOG="$TEMPORARY/invalid-probe.log" FAKE_STATUS_JSON='{}' \
+    python3 "$ROOT/scripts/cache_setup.py" --url s3://bucket --mode read --max-size 1GiB \
+      --root-portability physical --strict-probe "$strict_probe" \
+      --install-method cached --install-version 0.24.0 \
+      --github-output "$TEMPORARY/invalid-probe.output" --summary "$TEMPORARY/invalid-probe.summary" \
+      > "$TEMPORARY/invalid-probe.stdout" 2> "$TEMPORARY/invalid-probe.stderr"; then
+    echo "cache setup accepted invalid strict probe '$strict_probe'" >&2
+    exit 1
+  fi
+  [[ ! -s "$TEMPORARY/invalid-probe.log" ]]
+  grep -Fq 'strict-probe must be true or false' "$TEMPORARY/invalid-probe.stderr"
+done
+
+: > "$TEMPORARY/probe-failure.log"
+if PATH="$TEMPORARY/bin:$PATH" FAKE_CARGO_LOG="$TEMPORARY/probe-failure.log" \
+  FAKE_STATUS_JSON="$(status_json read)" FAKE_PROBE_JSON='{}' FAKE_PROBE_EXIT=7 \
+  python3 "$ROOT/scripts/cache_setup.py" --url s3://bucket --mode read --max-size 1GiB \
+    --root-portability physical --strict-probe true \
+    --install-method cached --install-version 0.24.0 \
+    --github-output "$TEMPORARY/probe-failure.output" --summary "$TEMPORARY/probe-failure.summary" \
+    > "$TEMPORARY/probe-failure.stdout" 2> "$TEMPORARY/probe-failure.stderr"; then
+  echo "cache setup hid a strict probe failure" >&2
+  exit 1
+fi
+grep -Fq 'cache probe failed with exit code 7' "$TEMPORARY/probe-failure.stderr"
+[[ ! -s "$TEMPORARY/probe-failure.output" ]]
+
+: > "$TEMPORARY/probe-mismatch.log"
+mismatched_probe_json="${probe_json/$authority/remote-authority-v1-sha256-$(printf 'b%.0s' {1..64})}"
+if PATH="$TEMPORARY/bin:$PATH" FAKE_CARGO_LOG="$TEMPORARY/probe-mismatch.log" \
+  FAKE_STATUS_JSON="$(status_json read)" FAKE_PROBE_JSON="$mismatched_probe_json" \
+  python3 "$ROOT/scripts/cache_setup.py" --url s3://bucket --mode read --max-size 1GiB \
+    --root-portability physical --strict-probe true \
+    --install-method cached --install-version 0.24.0 \
+    --github-output "$TEMPORARY/probe-mismatch.output" --summary "$TEMPORARY/probe-mismatch.summary" \
+    > "$TEMPORARY/probe-mismatch.stdout" 2> "$TEMPORARY/probe-mismatch.stderr"; then
+  echo "cache setup accepted a probe for another authority" >&2
+  exit 1
+fi
+grep -Fq 'cache probe remote.authority disagrees with configured status' "$TEMPORARY/probe-mismatch.stderr"
+[[ ! -s "$TEMPORARY/probe-mismatch.output" ]]
 
 for invalid in '' write READ; do
   : > "$TEMPORARY/invalid.log"
   if PATH="$TEMPORARY/bin:$PATH" FAKE_CARGO_LOG="$TEMPORARY/invalid.log" FAKE_STATUS_JSON='{}' \
     python3 "$ROOT/scripts/cache_setup.py" --url s3://bucket --mode "$invalid" --max-size 1GiB \
+      --root-portability physical --strict-probe false \
       --install-method cached --install-version 0.24.0 \
       --github-output "$TEMPORARY/invalid.output" --summary "$TEMPORARY/invalid.summary" \
       > "$TEMPORARY/invalid.stdout" 2> "$TEMPORARY/invalid.stderr"; then
@@ -99,6 +182,7 @@ done
 : > "$TEMPORARY/failure.log"
 if PATH="$TEMPORARY/bin:$PATH" FAKE_CARGO_LOG="$TEMPORARY/failure.log" FAKE_SETUP_EXIT=9 FAKE_STATUS_JSON='{}' \
   python3 "$ROOT/scripts/cache_setup.py" --url s3://bucket --mode read --max-size 1GiB \
+    --root-portability physical --strict-probe false \
     --install-method cached --install-version 0.24.0 \
     --github-output "$TEMPORARY/failure.output" --summary "$TEMPORARY/failure.summary" \
     > "$TEMPORARY/failure.stdout" 2> "$TEMPORARY/failure.stderr"; then
@@ -115,6 +199,7 @@ PY
 : > "$TEMPORARY/unhealthy.log"
 if PATH="$TEMPORARY/bin:$PATH" FAKE_CARGO_LOG="$TEMPORARY/unhealthy.log" FAKE_STATUS_JSON="$(status_json read false drifted)" \
   python3 "$ROOT/scripts/cache_setup.py" --url s3://bucket --mode read --max-size 1GiB \
+    --root-portability physical --strict-probe false \
     --install-method cached --install-version 0.24.0 \
     --github-output "$TEMPORARY/unhealthy.output" --summary "$TEMPORARY/unhealthy.summary" \
     > "$TEMPORARY/unhealthy.stdout" 2> "$TEMPORARY/unhealthy.stderr"; then
@@ -128,6 +213,7 @@ grep -Fq 'cache installation is unhealthy after setup' "$TEMPORARY/unhealthy.std
 invalid_provider="$(status_json read | sed 's/\"provider\":\"aws-s3\"/\"provider\":\"unknown\"/')"
 if PATH="$TEMPORARY/bin:$PATH" FAKE_CARGO_LOG="$TEMPORARY/provider.log" FAKE_STATUS_JSON="$invalid_provider" \
   python3 "$ROOT/scripts/cache_setup.py" --url s3://bucket --mode read --max-size 1GiB \
+    --root-portability physical --strict-probe false \
     --install-method cached --install-version 0.24.0 \
     --github-output "$TEMPORARY/provider.output" --summary "$TEMPORARY/provider.summary" \
     > "$TEMPORARY/provider.stdout" 2> "$TEMPORARY/provider.stderr"; then

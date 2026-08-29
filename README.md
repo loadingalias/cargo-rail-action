@@ -79,16 +79,21 @@ Add the cache action after checkout and before Cargo:
   with:
     url: ${{ vars.CARGO_RAIL_CACHE_URL }}
     mode: read
+    root-portability: remap
 
 - run: cargo test --workspace --locked
 ```
 
 Use `read` in untrusted jobs. Use `read-write` only in trusted cache-seeding jobs that cannot run unreviewed code.
-`mode` is required. Keep credentials out of `url`.
+`mode` is required. Keep credentials out of `url`. Root portability is typed: use `physical` for one checkout root or
+`remap` for authenticated reuse across roots. `strict-probe: true` makes setup contact the provider and fail unless the
+selected object store and Cargo-Rail protocol marker are ready; use it with a Cargo-Rail release that provides
+`cargo rail cache probe`.
 
 The action installs authenticated cache components, configures a bounded local cache plus AWS S3, Cloudflare R2, or
-Azure Blob Storage, then checks local status without contacting the provider. Later Cargo calls in the job inherit the
-setup. Unsupported work, incomplete observation, provider failures, and rejected results compile normally.
+Azure Blob Storage in one setup transaction, then validates local status. A requested strict probe reuses Cargo-Rail's
+authenticated object-store and protocol-marker path. Later Cargo calls in the job inherit the setup. Unsupported work,
+incomplete observation, provider failures, and rejected results compile normally.
 
 Cache outputs expose only redacted health and policy fields. They omit the URL, credentials, local paths, full status,
 and object identities.
