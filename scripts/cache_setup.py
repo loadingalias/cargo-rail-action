@@ -218,6 +218,17 @@ def run(arguments: argparse.Namespace) -> None:
             "local-dir must be one path no longer than 4 KiB",
         )
         setup.extend(["--local-dir", arguments.local_dir])
+    if arguments.strict_probe == "true":
+        completed = subprocess.run(
+            ["cargo", "rail", "cache", "probe", "--help"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        require(
+            completed.returncode == 0,
+            f"installed Cargo-Rail {arguments.install_version} does not support strict cache probing",
+        )
     completed = subprocess.run(setup, check=False)
     require(completed.returncode == 0, f"cargo rail cache setup failed with exit code {completed.returncode}")
 

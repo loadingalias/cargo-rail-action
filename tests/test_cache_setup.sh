@@ -111,6 +111,7 @@ import sys
 
 calls = [[arg.decode() for arg in call.split(b"\0") if arg] for call in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0") if call]
 assert calls == [
+  ["rail", "cache", "probe", "--help"],
   ["rail", "cache", "setup", "--remote", "s3://cache-bucket/team?owner=123456789012", "--remote-mode", "read", "--max-size", "10GiB", "--root-portability", "remap"],
   ["rail", "cache", "status", "--scope", "local", "-f", "json"],
   ["rail", "cache", "probe", "-f", "json"],
@@ -130,6 +131,27 @@ line = next(line for line in pathlib.Path(sys.argv[1]).read_text().splitlines() 
 value = json.loads(line.removeprefix("status_json="))
 assert value["installation"]["root_portability"] == "remap"
 PY
+
+: > "$TEMPORARY/unsupported-probe.log"
+if PATH="$TEMPORARY/bin:$PATH" FAKE_CARGO_LOG="$TEMPORARY/unsupported-probe.log" \
+  FAKE_PROBE_HELP_EXIT=2 FAKE_STATUS_JSON='{}' FAKE_PROBE_JSON='{}' \
+  python3 "$ROOT/scripts/cache_setup.py" --url s3://bucket --mode read --max-size 1GiB \
+    --root-portability physical --strict-probe true \
+    --install-method cached --install-version 0.24.0 \
+    --github-output "$TEMPORARY/unsupported-probe.output" --summary "$TEMPORARY/unsupported-probe.summary" \
+    > "$TEMPORARY/unsupported-probe.stdout" 2> "$TEMPORARY/unsupported-probe.stderr"; then
+  echo "cache setup accepted strict probing from an incompatible Cargo-Rail" >&2
+  exit 1
+fi
+python3 - "$TEMPORARY/unsupported-probe.log" <<'PY'
+import pathlib
+import sys
+
+calls = [[arg.decode() for arg in call.split(b"\0") if arg] for call in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0") if call]
+assert calls == [["rail", "cache", "probe", "--help"]], calls
+PY
+grep -Fq 'installed Cargo-Rail 0.24.0 does not support strict cache probing' "$TEMPORARY/unsupported-probe.stderr"
+[[ ! -s "$TEMPORARY/unsupported-probe.output" ]]
 
 for root_portability in '' portable REMAP; do
   : > "$TEMPORARY/invalid-root.log"

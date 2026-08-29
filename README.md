@@ -88,7 +88,8 @@ Use `read` in untrusted jobs. Use `read-write` only in trusted cache-seeding job
 `mode` is required. Keep credentials out of `url`. Root portability is typed: use `physical` for one checkout root or
 `remap` for authenticated reuse across roots. `strict-probe: true` makes setup contact the provider and fail unless the
 selected object store and Cargo-Rail protocol marker are ready; use it with a Cargo-Rail release that provides
-`cargo rail cache probe`.
+`cargo rail cache probe`. The v8 default, Cargo-Rail 0.24.0, predates that command, so strict probing also requires an
+exact newer compatible `version`.
 
 The action installs authenticated cache components, configures a bounded local cache plus AWS S3, Cloudflare R2, or
 Azure Blob Storage in one setup transaction, then validates local status. A requested strict probe reuses Cargo-Rail's
