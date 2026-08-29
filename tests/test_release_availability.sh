@@ -10,7 +10,7 @@ cat > "$TEMPORARY/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
-[[ "$*" == 'api repos/loadingalias/cargo-rail/releases/tags/v0.24.0 --jq .assets[].name' ]]
+[[ "$*" == 'api repos/loadingalias/cargo-rail/releases/tags/v0.25.0 --jq .assets[].name' ]]
 case "$FAKE_RELEASE" in
   available)
     printf '%s\n' \

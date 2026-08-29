@@ -8,9 +8,9 @@ branding:
 
 inputs:
   version:
-    description: "Exact Cargo-Rail release to install (default: 0.24.0)"
+    description: "Exact Cargo-Rail release to install (default: 0.25.0)"
     required: false
-    default: "0.24.0"
+    default: "0.25.0"
 
   components:
     description: "Verified component set; surface and complete also prepare the selected toolchain"

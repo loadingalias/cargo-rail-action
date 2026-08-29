@@ -104,9 +104,8 @@ Add the cache action after checkout and before Cargo:
 Use `read` in untrusted jobs. Use `read-write` only in trusted cache-seeding jobs that cannot run unreviewed code.
 `mode` is required. Keep credentials out of `url`. Root portability is typed: use `physical` for one checkout root or
 `remap` for authenticated reuse across roots. `strict-probe: true` makes setup contact the provider and fail unless the
-selected object store and Cargo-Rail protocol marker are ready; use it with a Cargo-Rail release that provides
-`cargo rail cache probe`. The v8 default, Cargo-Rail 0.24.0, predates that command, so strict probing also requires an
-exact newer compatible `version`.
+selected object store and Cargo-Rail protocol marker are ready. The v8 default, Cargo-Rail 0.25.0, provides that
+strict probe contract.
 
 The action installs authenticated cache components, configures a bounded local cache plus AWS S3, Cloudflare R2, or
 Azure Blob Storage in one setup transaction, then validates local status. A requested strict probe reuses Cargo-Rail's
@@ -126,7 +125,7 @@ See the complete [cache contract](cache/action.yaml) and
 
 ## Compatibility
 
-- Action v8 installs Cargo-Rail 0.24.0 by default and accepts only v8 plans.
+- Action v8 installs Cargo-Rail 0.25.0 by default and accepts only v8 plans.
 - Use `@v8` for compatible fixes or a full commit SHA for immutable execution.
 - Core installation can fall back to `cargo-binstall` or `cargo install --locked`.
 - Cache and other native components require a matching verified release archive.

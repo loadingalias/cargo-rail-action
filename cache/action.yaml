@@ -38,7 +38,7 @@ inputs:
   version:
     description: "Exact Cargo-Rail release to install"
     required: false
-    default: "0.24.0"
+    default: "0.25.0"
 
   token:
     description: "GitHub token used only to download Cargo-Rail releases"

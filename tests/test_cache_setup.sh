@@ -11,7 +11,7 @@ chmod +x "$TEMPORARY/bin/cargo"
 authority="remote-authority-v1-sha256-$(printf 'a%.0s' {1..64})"
 status_json() {
   local mode="$1" healthy="${2:-true}" state="${3:-installed}" root_portability="${4:-physical}" provider="${5:-aws-s3}"
-  printf '{"status":{"schema_version":13,"installation":{"state":"%s","healthy":%s,"max_bytes":10737418240,"root_portability":"%s"},"remote":{"provider":"%s","authority":"%s","mode":"%s","activation":"direct_transport_selected"}}}' \
+  printf '{"status":{"schema_version":14,"installation":{"state":"%s","healthy":%s,"max_bytes":10737418240,"root_portability":"%s"},"remote":{"provider":"%s","authority":"%s","mode":"%s","activation":"direct_transport_selected"}}}' \
     "$state" "$healthy" "$root_portability" "$provider" "$authority" "$mode"
 }
 
