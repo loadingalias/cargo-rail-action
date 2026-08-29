@@ -94,7 +94,12 @@ def project_status(
         "cache_action_status_version": PROJECTION_VERSION,
         "cargo_rail_version": install_version,
         "install_method": install_method,
-        "installation": {"state": state, "healthy": healthy, "max_bytes": max_bytes},
+        "installation": {
+            "state": state,
+            "healthy": healthy,
+            "max_bytes": max_bytes,
+            "root_portability": root_portability,
+        },
         "remote": {"provider": provider, "authority": authority, "mode": mode, "activation": activation},
     }
 

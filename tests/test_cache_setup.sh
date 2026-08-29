@@ -10,17 +10,17 @@ chmod +x "$TEMPORARY/bin/cargo"
 
 authority="remote-authority-v1-sha256-$(printf 'a%.0s' {1..64})"
 status_json() {
-  local mode="$1" healthy="${2:-true}" state="${3:-installed}" root_portability="${4:-physical}"
-  printf '{"status":{"schema_version":13,"installation":{"state":"%s","healthy":%s,"max_bytes":10737418240,"root_portability":"%s"},"remote":{"provider":"aws-s3","authority":"%s","mode":"%s","activation":"direct_transport_selected"}}}' \
-    "$state" "$healthy" "$root_portability" "$authority" "$mode"
+  local mode="$1" healthy="${2:-true}" state="${3:-installed}" root_portability="${4:-physical}" provider="${5:-aws-s3}"
+  printf '{"status":{"schema_version":13,"installation":{"state":"%s","healthy":%s,"max_bytes":10737418240,"root_portability":"%s"},"remote":{"provider":"%s","authority":"%s","mode":"%s","activation":"direct_transport_selected"}}}' \
+    "$state" "$healthy" "$root_portability" "$provider" "$authority" "$mode"
 }
 
 run_setup() {
-  local mode="$1" url="$2" local_dir="${3:-}" name="${4:-run}" root_portability="${5:-physical}" strict_probe="${6:-false}"
+  local mode="$1" url="$2" local_dir="${3:-}" name="${4:-run}" root_portability="${5:-physical}" strict_probe="${6:-false}" provider="${7:-aws-s3}"
   : > "$TEMPORARY/$name.log"
   PATH="$TEMPORARY/bin:$PATH" \
     FAKE_CARGO_LOG="$TEMPORARY/$name.log" \
-    FAKE_STATUS_JSON="$(status_json "$mode" true installed "$root_portability")" \
+    FAKE_STATUS_JSON="$(status_json "$mode" true installed "$root_portability" "$provider")" \
     FAKE_PROBE_JSON="${FAKE_PROBE_JSON:-}" \
     python3 "$ROOT/scripts/cache_setup.py" \
       --url "$url" \
@@ -65,6 +65,7 @@ value = json.loads(line.removeprefix("status_json="))
 assert value["cache_action_status_version"] == 1
 assert value["remote"]["mode"] == "read"
 assert value["installation"]["healthy"] is True
+assert value["installation"]["root_portability"] == "physical"
 PY
 if grep -Fq "$sensitive_url" "$TEMPORARY/read.output" || grep -Fq "$sensitive_url" "$TEMPORARY/read.summary"; then
   echo "cache output leaked its input URL" >&2
@@ -76,7 +77,11 @@ if grep -Fq "$sensitive_dir" "$TEMPORARY/read.output" || grep -Fq "$sensitive_di
 fi
 grep -Fq 'Status inspection was local; strict remote probing was not requested.' "$TEMPORARY/read.summary"
 
-run_setup read-write 'r2://0123456789abcdef0123456789abcdef/bucket/prefix' '' write
+AWS_ACCESS_KEY_ID=fixture-access \
+AWS_SECRET_ACCESS_KEY=fixture-secret \
+AWS_SESSION_TOKEN=fixture-session \
+FAKE_CARGO_ENV_LOG="$TEMPORARY/write.env" \
+  run_setup read-write 'r2://0123456789abcdef0123456789abcdef/bucket/prefix' '' write physical false cloudflare-r2
 python3 - "$TEMPORARY/write.log" <<'PY'
 import pathlib
 import sys
@@ -85,6 +90,18 @@ calls = [[arg.decode() for arg in call.split(b"\0") if arg] for call in pathlib.
 assert calls[0][-6:] == ["--remote-mode", "read-write", "--max-size", "10GiB", "--root-portability", "physical"]
 assert "--local-dir" not in calls[0]
 PY
+grep -Fxq 'provider=cloudflare-r2' "$TEMPORARY/write.output"
+python3 - "$TEMPORARY/write.env" <<'PY'
+import pathlib
+import sys
+
+values = [value.decode() for value in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0") if value]
+assert values == ["fixture-access", "fixture-secret", "fixture-session"] * 2, values
+PY
+if grep -Eq 'fixture-(access|secret|session)' "$TEMPORARY/write.output" "$TEMPORARY/write.summary"; then
+  echo "cache output leaked an R2 credential" >&2
+  exit 1
+fi
 
 probe_json="$(printf '{"schema_version":1,"command":"cache","mode":"probe","result":"ready","exit_code":0,"ready":true,"remote":{"provider":"aws-s3","authority":"%s","mode":"read","activation":"direct_transport_selected"},"protocol_marker":"existing"}' "$authority")"
 FAKE_PROBE_JSON="$probe_json" run_setup read 's3://cache-bucket/team?owner=123456789012' '' strict remap true
@@ -104,6 +121,15 @@ grep -Fxq 'remote_ready=true' "$TEMPORARY/strict.output"
 grep -Fxq 'protocol_marker=existing' "$TEMPORARY/strict.output"
 grep -Fq 'cache_action_probe_version' "$TEMPORARY/strict.output"
 grep -Fq 'The strict probe authenticated to the selected provider' "$TEMPORARY/strict.summary"
+python3 - "$TEMPORARY/strict.output" <<'PY'
+import json
+import pathlib
+import sys
+
+line = next(line for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if line.startswith("status_json="))
+value = json.loads(line.removeprefix("status_json="))
+assert value["installation"]["root_portability"] == "remap"
+PY
 
 for root_portability in '' portable REMAP; do
   : > "$TEMPORARY/invalid-root.log"
