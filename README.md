@@ -97,6 +97,7 @@ Add the cache action after checkout and before Cargo:
     url: ${{ vars.CARGO_RAIL_CACHE_URL }}
     mode: read
     root-portability: remap
+    strict-probe: true
 
 - run: cargo test --workspace --locked
 ```
@@ -113,7 +114,8 @@ authenticated object-store and protocol-marker path. Later Cargo calls in the jo
 incomplete observation, provider failures, and rejected results compile normally.
 
 Cache outputs expose only redacted health and policy fields. They omit the URL, credentials, local paths, full status,
-and object identities.
+and object identities. `remote-ready`, `protocol-marker`, and `probe-json` expose redacted readiness when strict
+probing is enabled; `root-portability` reports the selected policy.
 
 Host setup does not enter `docker build`; configure Cargo-Rail inside the container or mount the required state and
 credentials explicitly.
