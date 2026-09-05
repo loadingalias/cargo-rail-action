@@ -1,3 +1,4 @@
 # Personal
 .DS_Store
-.ruff_cache/
+/target/
+docs/tasks/

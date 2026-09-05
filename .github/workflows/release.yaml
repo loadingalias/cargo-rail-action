@@ -1,36 +1,362 @@
-name: Release
+name: Verify and release v9
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Action version to release (e.g., 8.0.0)"
+      operation:
+        description: "Read-only verification or one protected release mutation"
         required: true
+        type: choice
+        options: [verify, publish, promote-v9]
+        default: verify
+      version:
+        description: "Exact immutable v9 release for publish or promotion"
+        required: false
         type: string
 
 permissions: {}
 
 jobs:
-  test:
-    uses: ./.github/workflows/test.yaml
-    permissions:
-      contents: read
-    with:
-      require-release: true
-
-  release:
-    needs: test
+  verify:
+    if: github.event_name != 'workflow_dispatch' || inputs.operation == 'verify'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the complete repository gate
+        run: cargo install just --version 1.58.0 --locked && just check
+
+  release-preflight:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'publish'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate release version and Cargo-Rail native assets
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          cargo run --locked --release -- self-check \
+            --expect-version "$REQUESTED_VERSION" --expect-target x86_64-unknown-linux-gnu
+          cargo run --locked --release -- release preflight
+
+  build-runtime:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'publish'
+    needs: release-preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: ""
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            suffix: ""
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: ".exe"
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Create release
+      - name: Verify and build the native runtime
+        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ inputs.version }}
-        run: bash scripts/release.sh
+          REQUESTED_VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          cargo install just --version 1.58.0 --locked
+          just check
+          cargo build --locked --release
+          "target/release/cargo-rail-action$SUFFIX" self-check \
+            --expect-version "$REQUESTED_VERSION" --expect-target "$TARGET"
+          RUNTIME="$(pwd -P)/target/release/cargo-rail-action$SUFFIX"
+          BYTES="$(wc -c < "$RUNTIME" | tr -d ' ')"
+          (( BYTES > 0 && BYTES <= 16777216 ))
+          if command -v sha256sum >/dev/null 2>&1; then
+            DIGEST="$(sha256sum "$RUNTIME" | awk '{print $1}')"
+          else
+            DIGEST="$(shasum -a 256 "$RUNTIME" | awk '{print $1}')"
+          fi
+          GITHUB_ACTION_PATH="$GITHUB_WORKSPACE" \
+            bash scripts/bootstrap.sh --local-runtime "$RUNTIME" --local-runtime-sha256 "$DIGEST" \
+            self-check --expect-version "$REQUESTED_VERSION" --expect-target "$TARGET"
+          GITHUB_ACTION_PATH="$GITHUB_WORKSPACE" \
+            bash scripts/bootstrap.sh --local-runtime "$RUNTIME" --local-runtime-sha256 "$DIGEST" \
+            self-check --expect-version "$REQUESTED_VERSION" --expect-target "$TARGET"
+          mkdir -p "$RUNNER_TEMP/runtime-assets"
+          cp "target/release/cargo-rail-action$SUFFIX" "$RUNNER_TEMP/runtime-assets/cargo-rail-action-$TARGET$SUFFIX"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-executable-${{ matrix.target }}
+          path: ${{ runner.temp }}/runtime-assets/*
+          if-no-files-found: error
+
+  assemble-release:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'publish'
+    needs: build-runtime
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: runtime-executable-*
+          path: ${{ runner.temp }}/runtime-assets
+          merge-multiple: true
+      - name: Build canonical release authority
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          ASSETS="$RUNNER_TEMP/runtime-assets"
+          chmod 700 "$ASSETS/cargo-rail-action-x86_64-unknown-linux-gnu"
+          "$ASSETS/cargo-rail-action-x86_64-unknown-linux-gnu" self-check \
+            --expect-version "$REQUESTED_VERSION" --expect-target x86_64-unknown-linux-gnu
+          "$ASSETS/cargo-rail-action-x86_64-unknown-linux-gnu" release intent \
+            --source-commit "$GITHUB_SHA" \
+            --manifest "$ASSETS/cargo-rail-action-runtime-v1.tsv" \
+            --asset "$ASSETS/cargo-rail-action-aarch64-apple-darwin" \
+            --asset "$ASSETS/cargo-rail-action-x86_64-pc-windows-msvc.exe" \
+            --asset "$ASSETS/cargo-rail-action-x86_64-unknown-linux-gnu" \
+            --output "$RUNNER_TEMP/cargo-rail-action-release-intent-v1.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-intent-${{ inputs.version }}
+          path: ${{ runner.temp }}/cargo-rail-action-release-intent-v1.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-manifest-${{ inputs.version }}
+          path: ${{ runner.temp }}/runtime-assets/cargo-rail-action-runtime-v1.tsv
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'publish'
+    needs: assemble-release
+    runs-on: ubuntu-latest
+    environment: release
+    concurrency:
+      group: cargo-rail-action-release-${{ inputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: runtime-executable-*
+          path: ${{ runner.temp }}/runtime-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: runtime-manifest-${{ inputs.version }}
+          path: ${{ runner.temp }}/runtime-assets
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-intent-${{ inputs.version }}
+          path: ${{ runner.temp }}/intent-artifact
+      - name: Reconcile and publish the immutable release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUNTIME="$RUNNER_TEMP/runtime-assets/cargo-rail-action-x86_64-unknown-linux-gnu"
+          INTENT="$RUNNER_TEMP/intent-artifact/cargo-rail-action-release-intent-v1.json"
+          ASSETS="$RUNNER_TEMP/runtime-assets"
+          "$RUNTIME" release publish --check --intent "$INTENT" \
+            --asset "$ASSETS/cargo-rail-action-aarch64-apple-darwin" \
+            --asset "$ASSETS/cargo-rail-action-runtime-v1.tsv" \
+            --asset "$ASSETS/cargo-rail-action-x86_64-pc-windows-msvc.exe" \
+            --asset "$ASSETS/cargo-rail-action-x86_64-unknown-linux-gnu"
+          "$RUNTIME" release publish --apply --intent "$INTENT" \
+            --asset "$ASSETS/cargo-rail-action-aarch64-apple-darwin" \
+            --asset "$ASSETS/cargo-rail-action-runtime-v1.tsv" \
+            --asset "$ASSETS/cargo-rail-action-x86_64-pc-windows-msvc.exe" \
+            --asset "$ASSETS/cargo-rail-action-x86_64-unknown-linux-gnu"
+
+  published-plan-smoke:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'publish'
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      cargo-rail-version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./
+        id: plan
+        with:
+          all: true
+      - name: Verify same-job selector authority
+        shell: bash
+        env:
+          PLAN_FILE: ${{ steps.plan.outputs.plan-file }}
+        run: cargo-rail-action plan required "$PLAN_FILE"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: published-plan-${{ inputs.version }}
+          path: ${{ steps.plan.outputs.plan-file }}
+          if-no-files-found: error
+
+  published-plan-consumer-smoke:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'publish'
+    needs: published-plan-smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: published-plan-${{ inputs.version }}
+          path: ${{ runner.temp }}/cargo-rail-plan
+      - uses: ./setup
+        with:
+          version: ${{ needs.published-plan-smoke.outputs.cargo-rail-version }}
+      - name: Verify cross-job selector authority
+        shell: bash
+        run: cargo-rail-action plan required "$RUNNER_TEMP/cargo-rail-plan/plan.json"
+
+  published-cache-smoke:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'publish'
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./cache
+        with:
+          remote: s3://cargo-rail-action-release-smoke/cache?region=us-east-1&owner=000000000000
+          mode: read
+          verify-remote: false
+
+  promote-smoke:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'promote-v9'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./setup
+      - name: Verify requested runtime identity before smoke tests
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: cargo-rail-action self-check --expect-version "$REQUESTED_VERSION" --expect-target "$TARGET"
+      - uses: ./cache
+        with:
+          remote: s3://cargo-rail-action-release-smoke/cache?region=us-east-1&owner=000000000000
+          mode: read
+          verify-remote: false
+      - uses: ./
+        if: runner.os == 'Linux'
+        id: plan
+        with:
+          all: true
+      - name: Verify public planner and selector authority
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          PLAN_FILE: ${{ steps.plan.outputs.plan-file }}
+        run: cargo-rail-action plan required "$PLAN_FILE"
+
+  promote-v9:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'promote-v9'
+    needs: promote-smoke
+    runs-on: ubuntu-latest
+    environment: release
+    concurrency:
+      group: cargo-rail-action-release-${{ inputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./setup
+      - name: Revalidate and move only the mutable v9 tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          cargo-rail-action self-check --expect-version "$REQUESTED_VERSION" \
+            --expect-target x86_64-unknown-linux-gnu
+          mkdir -p "$RUNNER_TEMP/runtime-assets"
+          gh release download "v$REQUESTED_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/runtime-assets"
+          RUNTIME="$RUNNER_TEMP/runtime-assets/cargo-rail-action-x86_64-unknown-linux-gnu"
+          chmod 700 "$RUNTIME"
+          INTENT="$RUNNER_TEMP/cargo-rail-action-release-intent-v1.json"
+          "$RUNTIME" self-check --expect-version "$REQUESTED_VERSION" --expect-target x86_64-unknown-linux-gnu
+          "$RUNTIME" release intent \
+            --source-commit "$GITHUB_SHA" \
+            --manifest "$RUNNER_TEMP/runtime-assets/cargo-rail-action-runtime-v1.tsv" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-aarch64-apple-darwin" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-x86_64-pc-windows-msvc.exe" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-x86_64-unknown-linux-gnu" \
+            --output "$INTENT"
+          "$RUNTIME" release promote --check --intent "$INTENT" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-aarch64-apple-darwin" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-runtime-v1.tsv" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-x86_64-pc-windows-msvc.exe" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-x86_64-unknown-linux-gnu"
+          "$RUNTIME" release promote --apply --intent "$INTENT" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-aarch64-apple-darwin" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-runtime-v1.tsv" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-x86_64-pc-windows-msvc.exe" \
+            --asset "$RUNNER_TEMP/runtime-assets/cargo-rail-action-x86_64-unknown-linux-gnu"

@@ -1,0 +1,37 @@
+[package]
+name = "cargo-rail-action"
+version = "9.0.0"
+edition = "2024"
+rust-version = "1.98.1"
+publish = false
+license = "MIT"
+authors = ["loadingalias"]
+description = "Native runtime for the Cargo-Rail GitHub Action"
+repository = "https://github.com/loadingalias/cargo-rail-action"
+
+[dependencies]
+clap = { version = "4.6.5", default-features = false, features = [
+  "derive",
+  "error-context",
+  "help",
+  "std",
+  "usage",
+] }
+rscrypto = { version = "0.9.0", default-features = false, features = ["sha2"] }
+serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+# Keep one standard ZIP compression path backed by Rust code and no native library.
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[dev-dependencies]
+serde-saphyr = { version = "1.2.0", default-features = false, features = ["deserialize"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+panic = "abort"
+strip = "symbols"

@@ -7,132 +7,58 @@ branding:
   color: "orange"
 
 inputs:
-  url:
-    description: "AWS S3, Azure Blob Storage, or Cloudflare R2 cache authority"
+  remote:
+    description: "AWS S3, Azure Blob Storage, Cloudflare R2, or S3-compatible cache authority"
     required: true
-
   mode:
     description: "Explicit remote authority: read or read-write"
     required: true
-
   max-size:
     description: "Job-local verified-cache bound, such as 10GiB"
     required: false
     default: "10GiB"
-
   local-dir:
     description: "Optional job-local cache base directory"
     required: false
     default: ""
-
   root-portability:
     description: "Cross-checkout authority: physical or remap"
     required: false
     default: "physical"
-
-  strict-probe:
-    description: "Fail setup unless the selected remote object store and protocol marker are reachable"
+  verify-remote:
+    description: "Fail unless the selected remote store and protocol marker are reachable"
     required: false
     default: "false"
-
   version:
-    description: "Exact Cargo-Rail release to install"
+    description: "Exact compatible Cargo-Rail release to install"
     required: false
-    default: "0.25.0"
-
-  token:
-    description: "GitHub token used only to download Cargo-Rail releases"
-    required: false
-    default: ${{ github.token }}
-
+    default: "0.26.0"
   working-directory:
     description: "Workspace directory used for cache setup"
     required: false
     default: "."
 
 outputs:
-  install-method:
-    description: "How Cargo-Rail was installed"
-    value: ${{ steps.install.outputs.method }}
-
   version:
-    description: "Installed Cargo-Rail version"
-    value: ${{ steps.install.outputs.version }}
-
-  status-json:
-    description: "Versioned redacted projection of local setup and remote policy"
-    value: ${{ steps.setup.outputs.status_json }}
-
-  healthy:
-    description: "Whether the installed cache integration is healthy"
-    value: ${{ steps.setup.outputs.healthy }}
-
-  provider:
-    description: "Selected remote provider"
-    value: ${{ steps.setup.outputs.provider }}
-
-  mode:
-    description: "Selected remote authority"
-    value: ${{ steps.setup.outputs.mode }}
-
-  activation:
-    description: "Selected remote transport state"
-    value: ${{ steps.setup.outputs.activation }}
-
-  max-bytes:
-    description: "Effective local L1 byte bound"
-    value: ${{ steps.setup.outputs.max_bytes }}
-
-  root-portability:
-    description: "Effective cross-checkout authority"
-    value: ${{ steps.setup.outputs.root_portability }}
-
-  remote-ready:
-    description: "True when a requested strict remote probe passed; empty when probing was disabled"
-    value: ${{ steps.setup.outputs.remote_ready }}
-
-  protocol-marker:
-    description: "existing or initialized when a requested strict remote probe passed"
-    value: ${{ steps.setup.outputs.protocol_marker }}
-
-  probe-json:
-    description: "Versioned redacted strict-probe result; empty when probing was disabled"
-    value: ${{ steps.setup.outputs.probe_json }}
+    description: "Exact Cargo-Rail release installed by the cache action"
+    value: ${{ steps.runtime.outputs.version }}
+  status:
+    description: "Compact redacted cargo-rail-action-cache-status-v1 JSON"
+    value: ${{ steps.runtime.outputs.status }}
 
 runs:
   using: "composite"
   steps:
-    - name: Install Cargo-Rail cache components
-      id: install
+    - name: Configure and validate Cargo-Rail compiler cache
+      id: runtime
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.token }}
-        REQUESTED_VERSION: ${{ inputs.version }}
-        COMPONENT_SET: cache
-      run: bash "$GITHUB_ACTION_PATH/../scripts/install.sh"
-
-    - name: Configure and verify compiler cache
-      id: setup
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        CACHE_URL: ${{ inputs.url }}
-        CACHE_MODE: ${{ inputs.mode }}
-        CACHE_MAX_SIZE: ${{ inputs.max-size }}
-        CACHE_LOCAL_DIR: ${{ inputs.local-dir }}
-        CACHE_ROOT_PORTABILITY: ${{ inputs.root-portability }}
-        CACHE_STRICT_PROBE: ${{ inputs.strict-probe }}
-        INSTALL_METHOD: ${{ steps.install.outputs.method }}
-        INSTALL_VERSION: ${{ steps.install.outputs.version }}
-      run: >-
-        python3 "$GITHUB_ACTION_PATH/../scripts/cache_setup.py"
-        --url "$CACHE_URL"
-        --mode "$CACHE_MODE"
-        --max-size "$CACHE_MAX_SIZE"
-        --local-dir "$CACHE_LOCAL_DIR"
-        --root-portability "$CACHE_ROOT_PORTABILITY"
-        --strict-probe "$CACHE_STRICT_PROBE"
-        --install-method "$INSTALL_METHOD"
-        --install-version "$INSTALL_VERSION"
-        --github-output "$GITHUB_OUTPUT"
-        --summary "$GITHUB_STEP_SUMMARY"
+        INPUT_REMOTE: ${{ inputs.remote }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_MAX_SIZE: ${{ inputs.max-size }}
+        INPUT_LOCAL_DIR: ${{ inputs.local-dir }}
+        INPUT_ROOT_PORTABILITY: ${{ inputs.root-portability }}
+        INPUT_VERIFY_REMOTE: ${{ inputs.verify-remote }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+      run: bash "$GITHUB_ACTION_PATH/../scripts/bootstrap.sh" run cache

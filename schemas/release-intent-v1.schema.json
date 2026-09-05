@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/loadingalias/cargo-rail-action/main/schemas/release-intent-v1.schema.json",
+  "title": "Cargo-Rail Action release intent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "action_version",
+    "source_commit",
+    "cargo_rail_version",
+    "runtime_manifest_sha256",
+    "assets"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "identity": {
+      "type": "string",
+      "pattern": "^cargo-rail-action-release-intent-v1:sha256:[0-9a-f]{64}$"
+    },
+    "action_version": { "type": "string", "pattern": "^9\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "source_commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "cargo_rail_version": { "type": "string", "pattern": "^0\\.26\\.(0|[1-9][0-9]*)$" },
+    "runtime_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "assets": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        { "$ref": "#/$defs/macos_runtime" },
+        { "$ref": "#/$defs/runtime_manifest" },
+        { "$ref": "#/$defs/windows_runtime" },
+        { "$ref": "#/$defs/linux_runtime" }
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "bytes", "sha256"],
+      "properties": {
+        "name": { "type": "string" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "macos_runtime": {
+      "allOf": [
+        { "$ref": "#/$defs/asset" },
+        {
+          "properties": {
+            "name": { "const": "cargo-rail-action-aarch64-apple-darwin" },
+            "bytes": { "maximum": 16777216 }
+          }
+        }
+      ]
+    },
+    "runtime_manifest": {
+      "allOf": [
+        { "$ref": "#/$defs/asset" },
+        {
+          "properties": {
+            "name": { "const": "cargo-rail-action-runtime-v1.tsv" },
+            "bytes": { "maximum": 65536 }
+          }
+        }
+      ]
+    },
+    "windows_runtime": {
+      "allOf": [
+        { "$ref": "#/$defs/asset" },
+        {
+          "properties": {
+            "name": { "const": "cargo-rail-action-x86_64-pc-windows-msvc.exe" },
+            "bytes": { "maximum": 16777216 }
+          }
+        }
+      ]
+    },
+    "linux_runtime": {
+      "allOf": [
+        { "$ref": "#/$defs/asset" },
+        {
+          "properties": {
+            "name": { "const": "cargo-rail-action-x86_64-unknown-linux-gnu" },
+            "bytes": { "maximum": 16777216 }
+          }
+        }
+      ]
+    }
+  }
+}

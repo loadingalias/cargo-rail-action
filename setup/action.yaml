@@ -1,0 +1,24 @@
+name: "Cargo-Rail setup"
+description: "Install the native Cargo-Rail Action runtime and matching Cargo-Rail core release."
+author: "loadingalias"
+
+inputs:
+  version:
+    description: "Exact Cargo-Rail release used to create the transferred plan"
+    required: false
+    default: "0.26.0"
+
+outputs:
+  version:
+    description: "Exact Cargo-Rail release installed"
+    value: ${{ steps.runtime.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install exact Cargo-Rail plan consumer
+      id: runtime
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/../scripts/bootstrap.sh" run setup

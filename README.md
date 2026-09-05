@@ -1,142 +1,255 @@
-# Cargo-Rail for GitHub Actions
+# Cargo-Rail Action
 
-Use either action or both:
+Cargo-Rail Action installs authenticated native Cargo-Rail components, creates one authoritative named-work plan,
+and exposes exact selectors without running repository work for you. Version 9 uses one prebuilt Rust runtime; it
+does not require Python, Ruby, Node, `jq`, `cargo-binstall`, or a source-build fallback.
 
-| Action | Removes |
-|---|---|
-| [Plan Work](#plan-work) | Unaffected jobs, packages, targets, and matrix rows |
-| [Cache](#cache) | Compiler work already verified by Cargo-Rail |
+Cargo-Rail Action v9 accepts only stable Cargo-Rail `0.26.PATCH` releases and defaults to `0.26.0`. It rejects every
+other Cargo-Rail minor line and validates the exact installed binary, plan, cache, and component contracts before use.
+The planner now requires plan contract v9, including identity-bound impact attribution. Existing v8 plans must be regenerated.
 
-## Plan Work
-
-Add the planner before commands you want to gate:
+## Plan and run work in one job
 
 ```yaml
 - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  with:
+    persist-credentials: false
 
-- uses: loadingalias/cargo-rail-action@v8
+- uses: loadingalias/cargo-rail-action@v9
   id: rail
+  with:
+    version: 0.26.0
 
-- name: Test affected packages
-  if: contains(fromJSON(steps.rail.outputs.required-work), 'cargo.test')
+- name: Run selected tests
   shell: bash
+  if: contains(fromJSON(steps.rail.outputs.required-work), 'cargo.test')
   env:
     PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
-    PLAN_READER: ${{ steps.rail.outputs.plan-reader }}
   run: |
+    ARGS_FILE="$(mktemp "$RUNNER_TEMP/cargo-rail-args.XXXXXX")"
+    cargo-rail-action plan cargo-args "$PLAN_FILE" cargo.test > "$ARGS_FILE" || exit "$?"
     CARGO_ARGS=()
-    while IFS= read -r -d '' arg; do CARGO_ARGS+=("$arg"); done \
-      < <(python3 "$PLAN_READER" cargo-args "$PLAN_FILE" cargo.test)
-    python3 "$PLAN_READER" verify-checkout "$PLAN_FILE"
+    while IFS= read -r -d '' argument; do CARGO_ARGS+=("$argument"); done < "$ARGS_FILE"
+    rm -- "$ARGS_FILE"
     cargo nextest run "${CARGO_ARGS[@]}" --locked
 ```
 
-`required-work` skips the step when `cargo.test` is unaffected. `cargo-args` emits exact NUL-delimited arguments.
-`verify-checkout` rejects drift before Cargo runs. Never shell-split or `eval` reader output.
+Every selector validates the complete plan, recomputes its canonical identity, and asks the exact installed
+Cargo-Rail to verify the current checkout before emitting stdout. Mutating the repository after selector emission
+and before the consuming command remains a caller error.
 
-Use `cargo-scope PLAN WORK` before consuming package names. It emits exactly `skipped`, `workspace`, or `packages`.
-`package-names PLAN WORK` emits canonical NUL-delimited names only for package scope and rejects ambiguous duplicate
-names. It emits no bytes for skipped or workspace scope:
+The planner publishes only:
 
-```bash
-scope="$(python3 "$PLAN_READER" cargo-scope "$PLAN_FILE" cargo.test)"
-if [[ "$scope" == packages ]]; then
-  PACKAGES=()
-  while IFS= read -r -d '' package; do PACKAGES+=("$package"); done \
-    < <(python3 "$PLAN_READER" package-names "$PLAN_FILE" cargo.test)
-fi
+- `version`: the exact installed Cargo-Rail version;
+- `plan-file`: the absolute validated plan path; and
+- `required-work`: a compact JSON array of required work IDs.
+
+Set `components` to `surface` or `complete` when planning needs Surface. Cargo-Rail may then install `rustc-dev` and
+compile its authenticated, toolchain-bound compiler fact driver during explicit Surface preparation. That is the
+only runtime compilation exception; neither the Action runtime nor Cargo-Rail itself is compiled in the workflow.
+
+## Transfer a plan across jobs
+
+Transfer only `plan.json`. Install the same Cargo-Rail version in the consumer with the setup action:
+
+```yaml
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      required-work: ${{ steps.rail.outputs.required-work }}
+      cargo-rail-version: ${{ steps.rail.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: loadingalias/cargo-rail-action@v9
+        id: rail
+        with:
+          version: 0.26.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-rail-plan
+          path: ${{ steps.rail.outputs.plan-file }}
+          if-no-files-found: error
+
+  test:
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.required-work), 'cargo.test')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cargo-rail-plan
+          path: ${{ runner.temp }}/cargo-rail-plan
+      - uses: loadingalias/cargo-rail-action/setup@v9
+        with:
+          version: ${{ needs.plan.outputs.cargo-rail-version }}
+      - name: Run selected tests
+        shell: bash
+        env:
+          PLAN_FILE: ${{ runner.temp }}/cargo-rail-plan/plan.json
+        run: |
+          ARGS_FILE="$(mktemp "$RUNNER_TEMP/cargo-rail-args.XXXXXX")"
+          cargo-rail-action plan cargo-args "$PLAN_FILE" cargo.test > "$ARGS_FILE" || exit "$?"
+          CARGO_ARGS=()
+          while IFS= read -r -d '' argument; do CARGO_ARGS+=("$argument"); done < "$ARGS_FILE"
+          rm -- "$ARGS_FILE"
+          cargo nextest run "${CARGO_ARGS[@]}" --locked
 ```
 
-The action selects and fetches a safe Git base, runs `cargo rail plan --json` once, validates the v8 plan, then
-publishes `required-work`, the exact plan, and its strict reader. An all-zero push base runs all work.
+Do not download the plan into the checkout. Untracked artifact files correctly invalidate object-bound verification.
 
-For a machine-contract boundary, pin this Action by full commit SHA. Its major tag is convenient but mutable. Use the
-Action's exact default Cargo-Rail release, or set `version` to one exact compatible release; do not float the binary
-independently of the bundled reader.
+## Read selectors
 
-Cargo-Rail scopes work. Your existing commands execute it.
+The direct consumer surface is intentionally small:
 
-### Use the plan across jobs
-
-1. Export `required-work` from the planning job.
-2. Upload `plan-file` and `plan-reader` together.
-3. Install the same Cargo-Rail version in each consumer job.
-4. Download both files and verify from the workspace root before execution:
-
-```bash
-python3 .cargo-rail-plan/read.py verify-checkout .cargo-rail-plan/plan.json
+```text
+cargo-rail-action plan summary PLAN
+cargo-rail-action plan required PLAN
+cargo-rail-action plan is-required PLAN WORK
+cargo-rail-action plan cargo-args PLAN WORK
+cargo-rail-action plan cargo-scope PLAN WORK
+cargo-rail-action plan package-names PLAN WORK
+cargo-rail-action plan target-args PLAN WORK
+cargo-rail-action plan matrix PLAN WORK [--family FAMILY]
 ```
 
-Do not derive selectors from changed paths or transfer another plan.
+`summary` emits readable Markdown. Line-oriented selectors emit one compact value and newline. Argument and package
+selectors emit NUL-delimited values.
+For a variant matrix:
 
-### Add custom work
+```yaml
+- name: Read selected Miri matrix
+  id: matrix
+  shell: bash
+  env:
+    PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
+  run: |
+    MATRIX="$(cargo-rail-action plan matrix "$PLAN_FILE" miri --family miri)" || exit "$?"
+    printf 'matrix=%s\n' "$MATRIX" >> "$GITHUB_OUTPUT"
+```
 
-Built-in Cargo work needs no configuration. Add custom work only for repository-owned operations with distinct
-triggers, such as Miri, Kani, benchmarks, generated-code checks, or containers.
+Rejected plans, selectors, and checkout drift exit `2` with empty stdout. Installation, I/O, and subprocess failures
+exit `1`.
 
-| Scope | Use it for | Result |
-|---|---|---|
-| `cargo` | Commands that accept Cargo package selection | Exact package and target selectors |
-| `repository` | Indivisible commands | A yes/no gate |
-| `variants` | Checked-in CI matrices | Selected matrix rows |
-
-Keep commands, flags, environment, timeouts, and setup outside `.config/rail.toml`.
-
-See the complete [planner contract](action.yaml) and
-[planning guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/planning.md).
-
-## Cache
-
-Add the cache action after checkout and before Cargo:
+## Configure compiler caching
 
 ```yaml
 - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-- uses: loadingalias/cargo-rail-action/cache@v8
   with:
-    url: ${{ vars.CARGO_RAIL_CACHE_URL }}
-    mode: read
-    root-portability: remap
-    strict-probe: true
+    persist-credentials: false
 
-- run: cargo test --workspace --locked
+- uses: loadingalias/cargo-rail-action/cache@v9
+  id: cache
+  with:
+    version: 0.26.0
+    remote: s3://cargo-rail-cache/team?region=us-east-1&owner=123456789012
+    mode: read
+    max-size: 10GiB
+    root-portability: physical
+    verify-remote: false
 ```
 
-Use `read` in untrusted jobs. Use `read-write` only in trusted cache-seeding jobs that cannot run unreviewed code.
-`mode` is required. Keep credentials out of `url`. Root portability is typed: use `physical` for one checkout root or
-`remap` for authenticated reuse across roots. `strict-probe: true` makes setup contact the provider and fail unless the
-selected object store and Cargo-Rail protocol marker are ready. The v8 default, Cargo-Rail 0.25.0, provides that
-strict probe contract.
+`mode` is always explicit. Use `read` for pull requests and other untrusted jobs. `verify-remote: true` authenticates
+to the selected provider and requires the protocol marker before publication.
 
-The action installs authenticated cache components, configures a bounded local cache plus AWS S3, Cloudflare R2, or
-Azure Blob Storage in one setup transaction, then validates local status. A requested strict probe reuses Cargo-Rail's
-authenticated object-store and protocol-marker path. Later Cargo calls in the job inherit the setup. Unsupported work,
-incomplete observation, provider failures, and rejected results compile normally.
+The cache action publishes only `version` and one compact `status` value conforming to
+[`schemas/cache-status-v1.schema.json`](schemas/cache-status-v1.schema.json). It contains provider, mode, local byte
+bound, root portability, and whether remote verification was requested and passed. It never contains the remote URL,
+credentials, local paths, authority identity, protocol marker, or component receipts.
 
-Cache outputs expose only redacted health and policy fields. They omit the URL, credentials, local paths, full status,
-and object identities. `remote-ready`, `protocol-marker`, and `probe-json` expose redacted readiness when strict
-probing is enabled; `root-portability` reports the selected policy.
+## One cache report for the workflow
 
-Host setup does not enter `docker build`; configure Cargo-Rail inside the container or mount the required state and
-credentials explicitly.
+Configure caching once in each participating job. Collect after its final Cargo command, including failure paths.
+The setup and collection actions publish no summaries. The final report combines all jobs into one summary.
 
-For local-only reuse, run `cargo rail cache setup` directly.
+```yaml
+# Append these steps to each cache-enabled job.
+- uses: loadingalias/cargo-rail-action/cache/collect@v9
+  if: always()
+  id: cache-record
+  with:
+    job: ${{ matrix.runner }}
+    output-directory: ${{ runner.temp }}/cache-records
+- uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+  if: always() && steps.cache-record.outcome == 'success'
+  with:
+    name: cache-record-${{ matrix.runner }}
+    path: ${{ steps.cache-record.outputs.record-file }}
+    if-no-files-found: error
+```
 
-See the complete [cache contract](cache/action.yaml) and
-[caching guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/caching.md).
+Use a unique `job` label for each matrix row. For a job without a matrix, use its workflow job ID.
+Transfer only the collected record. Each record is bounded to 32 KiB and contains totals, configuration, and
+measurement gaps; it contains no per-target events, paths, remote URLs, or credentials.
 
-## Compatibility
+Add one final job. Here, `test` has two matrix rows named `ubuntu-latest` and `macos-latest`:
 
-- Action v8 installs Cargo-Rail 0.25.0 by default and accepts only v8 plans.
-- Use `@v8` for compatible fixes or a full commit SHA for immutable execution.
-- Core installation can fall back to `cargo-binstall` or `cargo install --locked`.
-- Cache and other native components require a matching verified release archive.
-- Hosted release gates cover GNU Linux and Windows x86-64; qualify other targets separately.
+```yaml
+cache-report:
+  needs: test
+  if: always()
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      continue-on-error: true
+      with:
+        pattern: cache-record-*
+        merge-multiple: true
+        path: ${{ runner.temp }}/cache-records
+    - uses: loadingalias/cargo-rail-action/cache/report@v9
+      if: always()
+      with:
+        records-directory: ${{ runner.temp }}/cache-records
+        expected-jobs: '["ubuntu-latest", "macos-latest"]'
+```
+
+`expected-jobs` must list the rows that enabled caching. Missing or cancelled jobs stay visible as missing reports;
+missing measurements never become zero counts. Records from other runs or attempts and conflicting duplicates are
+rejected. Exact duplicate records count once. Collection finishes the interval, so run it after all compiler processes exit.
+
+The report shows reuse, misses, bypasses, wrapper failures, measured local reads and remote transfer, and grouped
+failure reasons. Expand the job details for storage and configuration. Storage is kept per job because caches may
+share backing storage. The report does not estimate time saved. Cargo freshness can avoid compiler invocations entirely;
+zero recorded outcomes does not establish that the cache was unused or that every compilation was reused.
+
+## Read the plan summary
+
+Directly affected selections stay visible with their package or variant names. Dependency details are expandable;
+their counts remain visible and their execution selectors remain intact. Missing-evidence warnings and `--all`
+remain visible. No fixed number of directly affected items is silently hidden. Attribution comes from Cargo-Rail's
+captured plan; the Action does not infer impact from filenames or explanation prose.
+
+## Supported runners
+
+V9.0 advertises exactly:
+
+| Runner | Native target | Requirement |
+|---|---|---|
+| Linux x86-64 | `x86_64-unknown-linux-gnu` | glibc 2.39 or newer |
+| macOS Apple silicon | `aarch64-apple-darwin` | native execution |
+| Windows x86-64 | `x86_64-pc-windows-msvc` | the runner's Bash shell |
+
+Bootstrap requires Bash, Git, `curl`, and `sha256sum` or `shasum`. Unsupported hosts fail before Cargo-Rail download
+or workspace mutation. Runtime support and Cargo-Rail compiler-cache host eligibility are separate claims.
+
+Each Cargo-Rail target is one DEFLATE ZIP using the pure-Rust `zlib-rs` backend, with no native compression library.
+Its component manifest and every archive entry are validated before any selected component is installed.
+
+## Security boundary
+
+Use ephemeral hosted runners or equivalently isolated single-tenant runners. The runtime validates bounded manifests,
+checksums, complete archives, component receipts, plans, GitHub environment files, and exact versions. Checksums bind
+bytes to the immutable Action or Cargo-Rail release authority; they are not an independent publisher signature.
+
+The planner's `repository-token` is used only for a same-repository Git fetch when required history is absent. It is
+never placed in a URL, argv, repository configuration, output, summary, or unrelated child process.
 
 ## Support
 
-- [Test workflow](https://github.com/loadingalias/cargo-rail-action/actions/workflows/test.yaml)
 - [Action issues](https://github.com/loadingalias/cargo-rail-action/issues)
 - [Cargo-Rail issues](https://github.com/loadingalias/cargo-rail/issues)
-- [Contributing](CONTRIBUTING.md)
-- [MIT license](LICENSE)

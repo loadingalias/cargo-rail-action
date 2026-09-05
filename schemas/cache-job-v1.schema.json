@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/loadingalias/cargo-rail-action/main/schemas/cache-job-v1.schema.json",
+  "title": "Cargo-Rail workflow cache job record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run",
+    "job",
+    "configuration",
+    "measurements",
+    "storage",
+    "gaps"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "run_id",
+        "attempt"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$",
+          "maxLength": 256
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "attempt": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        }
+      }
+    },
+    "job": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_.-]{1,128}$"
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "cargo_rail",
+        "provider",
+        "mode",
+        "max_bytes",
+        "root_portability",
+        "remote_verification"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "cargo_rail": {
+          "type": "string",
+          "pattern": "^0\\.26\\.(0|[1-9][0-9]*)$"
+        },
+        "provider": {
+          "enum": [
+            "aws-s3",
+            "azure-blob",
+            "cloudflare-r2",
+            "s3-compatible"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "read",
+            "read-write"
+          ]
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "root_portability": {
+          "enum": [
+            "physical",
+            "remap"
+          ]
+        },
+        "remote_verification": {
+          "enum": [
+            "not_requested",
+            "verified"
+          ]
+        }
+      }
+    },
+    "measurements": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/measurements"
+        }
+      ]
+    },
+    "storage": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "bytes",
+            "max_bytes"
+          ],
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
+    },
+    "gaps": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "measurements_unavailable",
+          "recording_incomplete",
+          "storage_unavailable"
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "measurements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hits",
+        "misses",
+        "bypasses",
+        "failures",
+        "local_bytes_read",
+        "remote_bytes_read",
+        "remote_bytes_written",
+        "bypass_reasons",
+        "failure_reasons",
+        "incomplete"
+      ],
+      "properties": {
+        "hits": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "misses": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "bypasses": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "failures": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "local_bytes_read": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "remote_bytes_read": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "remote_bytes_written": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "bypass_reasons": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "pattern": "^[a-z0-9_]{1,96}$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 18446744073709551615
+          }
+        },
+        "failure_reasons": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "pattern": "^[a-z0-9_]{1,96}$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 18446744073709551615
+          }
+        },
+        "incomplete": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+name: "Collect Cargo-Rail cache measurements"
+description: "Collect one bounded job record after all cache-using commands. Publishes no job summary."
+inputs:
+  job:
+    description: "Unique job label, including matrix dimensions when applicable"
+    required: true
+  output-directory:
+    description: "Absolute directory outside the checkout for the job record"
+    required: true
+outputs:
+  record-file:
+    description: "Small JSON record for the final workflow cache report"
+    value: ${{ steps.runtime.outputs.record-file }}
+runs:
+  using: "composite"
+  steps:
+    - name: Collect cache measurements
+      id: runtime
+      shell: bash
+      env:
+        INPUT_JOB: ${{ inputs.job }}
+        INPUT_OUTPUT_DIRECTORY: ${{ inputs.output-directory }}
+      run: bash "$GITHUB_ACTION_PATH/../../scripts/bootstrap.sh" run cache-collect

@@ -1,5 +1,5 @@
 name: "Cargo-Rail planner"
-description: "Create one validated named-work plan for exact CI routing and execution scope."
+description: "Install Cargo-Rail and create one validated named-work plan for exact CI routing."
 author: "loadingalias"
 
 branding:
@@ -8,137 +8,57 @@ branding:
 
 inputs:
   version:
-    description: "Exact Cargo-Rail release to install (default: 0.25.0)"
+    description: "Exact compatible Cargo-Rail release to install"
     required: false
-    default: "0.25.0"
-
+    default: "0.26.0"
   components:
-    description: "Verified component set; surface and complete also prepare the selected toolchain"
+    description: "Verified component set: core, surface, or complete"
     required: false
     default: "core"
-
   since:
-    description: "Exact Git comparison ref; otherwise selected safely from the GitHub event"
+    description: "Exact Git comparison ref; otherwise selected from the GitHub event"
     required: false
     default: ""
-
   all:
     description: "Require every registered work item instead of comparing changes"
     required: false
     default: "false"
-
   evidence:
-    description: "Optional planning-evidence-v1 JSON file in the workspace"
+    description: "Optional planning-evidence-v1 JSON file inside the workspace"
     required: false
     default: ""
-
   working-directory:
     description: "Workspace directory containing Cargo.toml"
     required: false
     default: "."
-
-  token:
-    description: "GitHub token used only to download Cargo-Rail releases"
+  repository-token:
+    description: "GitHub token used only for same-repository history acquisition"
     required: false
     default: ${{ github.token }}
 
 outputs:
+  version:
+    description: "Exact Cargo-Rail release installed by the planner"
+    value: ${{ steps.runtime.outputs.version }}
   plan-file:
-    description: "Validated v8 plan path for same-job consumers and artifact upload"
-    value: ${{ steps.plan.outputs.plan_file }}
-
-  plan-reader:
-    description: "Bundled strict reader for work gates, typed Cargo argv, targets, matrices, and checkout verification"
-    value: ${{ steps.plan.outputs.plan_reader }}
-
-  plan-identity:
-    description: "Root-independent identity of the validated plan decisions"
-    value: ${{ steps.plan.outputs.plan_identity }}
-
+    description: "Absolute path to the validated Cargo-Rail plan"
+    value: ${{ steps.runtime.outputs.plan-file }}
   required-work:
     description: "Compact JSON array of required named-work IDs"
-    value: ${{ steps.plan.outputs.required_work }}
-
-  base:
-    description: "Authoritative comparison base captured by the plan"
-    value: ${{ steps.plan.outputs.base }}
-
-  head-commit:
-    description: "Checkout commit bound to the plan"
-    value: ${{ steps.plan.outputs.head_commit }}
+    value: ${{ steps.runtime.outputs.required-work }}
 
 runs:
   using: "composite"
   steps:
-    - name: Install Cargo-Rail
-      id: install
+    - name: Create and validate Cargo-Rail plan
+      id: runtime
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.token }}
-        REQUESTED_VERSION: ${{ inputs.version }}
-        COMPONENT_SET: ${{ inputs.components }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/install.sh"
-
-    - name: Prepare Surface
-      if: inputs.components == 'surface' || inputs.components == 'complete'
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: cargo rail surface --prepare -f json
-
-    - name: Select comparison base
-      id: base
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_COMPONENTS: ${{ inputs.components }}
         INPUT_SINCE: ${{ inputs.since }}
         INPUT_ALL: ${{ inputs.all }}
-      run: >-
-        python3 "$GITHUB_ACTION_PATH/scripts/select_base.py"
-        --since "$INPUT_SINCE"
-        --all "$INPUT_ALL"
-        --github-output "$GITHUB_OUTPUT"
-
-    - name: Fetch comparison history
-      id: history
-      if: steps.base.outputs.all != 'true'
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        BASE_REF: ${{ steps.base.outputs.ref }}
-        USE_MERGE_BASE: ${{ steps.base.outputs.merge_base }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/ensure_history.sh"
-
-    - name: Create and publish plan
-      id: plan
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      env:
-        FORCE_ALL: ${{ steps.base.outputs.all }}
-        BASE_REF: ${{ steps.history.outputs.ref }}
-        EVIDENCE_FILE: ${{ inputs.evidence }}
-        INSTALL_METHOD: ${{ steps.install.outputs.method }}
-        INSTALL_VERSION: ${{ steps.install.outputs.version }}
-      run: |
-        set -euo pipefail
-        PLAN_ROOT="$(mktemp -d "${RUNNER_TEMP:?RUNNER_TEMP is required}/cargo-rail-plan.XXXXXX")"
-        chmod 700 "$PLAN_ROOT"
-        PLAN_FILE="$PLAN_ROOT/plan.json"
-        PLAN_READER="$PLAN_ROOT/read.py"
-        cp "$GITHUB_ACTION_PATH/scripts/plan.py" "$PLAN_READER"
-        chmod 700 "$PLAN_READER"
-        PLAN_ARGS=(rail plan --json)
-        if [[ "$FORCE_ALL" == "true" ]]; then
-          PLAN_ARGS+=(--all)
-        else
-          PLAN_ARGS+=(--since "$BASE_REF")
-        fi
-        if [[ -n "$EVIDENCE_FILE" ]]; then
-          PLAN_ARGS+=(--evidence "$EVIDENCE_FILE")
-        fi
-        cargo "${PLAN_ARGS[@]}" > "$PLAN_FILE"
-        python3 "$GITHUB_ACTION_PATH/scripts/plan.py" publish "$PLAN_FILE" \
-          --github-output "$GITHUB_OUTPUT" \
-          --summary "$GITHUB_STEP_SUMMARY" \
-          --reader "$PLAN_READER" \
-          --install-method "$INSTALL_METHOD" \
-          --install-version "$INSTALL_VERSION"
+        INPUT_EVIDENCE: ${{ inputs.evidence }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_REPOSITORY_TOKEN: ${{ inputs.repository-token }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/bootstrap.sh" run planner
