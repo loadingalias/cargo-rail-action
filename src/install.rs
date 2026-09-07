@@ -55,7 +55,7 @@ impl ComponentSet {
     fn accepts(self, capability: &str) -> bool {
         match self {
             Self::Core => capability == "core",
-            Self::Cache => matches!(capability, "core" | "cache"),
+            Self::Cache => matches!(capability, "core" | "cache" | "surface" | "surface-source"),
             Self::Surface => matches!(capability, "core" | "analysis" | "surface" | "surface-source"),
             Self::Complete => matches!(
                 capability,
@@ -69,7 +69,7 @@ impl ComponentSet {
         match self {
             Self::Core => {}
             Self::Cache => {
-                counts.insert("cache", 2);
+                counts.extend([("cache", 2), ("surface", 1), ("surface-source", 1)]);
             }
             Self::Surface => {
                 counts.extend([("analysis", 1), ("surface", 1), ("surface-source", 1)]);
@@ -1229,6 +1229,152 @@ mod tests {
             std::fs::read(extracted.join("cargo-rail.exe")).expect("component"),
             component
         );
+    }
+
+    #[test]
+    fn cache_archives_and_receipts_require_the_driver_and_source() {
+        let temporary = TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-cache-test").unwrap();
+        for (target, extension) in [("aarch64-apple-darwin", ""), ("x86_64-pc-windows-msvc", ".exe")] {
+            let components = [
+                (format!("cargo-rail{extension}"), "core"),
+                (format!("cargo-rail-native-rustc-wrapper{extension}"), "cache"),
+                (format!("cargo-rail-native-rustc-worker{extension}"), "cache"),
+                (format!("cargo-rail-fact-driver{extension}"), "surface"),
+                ("cargo-rail-fact-driver-source-v1.json".into(), "surface-source"),
+            ];
+            let contents = b"authenticated component";
+            let mut manifest = format!("cargo-rail-components-v1\t0.26.0\t{target}\n");
+            for (name, capability) in &components {
+                manifest.push_str(&format!(
+                    "{name}\t{}\t{}\t{capability}\n",
+                    hex_digest(contents),
+                    contents.len()
+                ));
+            }
+            let archive_path = temporary.path().join(format!("{target}.zip"));
+            let paths = components
+                .iter()
+                .map(|(name, _)| format!("bundle/{name}"))
+                .collect::<Vec<_>>();
+            let mut entries = paths
+                .iter()
+                .map(|path| (path.as_str(), contents.as_slice()))
+                .collect::<Vec<_>>();
+            entries.push(("bundle/cargo-rail-components-v1.tsv", manifest.as_bytes()));
+            write_zip(&archive_path, &entries);
+            let layout = inspect_archive(&archive_path, "0.26.0", target, ComponentSet::Cache).unwrap();
+            let extracted = temporary.path().join(target);
+            std::fs::create_dir(&extracted).unwrap();
+            extract_selected(&archive_path, &layout, ComponentSet::Cache, &extracted).unwrap();
+            let inventory = std::fs::read_dir(&extracted)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(inventory, components.iter().map(|(name, _)| name.clone()).collect());
+            for (name, _) in &components {
+                assert_eq!(std::fs::read(extracted.join(name)).unwrap(), contents);
+            }
+            write_receipt(
+                &extracted,
+                "0.26.0",
+                target,
+                ComponentSet::Cache,
+                &hex_digest(manifest.as_bytes()),
+                &layout.manifest.entries,
+            )
+            .unwrap();
+            let receipt = std::fs::read_to_string(extracted.join("cargo-rail-action-install-v1.tsv")).unwrap();
+            let rows = receipt
+                .lines()
+                .skip(1)
+                .map(|line| parse_manifest_entry(line, "receipt").unwrap())
+                .collect::<Vec<_>>();
+            validate_selected_entries(&rows, target, ComponentSet::Cache).unwrap();
+            assert_eq!(rows.len(), 5);
+            for missing in ["surface", "surface-source"] {
+                let incomplete = rows
+                    .iter()
+                    .filter(|entry| entry.capability != missing)
+                    .map(|entry| ManifestEntry {
+                        name: entry.name.clone(),
+                        digest: entry.digest.clone(),
+                        bytes: entry.bytes,
+                        capability: entry.capability.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                assert!(
+                    validate_selected_entries(&incomplete, target, ComponentSet::Cache)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("complete cache component set")
+                );
+                let incomplete_manifest = manifest
+                    .lines()
+                    .filter(|line| !line.ends_with(&format!("\t{missing}")))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n";
+                let mut incomplete_entries = paths
+                    .iter()
+                    .zip(&components)
+                    .filter(|(_, (_, capability))| *capability != missing)
+                    .map(|(path, _)| (path.as_str(), contents.as_slice()))
+                    .collect::<Vec<_>>();
+                incomplete_entries.push(("bundle/cargo-rail-components-v1.tsv", incomplete_manifest.as_bytes()));
+                write_zip(&archive_path, &incomplete_entries);
+                assert!(
+                    inspect_archive(&archive_path, "0.26.0", target, ComponentSet::Cache)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("complete cache component set")
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a Cargo-Rail release archive built for this host"]
+    fn cache_release_archive_installs_and_revalidates_actual_components() {
+        let archive = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_RELEASE_ARCHIVE").expect("release archive"));
+        let version = std::env::var("CARGO_RAIL_TEST_RELEASE_VERSION").expect("release version");
+        let target = build_target();
+        let layout = inspect_archive(&archive, &version, target, ComponentSet::Cache).unwrap();
+        let temporary = TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-release-test").unwrap();
+        extract_selected(&archive, &layout, ComponentSet::Cache, temporary.path()).unwrap();
+        let digest = hex_digest(&layout.manifest.bytes);
+        write_receipt(
+            temporary.path(),
+            &version,
+            target,
+            ComponentSet::Cache,
+            &digest,
+            &layout.manifest.entries,
+        )
+        .unwrap();
+        let installed = verify_installation(temporary.path(), &version, target, ComponentSet::Cache, &digest).unwrap();
+        assert_eq!(installed.binary(), temporary.path().join(cargo_rail_name(target)));
+        for name in [
+            if target.ends_with("windows-msvc") {
+                "cargo-rail-fact-driver.exe"
+            } else {
+                "cargo-rail-fact-driver"
+            },
+            "cargo-rail-fact-driver-source-v1.json",
+        ] {
+            let path = temporary.path().join(name);
+            let bytes = std::fs::read(&path).unwrap();
+            let mut changed = bytes.clone();
+            changed[0] ^= 1;
+            std::fs::write(&path, changed).unwrap();
+            assert!(
+                verify_installation(temporary.path(), &version, target, ComponentSet::Cache, &digest)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("digest changed")
+            );
+            std::fs::write(path, bytes).unwrap();
+        }
+        verify_installation(temporary.path(), &version, target, ComponentSet::Cache, &digest).unwrap();
     }
 
     #[test]

@@ -931,6 +931,60 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "requires the current Cargo-Rail source binary and authenticated sibling components"]
+    fn source_cache_setup_and_status_match_the_action_contract() {
+        let binary = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_BINARY").expect("source binary"));
+        let root = crate::repository::create_private_directory(&std::env::temp_dir(), "rail-source-cache")
+            .expect("isolated fixture");
+        let workspace = root.join("workspace");
+        let cargo_home = root.join("cargo-home");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::create_dir(&cargo_home).unwrap();
+        std::fs::write(
+            workspace.join("Cargo.toml"),
+            "[package]\nname = 'source-contract'\nversion = '0.1.0'\nedition = '2024'\n[lib]\npath = 'lib.rs'\n",
+        )
+        .unwrap();
+        std::fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 7 }\n").unwrap();
+        let mut inputs = inputs("read", "physical");
+        inputs.workspace = workspace.clone();
+        inputs.remote = "s3://source-contract/cache?region=us-east-1&owner=123456789012".into();
+        let run = |arguments: &[&str]| {
+            let output = Command::new(&binary)
+                .current_dir(&workspace)
+                .env("CARGO_HOME", &cargo_home)
+                .args(arguments)
+                .output()
+                .expect("source command");
+            assert!(output.status.success(), "{output:?}");
+            parse_unique_json(&output.stdout, "source output").expect("one JSON value")
+        };
+        let setup = run(&[
+            "rail",
+            "cache",
+            "setup",
+            "--remote",
+            &inputs.remote,
+            "--remote-mode",
+            &inputs.mode,
+            "--max-size",
+            &inputs.max_size,
+            "--root-portability",
+            &inputs.root_portability,
+            "-f",
+            "json",
+        ]);
+        let (setup_remote, setup_bytes) = validate_setup(&setup, &inputs).expect("source setup contract");
+        let status = run(&["rail", "cache", "status", "--scope", "local", "-f", "json"]);
+        let (status_remote, status_bytes) = validate_status(&status, &inputs).expect("source status contract");
+        require_remote_match(&setup_remote, &status_remote, "source setup/status").expect("same authority");
+        assert_eq!(setup_bytes, inputs.max_bytes);
+        assert_eq!(status_bytes, inputs.max_bytes);
+        run(&["rail", "cache", "uninstall", "-f", "json"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn remote(provider: &str, mode: &str) -> Value {
         serde_json::json!({
             "provider": provider,

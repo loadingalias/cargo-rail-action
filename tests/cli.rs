@@ -46,6 +46,79 @@ fn missing_plan_is_operational_and_keeps_stdout_empty() {
 }
 
 #[test]
+#[ignore = "requires the current Cargo-Rail source binary"]
+fn source_plan_selectors_validate_identity_and_reject_checkout_drift() {
+    let binary = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_BINARY").expect("source binary"));
+    let directory = temporary_directory();
+    let workspace = directory.join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[package]\nname = 'source-contract'\nversion = '0.1.0'\nedition = '2024'\n[lib]\npath = 'lib.rs'\n",
+    )
+    .unwrap();
+    fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 7 }\n").unwrap();
+    fs::write(workspace.join(".gitignore"), "target/\n").unwrap();
+    for arguments in [
+        vec!["init", "--initial-branch=main"],
+        vec!["add", "."],
+        vec![
+            "-c",
+            "user.name=Contract Test",
+            "-c",
+            "user.email=contract@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "Initial fixture",
+        ],
+    ] {
+        let output = Command::new("git")
+            .current_dir(&workspace)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let plan = Command::new(&binary)
+        .current_dir(&workspace)
+        .args(["rail", "plan", "--since", "HEAD", "--all", "--json"])
+        .output()
+        .expect("source plan");
+    assert!(plan.status.success(), "{plan:?}");
+    let value: serde_json::Value = serde_json::from_slice(&plan.stdout).unwrap();
+    let plan_path = directory.join("plan.json");
+    fs::write(&plan_path, plan.stdout).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(binary.parent().unwrap().to_path_buf())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+    )
+    .unwrap();
+    let select = || {
+        Command::new(env!("CARGO_BIN_EXE_cargo-rail-action"))
+            .current_dir(&workspace)
+            .env("PATH", &path)
+            .args(["plan", "required"])
+            .arg(&plan_path)
+            .output()
+            .expect("source plan selector")
+    };
+    let accepted = select();
+    assert!(accepted.status.success(), "{accepted:?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&accepted.stdout).unwrap(),
+        value["required"]
+    );
+    fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 8 }\n").unwrap();
+    let rejected = select();
+    assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
+    assert!(rejected.stdout.is_empty(), "{rejected:?}");
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("cargo-rail rejected current execution authority"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn documented_selectors_stop_before_execution_or_publication_on_rejection() {
     fn scripts(value: &serde_json::Value, found: &mut Vec<String>) {
         match value {

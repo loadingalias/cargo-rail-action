@@ -44,9 +44,10 @@ The planner publishes only:
 - `plan-file`: the absolute validated plan path; and
 - `required-work`: a compact JSON array of required work IDs.
 
-Set `components` to `surface` or `complete` when planning needs Surface. Cargo-Rail may then install `rustc-dev` and
-compile its authenticated, toolchain-bound compiler fact driver during explicit Surface preparation. That is the
-only runtime compilation exception; neither the Action runtime nor Cargo-Rail itself is compiled in the workflow.
+Set `components` to `surface` or `complete` when planning needs Surface. During explicit Surface preparation,
+Cargo-Rail may install `rustc-dev` and compile its authenticated, toolchain-bound compiler fact driver. Native cache
+preparation can also compile that driver from the authenticated source package when development components for the
+selected compiler are already installed. Neither the Action runtime nor Cargo-Rail itself is compiled in the workflow.
 
 ## Transfer a plan across jobs
 
@@ -157,6 +158,10 @@ exit `1`.
 `mode` is always explicit. Use `read` for pull requests and other untrusted jobs. `verify-remote: true` authenticates
 to the selected provider and requires the protocol marker before publication.
 
+The cache installer requires the core executable, native wrapper and worker, matched compiler driver, and authenticated
+driver source package. Archives or installation receipts missing either driver component are rejected. Cargo-Rail
+owns toolchain matching and cache preparation.
+
 The cache action publishes only `version` and one compact `status` value conforming to
 [`schemas/cache-status-v1.schema.json`](schemas/cache-status-v1.schema.json). It contains provider, mode, local byte
 bound, root portability, and whether remote verification was requested and passed. It never contains the remote URL,
@@ -248,6 +253,18 @@ bytes to the immutable Action or Cargo-Rail release authority; they are not an i
 
 The planner's `repository-token` is used only for a same-repository Git fetch when required history is absent. It is
 never placed in a URL, argv, repository configuration, output, summary, or unrelated child process.
+
+## Validate changes
+
+Run `just check` for formatting, Clippy, unit and CLI tests, metadata contracts, and bootstrap syntax.
+When changing Cargo-Rail alongside the Action, build its authenticated components with `just build` and package
+its native release with `just package-release OUTPUT_DIRECTORY` in the Cargo-Rail checkout. Then run
+`just check-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH VERSION` here. This explicitly runs the source
+plan and cache contracts and the real archive installer tests. Cache setup uses an isolated temporary Cargo home;
+the tests do not publish releases or contact remote cache storage.
+
+CI validates the published Cargo-Rail archive when available. Before that release exists, it builds the authenticated
+archive from Cargo-Rail's `main` branch and runs the same contract tests. Release lookup and download errors fail CI.
 
 ## Support
 
