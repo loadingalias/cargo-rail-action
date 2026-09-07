@@ -178,37 +178,40 @@ fn repository_has_no_interpreter_implementation_residue() {
 }
 
 #[test]
-fn release_workflow_has_one_explicit_protected_release_path() {
-    let workflow = fs::read_to_string(root().join(".github/workflows/release.yaml")).expect("release workflow");
-    serde_saphyr::from_str::<Value>(&workflow).expect("parse release workflow");
-    assert!(workflow.contains("operation:"));
-    assert!(workflow.contains("options: [verify, publish, promote-v9]"));
-    assert!(workflow.contains("environment: release"));
-    assert!(workflow.contains("permissions: {}"));
-    assert!(workflow.contains("release publish --check"));
-    assert!(workflow.contains("release publish --apply"));
-    assert!(workflow.contains("release promote --check"));
-    assert!(workflow.contains("release promote --apply"));
-    assert!(workflow.contains("release preflight"));
-    assert!(workflow.contains("github.ref == 'refs/heads/main'"));
+fn release_workflow_requires_ci_and_protects_publication() {
+    let workflow = yaml(".github/workflows/release.yml");
     assert_eq!(
-        workflow.matches("cargo install just --version 1.58.0 --locked").count(),
-        2
+        keys(mapping(&workflow["on"], "release triggers")),
+        BTreeSet::from(["workflow_dispatch".to_string()])
     );
-    assert!(!workflow.contains("cargo install just --locked"));
-    assert!(workflow.contains("name: runtime-executable-${{ matrix.target }}"));
-    assert_eq!(workflow.matches("pattern: runtime-executable-*").count(), 2);
-    assert_eq!(
-        workflow.matches("name: runtime-manifest-${{ inputs.version }}").count(),
-        2
+    assert!(mapping(&workflow["permissions"], "default permissions").is_empty());
+    assert_eq!(workflow["concurrency"]["cancel-in-progress"], false);
+    let prepare = &workflow["jobs"]["prepare"];
+    assert_eq!(prepare["if"], "github.ref == 'refs/heads/main'");
+    assert_eq!(prepare["permissions"]["contents"], "read");
+    let steps = prepare["steps"].as_array().unwrap();
+    let gate = steps.iter().position(|step| step["id"] == "ci").unwrap();
+    let download = steps
+        .iter()
+        .position(|step| step["with"].get("run-id").is_some())
+        .unwrap();
+    assert!(gate < download);
+    assert!(
+        steps[gate]["run"]
+            .as_str()
+            .unwrap()
+            .contains("actions/workflows/ci.yml/runs")
     );
-    assert!(!workflow.contains("pattern: runtime-*"));
-    assert!(workflow.contains("Verify requested runtime identity before smoke tests"));
-    assert!(!workflow.contains("path: ${{ runner.temp }}/release-intent"));
-    assert!(!workflow.contains("printf 'cargo-rail-action-runtime-v1"));
-    assert!(!workflow.contains("for target in aarch64-apple-darwin"));
-    assert!(!workflow.contains("pull_request_target"));
-    assert!(!workflow.contains("--pr"));
+    assert_eq!(steps[download]["with"]["run-id"], "${{ steps.ci.outputs.run-id }}");
+    let publish = &workflow["jobs"]["publish"];
+    assert_eq!(publish["needs"], "prepare");
+    assert_eq!(publish["environment"], "release");
+    assert_eq!(publish["permissions"]["contents"], "write");
+    let steps = publish["steps"].as_array().unwrap();
+    let commands = steps.last().unwrap()["run"].as_str().unwrap();
+    assert!(commands.find("release publish --check").unwrap() < commands.find("release publish --apply").unwrap());
+    assert!(commands.find("release publish --apply").unwrap() < commands.find("release promote --check").unwrap());
+    assert!(commands.find("release promote --check").unwrap() < commands.find("release promote --apply").unwrap());
 }
 
 fn collect_files(root: &Path, current: &Path, output: &mut Vec<PathBuf>) {

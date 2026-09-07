@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: Check / ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # CI artifacts are published later, so retain the runtime's glibc 2.39 baseline.
+          - runner: runs-on=${{ github.run_id }}/runner=x86_64-linux/image=ubuntu24-full-x64/env=production
+            target: x86_64-unknown-linux-gnu
+            timeout: 30
+          - runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
+            target: x86_64-pc-windows-msvc
+            timeout: 60
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            timeout: 30
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check, test, and exercise the packaged runtime
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          export RUSTUP_TOOLCHAIN
+          RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy,rustfmt
+          cargo install just --version 1.58.0 --locked
+          just check
+          cargo build --release --locked
+          suffix=""
+          [[ "$TARGET" != *windows-msvc ]] || suffix=.exe
+          runtime="$(pwd -P)/target/release/cargo-rail-action$suffix"
+          digest="$(shasum -a 256 "$runtime" | awk '{print $1}')"
+          # Exercise both initial installation and reuse of the authenticated runtime.
+          for _attempt in 1 2; do
+            GITHUB_ACTION_PATH="$GITHUB_WORKSPACE" bash scripts/bootstrap.sh \
+              --local-runtime "$runtime" --local-runtime-sha256 "$digest" \
+              self-check --expect-version 9.0.0 --expect-target "$TARGET"
+          done
+          mkdir -p "$RUNNER_TEMP/runtime-assets"
+          cp "$runtime" "$RUNNER_TEMP/runtime-assets/cargo-rail-action-$TARGET$suffix"
+      - name: Test the Cargo-Rail source-to-release contract
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          export RUSTUP_TOOLCHAIN
+          RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' rust-toolchain.toml)"
+          temporary="$(mktemp -d)"
+          trap 'rm -rf "$temporary"' EXIT
+          archive="cargo-rail-$TARGET.zip"
+          url=https://github.com/loadingalias/cargo-rail/releases/download/v0.26.0
+          status="$(curl --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$temporary/release.json" --write-out '%{http_code}' \
+            https://api.github.com/repos/loadingalias/cargo-rail/releases/tags/v0.26.0)"
+          case "$status" in
+            200)
+              for asset in "$archive" SHA256SUMS; do
+                curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+                  "$url/$asset" --output "$temporary/$asset"
+              done
+              ;;
+            404)
+              git clone --depth 1 --branch main https://github.com/loadingalias/cargo-rail.git "$temporary/source"
+              (
+                cd "$temporary/source"
+                rustup component add rustc-dev llvm-tools
+                cargo fetch --locked
+                cargo fetch --locked --manifest-path tools/compiler-fact-driver/Cargo.toml
+                just package-release "$temporary"
+              )
+              ;;
+            *) echo "Cargo-Rail release lookup failed with HTTP $status" >&2; exit 1 ;;
+          esac
+          awk -v archive="$archive" '$2 == archive' "$temporary/SHA256SUMS" > "$temporary/checksum"
+          [[ "$(wc -l < "$temporary/checksum")" -eq 1 ]]
+          (cd "$temporary"; shasum -a 256 --check --strict checksum)
+          suffix=""
+          if [[ "$TARGET" == *windows-msvc ]]; then
+            suffix=.exe
+            # shellcheck disable=SC2016
+            ARCHIVE="$(cygpath -w "$temporary/$archive")" DESTINATION="$(cygpath -w "$temporary")" \
+              powershell -NoProfile -NonInteractive -Command 'Expand-Archive -LiteralPath $env:ARCHIVE -DestinationPath $env:DESTINATION'
+          else
+            unzip -q "$temporary/$archive" -d "$temporary"
+          fi
+          just check-cargo-rail "$temporary/cargo-rail/cargo-rail$suffix" "$temporary/$archive" 0.26.0
+          git diff --exit-code HEAD
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          name: runtime-${{ matrix.target }}
+          path: ${{ runner.temp }}/runtime-assets/*
+          if-no-files-found: error
+          retention-days: 14
