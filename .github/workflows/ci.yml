@@ -21,7 +21,7 @@ jobs:
   check:
     name: Check / ${{ matrix.target }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           # CI artifacts are published later, so retain the runtime's glibc 2.39 baseline.
@@ -33,22 +33,37 @@ jobs:
             timeout: 60
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
+    env:
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Checkout pinned runner tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: loadingalias/cargo-rail
+          ref: 00819e3d30b2402e9ca2d1daf846f9d52db984e2
+          path: .ci-tooling
+          persist-credentials: false
+      - name: Install Linux tooling
+        if: runner.os == 'Linux'
+        run: .ci-tooling/scripts/tooling/x86_64-linux.sh
+      - name: Install Windows tooling
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./.ci-tooling/scripts/tooling/x86_64-win.ps1
+      - name: Validate active toolchain
+        run: |
+          expected="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
+          [[ "$RUSTUP_TOOLCHAIN" == "$expected" ]]
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            printf 'CARGO_RAIL_TEST_BASH=%s\n' "$(cygpath -w "$BASH")" >> "$GITHUB_ENV"
+          fi
       - name: Check, test, and exercise the packaged runtime
         env:
           TARGET: ${{ matrix.target }}
         run: |
-          export RUSTUP_TOOLCHAIN
-          RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' rust-toolchain.toml)"
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy,rustfmt
-          cargo install just --version 1.58.0 --locked
-          if [[ "$TARGET" == *windows-msvc ]]; then
-            export CARGO_RAIL_TEST_BASH
-            CARGO_RAIL_TEST_BASH="$(cygpath -w "$BASH")"
-          fi
           just check
           cargo build --release --locked
           suffix=""
@@ -68,8 +83,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
         run: |
-          export RUSTUP_TOOLCHAIN
-          RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' rust-toolchain.toml)"
           temporary="$(mktemp -d)"
           trap 'rm -rf "$temporary"' EXIT
           archive="cargo-rail-$TARGET.zip"
@@ -86,10 +99,8 @@ jobs:
               done
               ;;
             404)
-              git clone --depth 1 --branch main https://github.com/loadingalias/cargo-rail.git "$temporary/source"
               (
-                cd "$temporary/source"
-                rustup component add rustc-dev llvm-tools
+                cd "$GITHUB_WORKSPACE/.ci-tooling"
                 cargo fetch --locked
                 cargo fetch --locked --manifest-path tools/compiler-fact-driver/Cargo.toml
                 just package-release "$temporary"
