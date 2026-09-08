@@ -16,6 +16,7 @@ concurrency:
 defaults:
   run:
     shell: bash
+    working-directory: action
 
 jobs:
   check:
@@ -38,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          path: action
           persist-credentials: false
       - name: Checkout pinned runner tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,11 +50,11 @@ jobs:
           persist-credentials: false
       - name: Install Linux tooling
         if: runner.os == 'Linux'
-        run: .ci-tooling/scripts/tooling/x86_64-linux.sh
+        run: ../.ci-tooling/scripts/tooling/x86_64-linux.sh
       - name: Install Windows tooling
         if: runner.os == 'Windows'
         shell: powershell
-        run: ./.ci-tooling/scripts/tooling/x86_64-win.ps1
+        run: ../.ci-tooling/scripts/tooling/x86_64-win.ps1
       - name: Validate active toolchain
         run: |
           expected="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
@@ -72,7 +74,7 @@ jobs:
           digest="$(sha256sum "$runtime" | awk '{print $1}')"
           # Exercise both initial installation and reuse of the authenticated runtime.
           for _attempt in 1 2; do
-            GITHUB_ACTION_PATH="$GITHUB_WORKSPACE" bash scripts/bootstrap.sh \
+            GITHUB_ACTION_PATH="$(pwd -P)" bash scripts/bootstrap.sh \
               --local-runtime "$runtime" --local-runtime-sha256 "$digest" \
               self-check --expect-version 9.0.0 --expect-target "$TARGET"
           done
