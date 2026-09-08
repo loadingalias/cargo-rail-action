@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loadingalias/cargo-rail
-          ref: 00819e3d30b2402e9ca2d1daf846f9d52db984e2
+          ref: aacab11ca3f47a2c53a6033c0b6df871b1afa03d
           path: .ci-tooling
           persist-credentials: false
       - name: Install Linux tooling
