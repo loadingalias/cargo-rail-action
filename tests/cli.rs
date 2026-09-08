@@ -209,3 +209,105 @@ fn workflow_report_publishes_one_summary_and_marks_missing_jobs() {
     assert!(!summary.contains("Reused: 0"));
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn bootstrap_downloads_runtime_only_when_installation_is_absent() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = temporary_directory();
+    let fixtures = directory.join("fixtures");
+    let bin = directory.join("bin");
+    let runner_temp = directory.join("runner");
+    let cache = directory.join("cache");
+    for path in [&fixtures, &bin, &runner_temp, &cache] {
+        fs::create_dir(path).unwrap();
+    }
+    let runtime = b"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$INVOCATIONS\"\n";
+    let digest: String = rscrypto::Sha256::digest(runtime)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let version = env!("CARGO_PKG_VERSION");
+    let manifest_name = "cargo-rail-action-runtime-v1.tsv";
+    let mut manifest = format!("cargo-rail-action-runtime-v1\t{version}\n");
+    for target in [
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+    ] {
+        let suffix = if target.contains("windows") { ".exe" } else { "" };
+        let asset = format!("cargo-rail-action-{target}{suffix}");
+        manifest.push_str(&format!("{target}\t{asset}\t{}\t{digest}\n", runtime.len()));
+        fs::write(fixtures.join(asset), runtime).unwrap();
+    }
+    fs::write(fixtures.join(manifest_name), manifest).unwrap();
+    let curl = bin.join("curl");
+    fs::write(
+        &curl,
+        r#"#!/bin/bash
+set -euo pipefail
+output=''
+while (( $# > 0 )); do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+asset="${url##*/}"
+printf '%s\n' "$asset" >> "$DOWNLOADS"
+cp "$FIXTURES/$asset" "$output"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&curl, fs::Permissions::from_mode(0o700)).unwrap();
+    let downloads = directory.join("downloads");
+    let invocations = directory.join("invocations");
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())))
+            .unwrap();
+    let run = || {
+        Command::new("bash")
+            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/bootstrap.sh"))
+            .args(["run", "planner"])
+            .env("PATH", &path)
+            .env("RUNNER_OS", "macOS")
+            .env("RUNNER_ARCH", "ARM64")
+            .env("RUNNER_TEMP", &runner_temp)
+            .env("RUNNER_TOOL_CACHE", &cache)
+            .env("FIXTURES", &fixtures)
+            .env("DOWNLOADS", &downloads)
+            .env("INVOCATIONS", &invocations)
+            .output()
+            .unwrap()
+    };
+    let asset = "cargo-rail-action-aarch64-apple-darwin";
+    let first = run();
+    assert!(first.status.success(), "{first:?}");
+    assert_eq!(
+        fs::read_to_string(&downloads).unwrap(),
+        format!("{manifest_name}\n{asset}\n")
+    );
+    fs::write(&downloads, "").unwrap();
+    let reused = run();
+    assert!(reused.status.success(), "{reused:?}");
+    assert_eq!(fs::read_to_string(&downloads).unwrap(), format!("{manifest_name}\n"));
+    let calls = fs::read_to_string(&invocations).unwrap();
+    let expected_calls =
+        format!("self-check --expect-version {version} --expect-target aarch64-apple-darwin\nrun planner\n");
+    assert_eq!(calls, expected_calls.repeat(2));
+
+    let installed = cache.join(format!(
+        "cargo-rail-action/runtime/{version}/aarch64-apple-darwin-{digest}/{asset}"
+    ));
+    let mut corrupt = runtime.to_vec();
+    corrupt[0] = b'x';
+    fs::write(installed, corrupt).unwrap();
+    fs::write(&downloads, "").unwrap();
+    let rejected = run();
+    assert!(!rejected.status.success(), "{rejected:?}");
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("immutable runtime destination is corrupt"));
+    assert_eq!(fs::read_to_string(&downloads).unwrap(), format!("{manifest_name}\n"));
+    assert_eq!(fs::read_to_string(&invocations).unwrap(), calls);
+    fs::remove_dir_all(directory).unwrap();
+}

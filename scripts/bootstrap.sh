@@ -171,13 +171,6 @@ else
   done < <(tail -n +2 "$MANIFEST_PATH")
   [[ "$OBSERVED_TARGETS" == "$EXPECTED_TARGETS" ]] || fail "runtime manifest target rows are incomplete, duplicated, or unsorted"
   [[ -n "$RUNTIME_ASSET" ]] || fail "runtime manifest has no executable for $TARGET"
-  RUNTIME_SOURCE="$BOOTSTRAP_TEMP/$RUNTIME_ASSET"
-  curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
-    --max-filesize "$MAX_RUNTIME_BYTES" --output "$RUNTIME_SOURCE" "$RELEASE_ROOT/$RUNTIME_ASSET" \
-    || fail "cannot download the Cargo-Rail Action runtime for $TARGET"
-  [[ -f "$RUNTIME_SOURCE" && ! -L "$RUNTIME_SOURCE" ]] || fail "downloaded runtime is not a regular file"
-  [[ "$(wc -c < "$RUNTIME_SOURCE" | tr -d ' ')" == "$RUNTIME_BYTES" ]] || fail "runtime byte length does not match the manifest"
-  [[ "$(sha256_file "$RUNTIME_SOURCE")" == "$RUNTIME_DIGEST" ]] || fail "runtime digest does not match the manifest"
 fi
 
 if [[ -n "${RUNNER_TOOL_CACHE:-}" && -d "$RUNNER_TOOL_CACHE" ]]; then
@@ -196,7 +189,16 @@ runtime_destination_is_exact() (
     && [[ "$(wc -c < "$RUNTIME_PATH" | tr -d ' ')" == "$RUNTIME_BYTES" ]] \
     && [[ "$(sha256_file "$RUNTIME_PATH")" == "$RUNTIME_DIGEST" ]]
 )
-if [[ ! -e "$DESTINATION" ]]; then
+if [[ ! -e "$DESTINATION" && ! -L "$DESTINATION" ]]; then
+  if [[ -z "$LOCAL_RUNTIME" ]]; then
+    RUNTIME_SOURCE="$BOOTSTRAP_TEMP/$RUNTIME_ASSET"
+    curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+      --max-filesize "$MAX_RUNTIME_BYTES" --output "$RUNTIME_SOURCE" "$RELEASE_ROOT/$RUNTIME_ASSET" \
+      || fail "cannot download the Cargo-Rail Action runtime for $TARGET"
+    [[ -f "$RUNTIME_SOURCE" && ! -L "$RUNTIME_SOURCE" ]] || fail "downloaded runtime is not a regular file"
+    [[ "$(wc -c < "$RUNTIME_SOURCE" | tr -d ' ')" == "$RUNTIME_BYTES" ]] || fail "runtime byte length does not match the manifest"
+    [[ "$(sha256_file "$RUNTIME_SOURCE")" == "$RUNTIME_DIGEST" ]] || fail "runtime digest does not match the manifest"
+  fi
   STAGE="$(mktemp -d "$INSTALL_BASE/$RUNTIME_VERSION/.runtime-stage.XXXXXX")"
   chmod 700 "$STAGE"
   cp -- "$RUNTIME_SOURCE" "$STAGE/$RUNTIME_ASSET"

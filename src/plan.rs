@@ -474,11 +474,14 @@ pub(crate) fn verify_checkout(plan: &[u8]) -> Result<()> {
     let binary = repository::find_executable("cargo-rail").ok_or_else(|| {
         ActionError::operational("matching cargo-rail binary is unavailable for saved-plan verification")
     })?;
-    verify_checkout_with(plan, &binary)
+    verify_checkout_with(plan, &binary, None)
 }
 
-pub(crate) fn verify_checkout_with(plan: &[u8], binary: &Path) -> Result<()> {
+pub(crate) fn verify_checkout_with(plan: &[u8], binary: &Path, workspace: Option<&Path>) -> Result<()> {
     let mut command = Command::new(binary);
+    if let Some(workspace) = workspace {
+        command.current_dir(workspace);
+    }
     command.args(["rail", "plan", "--verify", "-"]);
     let result = repository::run_bounded_with_input(&mut command, plan, MAX_SUBPROCESS_BYTES, MAX_SUBPROCESS_BYTES)?;
     if !result.stdout.is_empty() {
@@ -1586,7 +1589,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn checkout_verification_uses_the_captured_plan_bytes() {
+    fn checkout_verification_uses_captured_bytes_and_selected_directory() {
         let directory =
             repository::create_private_directory(&std::env::temp_dir(), "cargo-rail-action-plan-authority-test")
                 .expect("temporary directory");
@@ -1599,12 +1602,28 @@ mod tests {
         let verifier = directory.join("cargo-rail");
         std::fs::write(
             &verifier,
-            b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\ncat > \"$0.stdin\"\n",
+            b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\npwd -P > \"$0.cwd\"\ncat > \"$0.stdin\"\n",
         )
         .expect("write verifier");
         std::fs::set_permissions(&verifier, std::fs::Permissions::from_mode(0o700)).expect("verifier permissions");
 
-        verify_checkout_with(plan.bytes(), &verifier).expect("verify captured bytes");
+        let workspace = directory.join("nested workspace");
+        std::fs::create_dir(&workspace).expect("nested workspace");
+        for selected in [None, Some(workspace.as_path())] {
+            verify_checkout_with(plan.bytes(), &verifier, selected).expect("verify captured bytes");
+            let expected = selected
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| std::env::current_dir().expect("current directory"));
+            assert_eq!(
+                std::fs::read_to_string(verifier.with_extension("cwd"))
+                    .expect("captured directory")
+                    .trim_end(),
+                std::fs::canonicalize(expected)
+                    .expect("canonical directory")
+                    .to_str()
+                    .unwrap()
+            );
+        }
 
         assert_eq!(
             std::fs::read(verifier.with_extension("stdin")).expect("captured stdin"),

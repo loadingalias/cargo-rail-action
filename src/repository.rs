@@ -94,7 +94,7 @@ pub(crate) fn run_planner() -> Result<()> {
     })?;
     set_private_file(&plan_path)?;
 
-    crate::plan::verify_checkout_with(plan.bytes(), installed.binary())?;
+    crate::plan::verify_checkout_with(plan.bytes(), installed.binary(), Some(&inputs.workspace))?;
     let required = serde_json::to_string(&plan.required_strings())
         .map_err(|error| ActionError::operational(format!("cannot encode required work: {error}")))?;
     publish(Publication {

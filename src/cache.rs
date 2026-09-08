@@ -350,7 +350,7 @@ fn validate_status_contract(
         &[],
         "cache status",
     )?;
-    require(status["schema_version"] == 15, "cache status schema_version must be 15")?;
+    require(status["schema_version"] == 16, "cache status schema_version must be 16")?;
     let installation = object_field(status, "installation", "cache status")?;
     exact_keys(
         installation,
@@ -369,7 +369,6 @@ fn validate_status_contract(
             "profile_id",
             "bound_workspace_root",
             "trust_domain",
-            "unbound_pre_profile_state",
             "cache_base",
             "max_bytes",
             "root_portability",
@@ -415,11 +414,6 @@ fn validate_status_contract(
             .as_array()
             .is_some_and(|issues| issues.iter().all(Value::is_string)),
         "cache status issues must be an array of strings",
-    )?;
-    require_optional_object(
-        installation.get("unbound_pre_profile_state"),
-        validate_pre_profile_state,
-        "cache status unbound pre-profile state",
     )?;
     require_optional_enum(
         installation.get("distributed"),
@@ -697,29 +691,6 @@ fn validate_local(local: &Map<String, Value>) -> Result<()> {
     Ok(())
 }
 
-fn validate_pre_profile_state(value: &Map<String, Value>) -> Result<()> {
-    exact_keys(
-        value,
-        &["state", "cache_base", "max_bytes", "root_portability"],
-        &["trust_domain", "remote_authority", "remote_mode"],
-        "cache status unbound pre-profile state",
-    )?;
-    require(value["state"] == "unbound", "cache status pre-profile state is invalid")?;
-    string_field(value, "cache_base", "cache status pre-profile state")?;
-    require(
-        value["max_bytes"].as_u64().is_some_and(|bytes| bytes > 0),
-        "cache status pre-profile max_bytes is invalid",
-    )?;
-    require(
-        matches!(value["root_portability"].as_str(), Some("physical" | "remap")),
-        "cache status pre-profile root portability is invalid",
-    )?;
-    for field in ["trust_domain", "remote_authority", "remote_mode"] {
-        require_optional_string(value.get(field), &format!("cache status pre-profile {field}"))?;
-    }
-    Ok(())
-}
-
 fn validate_placement_history(value: &Map<String, Value>) -> Result<()> {
     exact_keys(
         value,
@@ -757,13 +728,6 @@ fn validate_placement_history(value: &Map<String, Value>) -> Result<()> {
     require_optional_u64(
         value.get("newest_observation_unix_secs"),
         "cache status placement history.newest_observation_unix_secs",
-    )
-}
-
-fn require_optional_string(value: Option<&Value>, subject: &str) -> Result<()> {
-    require(
-        value.is_none_or(|value| value.is_null() || value.as_str().is_some_and(|value| !value.is_empty())),
-        format!("{subject} is invalid"),
     )
 }
 
@@ -1031,7 +995,7 @@ mod tests {
             "exit_code": 0,
             "scope": "local",
             "status": {
-                "schema_version": 15,
+                "schema_version": 16,
                 "installation": {
                     "state": "installed",
                     "healthy": true,
@@ -1135,8 +1099,12 @@ mod tests {
     fn cache_contract_rejects_schema_authority_and_probe_drift() {
         let inputs = inputs("read", "physical");
         let mut wrong_schema = status(remote("aws-s3", "read"), "physical");
-        wrong_schema["status"]["schema_version"] = Value::from(14);
+        wrong_schema["status"]["schema_version"] = Value::from(15);
         assert!(validate_status(&wrong_schema, &inputs).is_err());
+
+        let mut retired_field = status(remote("aws-s3", "read"), "physical");
+        retired_field["status"]["installation"]["unbound_pre_profile_state"] = serde_json::json!({});
+        assert!(validate_status(&retired_field, &inputs).is_err());
 
         let status_remote = remote_state(Some(&remote("aws-s3", "read")), "status remote").expect("status remote");
         let probe_remote = validate_probe(&probe(remote("azure-blob", "read"), "existing")).expect("probe contract");
