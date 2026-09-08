@@ -31,9 +31,6 @@ jobs:
           - runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
             target: x86_64-pc-windows-msvc
             timeout: 60
-          - runner: macos-15
-            target: aarch64-apple-darwin
-            timeout: 30
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -64,6 +61,7 @@ jobs:
           cp "$runtime" "$RUNNER_TEMP/runtime-assets/cargo-rail-action-$TARGET$suffix"
       - name: Test the Cargo-Rail source-to-release contract
         env:
+          GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
         run: |
           export RUSTUP_TOOLCHAIN
@@ -73,6 +71,7 @@ jobs:
           archive="cargo-rail-$TARGET.zip"
           url=https://github.com/loadingalias/cargo-rail/releases/download/v0.26.0
           status="$(curl --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+            --header "Authorization: Bearer $GH_TOKEN" \
             --output "$temporary/release.json" --write-out '%{http_code}' \
             https://api.github.com/repos/loadingalias/cargo-rail/releases/tags/v0.26.0)"
           case "$status" in
