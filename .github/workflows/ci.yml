@@ -54,7 +54,7 @@ jobs:
           suffix=""
           [[ "$TARGET" != *windows-msvc ]] || suffix=.exe
           runtime="$(pwd -P)/target/release/cargo-rail-action$suffix"
-          digest="$(shasum -a 256 "$runtime" | awk '{print $1}')"
+          digest="$(sha256sum "$runtime" | awk '{print $1}')"
           # Exercise both initial installation and reuse of the authenticated runtime.
           for _attempt in 1 2; do
             GITHUB_ACTION_PATH="$GITHUB_WORKSPACE" bash scripts/bootstrap.sh \
@@ -99,7 +99,7 @@ jobs:
           esac
           awk -v archive="$archive" '$2 == archive' "$temporary/SHA256SUMS" > "$temporary/checksum"
           [[ "$(wc -l < "$temporary/checksum")" -eq 1 ]]
-          (cd "$temporary"; shasum -a 256 --check --strict checksum)
+          (cd "$temporary"; sha256sum --check --strict checksum)
           suffix=""
           if [[ "$TARGET" == *windows-msvc ]]; then
             suffix=.exe
