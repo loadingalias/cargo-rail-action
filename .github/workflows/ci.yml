@@ -25,10 +25,10 @@ jobs:
       matrix:
         include:
           # CI artifacts are published later, so retain the runtime's glibc 2.39 baseline.
-          - runner: runs-on=${{ github.run_id }}/runner=x86_64-linux/image=ubuntu24-full-x64/env=production
+          - runner: runs-on=${{ github.run_id }}/runner=x86_64-linux/image=ubuntu24-full-x64/spot=false/env=production
             target: x86_64-unknown-linux-gnu
             timeout: 30
-          - runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
+          - runner: runs-on=${{ github.run_id }}/runner=x86_64-win/spot=false/env=production
             target: x86_64-pc-windows-msvc
             timeout: 60
     runs-on: ${{ matrix.runner }}
@@ -45,6 +45,10 @@ jobs:
           RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' rust-toolchain.toml)"
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy,rustfmt
           cargo install just --version 1.58.0 --locked
+          if [[ "$TARGET" == *windows-msvc ]]; then
+            export CARGO_RAIL_TEST_BASH
+            CARGO_RAIL_TEST_BASH="$(cygpath -w "$BASH")"
+          fi
           just check
           cargo build --release --locked
           suffix=""

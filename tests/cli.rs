@@ -158,7 +158,8 @@ fn documented_selectors_stop_before_execution_or_publication_on_rejection() {
         let script = format!(
             "cargo-rail-action() {{ \"$RUNTIME\" \"$@\"; }}\ncargo() {{ printf invoked > \"$EXECUTED\"; }}\n{example}"
         );
-        let output = Command::new("bash")
+        let bash = std::env::var_os("CARGO_RAIL_TEST_BASH").unwrap_or_else(|| "bash".into());
+        let output = Command::new(bash)
             .args(["-euo", "pipefail", "-c", &script])
             .env("RUNTIME", env!("CARGO_BIN_EXE_cargo-rail-action"))
             .env("PLAN_FILE", &plan)
