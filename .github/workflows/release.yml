@@ -47,11 +47,13 @@ jobs:
       - name: Bind the tested runtimes to this release
         run: |
           ASSETS="$RUNNER_TEMP/release"
+          cmp LICENSE "$ASSETS/LICENSE"
           RUNTIME="$ASSETS/cargo-rail-action-x86_64-unknown-linux-gnu"
           chmod 700 "$RUNTIME"
           "$RUNTIME" self-check --expect-version 9.0.0 --expect-target x86_64-unknown-linux-gnu
           "$RUNTIME" release intent --source-commit "$GITHUB_SHA" \
             --manifest "$ASSETS/cargo-rail-action-runtime-v1.tsv" \
+            --asset "$ASSETS/LICENSE" \
             --asset "$ASSETS/cargo-rail-action-aarch64-apple-darwin" \
             --asset "$ASSETS/cargo-rail-action-x86_64-pc-windows-msvc.exe" \
             --asset "$RUNTIME" --output "$ASSETS/release-intent.json"
@@ -97,6 +99,7 @@ jobs:
           RUNTIME="$ASSETS/cargo-rail-action-x86_64-unknown-linux-gnu"
           chmod 700 "$RUNTIME"
           authority=(--intent "$ASSETS/release-intent.json"
+            --asset "$ASSETS/LICENSE"
             --asset "$ASSETS/cargo-rail-action-aarch64-apple-darwin"
             --asset "$ASSETS/cargo-rail-action-runtime-v1.tsv"
             --asset "$ASSETS/cargo-rail-action-x86_64-pc-windows-msvc.exe"

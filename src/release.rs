@@ -347,15 +347,16 @@ fn validate_intent(intent: &ReleaseIntent) -> Result<()> {
     }
     validate_source_commit(&intent.source_commit)?;
     crate::install::validate_cargo_rail_version(&intent.cargo_rail_version)?;
-    if intent.assets.len() != 4 {
+    if intent.assets.len() != 5 {
         return Err(ActionError::rejected(
-            "release intent must bind exactly three runtimes and one manifest",
+            "release intent must bind exactly three runtimes, LICENSE, and one manifest",
         ));
     }
     if !intent.assets.windows(2).all(|pair| pair[0].name < pair[1].name) {
         return Err(ActionError::rejected("release intent assets are not uniquely sorted"));
     }
     let expected_names = BTreeSet::from([
+        "LICENSE",
         "cargo-rail-action-aarch64-apple-darwin",
         "cargo-rail-action-runtime-v1.tsv",
         "cargo-rail-action-x86_64-pc-windows-msvc.exe",
@@ -372,7 +373,14 @@ fn validate_intent(intent: &ReleaseIntent) -> Result<()> {
         ));
     }
     for asset in &intent.assets {
-        let maximum = if asset.name == "cargo-rail-action-runtime-v1.tsv" {
+        if asset.name == "LICENSE"
+            && (asset.bytes != crate::LICENSE_BYTES.len() as u64 || asset.sha256 != digest_bytes(crate::LICENSE_BYTES))
+        {
+            return Err(ActionError::rejected(
+                "release LICENSE identity does not match the runtime source license",
+            ));
+        }
+        let maximum = if matches!(asset.name.as_str(), "cargo-rail-action-runtime-v1.tsv" | "LICENSE") {
             MAX_MANIFEST_BYTES
         } else {
             MAX_RELEASE_RUNTIME_BYTES
@@ -414,12 +422,17 @@ fn asset_records(paths: &[PathBuf]) -> Result<Vec<AssetRecord>> {
             .and_then(|value| value.to_str())
             .filter(|name| valid_asset_name(name))
             .ok_or_else(|| ActionError::rejected("release asset must have one pathless UTF-8 name"))?;
-        let maximum = if name == "cargo-rail-action-runtime-v1.tsv" {
+        let maximum = if matches!(name, "cargo-rail-action-runtime-v1.tsv" | "LICENSE") {
             MAX_MANIFEST_BYTES
         } else {
             MAX_RUNTIME_BYTES
         };
         let bytes = read_bounded(path, maximum, "release asset")?;
+        if name == "LICENSE" && bytes != crate::LICENSE_BYTES {
+            return Err(ActionError::rejected(
+                "release LICENSE does not match the runtime source license",
+            ));
+        }
         records.push(AssetRecord {
             name: name.to_string(),
             bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
@@ -439,14 +452,17 @@ fn generate_runtime_manifest(assets: &[AssetRecord]) -> Result<Vec<u8>> {
         .map(|asset| (asset.name.as_str(), asset))
         .collect::<BTreeMap<_, _>>();
     let targets = QUALIFIED_TARGETS;
-    if by_name.len() != targets.len()
+    if by_name.len() != targets.len() + 1
+        || !by_name.get("LICENSE").is_some_and(|asset| {
+            asset.bytes == crate::LICENSE_BYTES.len() as u64 && asset.sha256 == digest_bytes(crate::LICENSE_BYTES)
+        })
         || targets.iter().any(|target| !by_name.contains_key(runtime_name(target)))
         || assets
             .iter()
             .any(|asset| asset.bytes == 0 || asset.bytes > MAX_RELEASE_RUNTIME_BYTES)
     {
         return Err(ActionError::rejected(
-            "runtime manifest generation requires the exact three bounded v9.0 executables",
+            "runtime manifest generation requires the exact three bounded v9.0 executables and source LICENSE",
         ));
     }
     let mut manifest = format!("cargo-rail-action-runtime-v1\t{VERSION}\n");
@@ -532,9 +548,9 @@ fn validate_assets_against_manifest(
         .iter()
         .map(|asset| (asset.name.as_str(), asset))
         .collect::<BTreeMap<_, _>>();
-    if by_name.len() != 4 || !by_name.contains_key(manifest_name) {
+    if by_name.len() != 5 || !by_name.contains_key(manifest_name) || !by_name.contains_key("LICENSE") {
         return Err(ActionError::rejected(
-            "release assets must contain the runtime manifest and three executables",
+            "release assets must contain the runtime manifest, LICENSE, and three executables",
         ));
     }
     for (target, (bytes, digest)) in rows {
@@ -1022,6 +1038,11 @@ mod tests {
             runtime_manifest_sha256: digest.clone(),
             assets: vec![
                 AssetRecord {
+                    name: "LICENSE".into(),
+                    bytes: crate::LICENSE_BYTES.len() as u64,
+                    sha256: digest_bytes(crate::LICENSE_BYTES),
+                },
+                AssetRecord {
                     name: "cargo-rail-action-aarch64-apple-darwin".to_string(),
                     bytes: 1,
                     sha256: "c".repeat(64),
@@ -1076,6 +1097,11 @@ x86_64-unknown-linux-gnu\tcargo-rail-action-x86_64-unknown-linux-gnu\t3\t{}\n",
     #[test]
     fn runtime_manifest_generation_sorts_exact_target_rows() {
         let assets = vec![
+            AssetRecord {
+                name: "LICENSE".into(),
+                bytes: crate::LICENSE_BYTES.len() as u64,
+                sha256: digest_bytes(crate::LICENSE_BYTES),
+            },
             AssetRecord {
                 name: runtime_name("x86_64-unknown-linux-gnu").to_string(),
                 bytes: 3,
@@ -1140,9 +1166,53 @@ x86_64-unknown-linux-gnu\tcargo-rail-action-x86_64-unknown-linux-gnu\t3\t{}\n",
         assert!(validate_intent(&wrong_name).is_err());
 
         let mut oversized = intent;
-        oversized.assets[0].bytes = MAX_RELEASE_RUNTIME_BYTES + 1;
+        oversized
+            .assets
+            .iter_mut()
+            .find(|asset| asset.name == "cargo-rail-action-aarch64-apple-darwin")
+            .unwrap()
+            .bytes = MAX_RELEASE_RUNTIME_BYTES + 1;
         oversized.identity = intent_identity(&oversized).expect("oversized identity");
         assert!(validate_intent(&oversized).is_err());
+    }
+
+    #[test]
+    fn release_license_is_bound_to_the_exact_source_text() {
+        let intent = valid_intent();
+        let mut missing = intent.clone();
+        missing.assets.retain(|asset| asset.name != "LICENSE");
+        missing.identity = intent_identity(&missing).unwrap();
+        assert!(
+            validate_intent(&missing)
+                .unwrap_err()
+                .to_string()
+                .contains("exactly three runtimes, LICENSE")
+        );
+        let mut changed = intent;
+        changed
+            .assets
+            .iter_mut()
+            .find(|asset| asset.name == "LICENSE")
+            .unwrap()
+            .sha256 = "0".repeat(64);
+        changed.identity = intent_identity(&changed).unwrap();
+        assert_eq!(
+            validate_intent(&changed).unwrap_err().to_string(),
+            "release LICENSE identity does not match the runtime source license"
+        );
+        let root = crate::repository::create_private_directory(&std::env::temp_dir(), "release-license").unwrap();
+        let license = root.join("LICENSE");
+        std::fs::write(&license, crate::LICENSE_BYTES).unwrap();
+        let records = asset_records(std::slice::from_ref(&license)).unwrap();
+        assert_eq!(records[0].name, "LICENSE");
+        assert_eq!(records[0].bytes, crate::LICENSE_BYTES.len() as u64);
+        assert_eq!(records[0].sha256, digest_bytes(crate::LICENSE_BYTES));
+        std::fs::write(&license, b"different notice").unwrap();
+        assert_eq!(
+            asset_records(&[license]).unwrap_err().to_string(),
+            "release LICENSE does not match the runtime source license"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

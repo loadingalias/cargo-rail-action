@@ -25,9 +25,10 @@
     "runtime_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "assets": {
       "type": "array",
-      "minItems": 4,
-      "maxItems": 4,
+      "minItems": 5,
+      "maxItems": 5,
       "prefixItems": [
+        { "$ref": "#/$defs/license" },
         { "$ref": "#/$defs/macos_runtime" },
         { "$ref": "#/$defs/runtime_manifest" },
         { "$ref": "#/$defs/windows_runtime" },
@@ -46,6 +47,12 @@
         "bytes": { "type": "integer", "minimum": 1 },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
+    },
+    "license": {
+      "allOf": [
+        { "$ref": "#/$defs/asset" },
+        { "properties": { "name": { "const": "LICENSE" }, "bytes": { "maximum": 65536 } } }
+      ]
     },
     "macos_runtime": {
       "allOf": [

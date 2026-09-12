@@ -17,6 +17,7 @@ const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: u64 = 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 128;
+const MAX_LICENSE_BYTES: u64 = 64 * 1024;
 const MAX_COMPONENT_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_SUBPROCESS_BYTES: usize = 1024 * 1024;
@@ -53,6 +54,9 @@ impl ComponentSet {
     }
 
     fn accepts(self, capability: &str) -> bool {
+        if capability == "license" {
+            return true;
+        }
         match self {
             Self::Core => capability == "core",
             Self::Cache => matches!(capability, "core" | "cache" | "surface" | "surface-source"),
@@ -65,7 +69,7 @@ impl ComponentSet {
     }
 
     fn required_counts(self) -> BTreeMap<&'static str, usize> {
-        let mut counts = BTreeMap::from([("core", 1)]);
+        let mut counts = BTreeMap::from([("core", 1), ("license", 1)]);
         match self {
             Self::Core => {}
             Self::Cache => {
@@ -290,18 +294,22 @@ fn verify_runtime_directory(executable: &Path) -> Result<PathBuf> {
         .and_then(|name| name.strip_prefix(&prefix))
         .filter(|digest| valid_digest(digest))
         .ok_or_else(|| ActionError::rejected("action runtime directory identity is invalid"))?;
-    let mut entries = std::fs::read_dir(directory)
-        .map_err(|error| ActionError::operational(format!("cannot inspect action runtime inventory: {error}")))?;
-    let only_entry = entries
-        .next()
-        .transpose()
-        .map_err(ActionError::from)?
-        .ok_or_else(|| ActionError::rejected("action runtime directory is empty"))?;
-    let has_another_entry = entries.next().transpose().map_err(ActionError::from)?.is_some();
-    if only_entry.path() != executable || has_another_entry {
+    let entries = std::fs::read_dir(directory)
+        .map_err(|error| ActionError::operational(format!("cannot inspect action runtime inventory: {error}")))?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<std::io::Result<BTreeSet<_>>>()?;
+    if entries
+        != BTreeSet::from([
+            std::ffi::OsString::from(&expected_name),
+            std::ffi::OsString::from("LICENSE"),
+        ])
+    {
         return Err(ActionError::rejected(
-            "action runtime directory must contain only its authenticated executable",
+            "action runtime directory must contain only its authenticated executable and LICENSE",
         ));
+    }
+    if digest_file(&directory.join("LICENSE"), MAX_LICENSE_BYTES)? != hex_digest(crate::LICENSE_BYTES) {
+        return Err(ActionError::rejected("action runtime LICENSE identity changed"));
     }
     if digest_file(executable, MAX_RUNTIME_BYTES)? != expected_digest {
         return Err(ActionError::rejected("action runtime executable identity changed"));
@@ -737,7 +745,7 @@ fn parse_manifest_entry(line: &str, subject: &str) -> Result<ManifestEntry> {
     let bytes = size
         .parse::<u64>()
         .map_err(|_| ActionError::rejected(format!("{subject} component size is invalid")))?;
-    if bytes > MAX_COMPONENT_BYTES {
+    if bytes > MAX_COMPONENT_BYTES || (capability == "license" && (bytes == 0 || bytes > MAX_LICENSE_BYTES)) {
         return Err(ActionError::rejected(format!(
             "{subject} component size exceeds its bound"
         )));
@@ -793,6 +801,7 @@ fn expected_component_names(target: &str) -> BTreeMap<&'static str, &'static str
     let windows = target.ends_with("windows-msvc");
     if windows {
         BTreeMap::from([
+            ("LICENSE", "license"),
             ("cargo-rail.exe", "core"),
             ("cargo-rail-compiler-observation.exe", "analysis"),
             ("cargo-rail-native-rustc-wrapper.exe", "cache"),
@@ -803,6 +812,7 @@ fn expected_component_names(target: &str) -> BTreeMap<&'static str, &'static str
         ])
     } else {
         BTreeMap::from([
+            ("LICENSE", "license"),
             ("cargo-rail", "core"),
             ("cargo-rail-compiler-observation", "analysis"),
             ("cargo-rail-native-rustc-wrapper", "cache"),
@@ -880,7 +890,10 @@ fn write_component(reader: &mut impl Read, destination: &Path, component: &Manif
             component.name
         )));
     }
-    set_component_permissions(&path, component.capability == "surface-source")
+    set_component_permissions(
+        &path,
+        matches!(component.capability.as_str(), "surface-source" | "license"),
+    )
 }
 
 fn write_receipt(
@@ -1084,9 +1097,11 @@ mod tests {
 
     fn component_manifest(target: &str, name: &str, contents: &[u8]) -> Vec<u8> {
         format!(
-            "cargo-rail-components-v1\t0.26.0\t{target}\n{name}\t{}\t{}\tcore\n",
+            "cargo-rail-components-v1\t0.26.0\t{target}\n{name}\t{}\t{}\tcore\nLICENSE\t{}\t{}\tlicense\n",
             hex_digest(contents),
-            contents.len()
+            contents.len(),
+            hex_digest(include_bytes!("../LICENSE")),
+            include_bytes!("../LICENSE").len()
         )
         .into_bytes()
     }
@@ -1162,6 +1177,67 @@ mod tests {
     }
 
     #[test]
+    fn license_inventory_is_exact_and_bounded_for_every_component_set() {
+        for bytes in [0, MAX_LICENSE_BYTES + 1] {
+            let row = format!("LICENSE\t{}\t{bytes}\tlicense", "a".repeat(64));
+            assert!(
+                parse_manifest_entry(&row, "license")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("exceeds its bound")
+            );
+        }
+        let target = "x86_64-unknown-linux-gnu";
+        let entries = expected_component_names(target)
+            .into_iter()
+            .map(|(name, capability)| ManifestEntry {
+                name: name.into(),
+                digest: "a".repeat(64),
+                bytes: 1,
+                capability: capability.into(),
+            })
+            .collect::<Vec<_>>();
+        for set in [
+            ComponentSet::Core,
+            ComponentSet::Cache,
+            ComponentSet::Surface,
+            ComponentSet::Complete,
+        ] {
+            validate_manifest_inventory(&entries, target, set).unwrap();
+            let without_license = entries
+                .iter()
+                .filter(|entry| entry.name != "LICENSE")
+                .map(|entry| ManifestEntry {
+                    name: entry.name.clone(),
+                    digest: entry.digest.clone(),
+                    bytes: entry.bytes,
+                    capability: entry.capability.clone(),
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                validate_manifest_inventory(&without_license, target, set)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("complete")
+            );
+        }
+        for (name, capability) in [("NOTICE", "license"), ("LICENSE", "core")] {
+            let wrong = [ManifestEntry {
+                name: name.into(),
+                digest: "a".repeat(64),
+                bytes: 1,
+                capability: capability.into(),
+            }];
+            assert!(
+                validate_manifest_inventory(&wrong, target, ComponentSet::Core)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unexpected name or capability")
+            );
+        }
+    }
+
+    #[test]
     fn publication_lock_has_one_owner() {
         let temporary =
             TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-lock-test").expect("temporary directory");
@@ -1188,6 +1264,7 @@ mod tests {
                 &archive_path,
                 &[
                     (&format!("bundle/{name}"), component),
+                    ("bundle/LICENSE", include_bytes!("../LICENSE")),
                     ("bundle/cargo-rail-components-v1.tsv", &manifest),
                 ],
             );
@@ -1198,8 +1275,15 @@ mod tests {
             let files = std::fs::read_dir(&extracted)
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name())
-                .collect::<Vec<_>>();
-            assert_eq!(files, [std::ffi::OsString::from(name)]);
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                files,
+                BTreeSet::from([std::ffi::OsString::from(name), std::ffi::OsString::from("LICENSE")])
+            );
+            assert_eq!(
+                std::fs::read(extracted.join("LICENSE")).unwrap(),
+                include_bytes!("../LICENSE")
+            );
             assert_eq!(std::fs::read(extracted.join(name)).unwrap(), component);
         }
     }
@@ -1209,6 +1293,7 @@ mod tests {
         let temporary = TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-cache-test").unwrap();
         for (target, extension) in [("aarch64-apple-darwin", ""), ("x86_64-pc-windows-msvc", ".exe")] {
             let components = [
+                ("LICENSE".into(), "license"),
                 (format!("cargo-rail{extension}"), "core"),
                 (format!("cargo-rail-native-rustc-wrapper{extension}"), "cache"),
                 (format!("cargo-rail-native-rustc-worker{extension}"), "cache"),
@@ -1263,8 +1348,8 @@ mod tests {
                 .map(|line| parse_manifest_entry(line, "receipt").unwrap())
                 .collect::<Vec<_>>();
             validate_selected_entries(&rows, target, ComponentSet::Cache).unwrap();
-            assert_eq!(rows.len(), 5);
-            for missing in ["surface", "surface-source"] {
+            assert_eq!(rows.len(), 6);
+            for missing in ["surface", "surface-source", "license"] {
                 let incomplete = rows
                     .iter()
                     .filter(|entry| entry.capability != missing)
@@ -1326,6 +1411,10 @@ mod tests {
         .unwrap();
         let installed = verify_installation(temporary.path(), &version, target, ComponentSet::Cache, &digest).unwrap();
         assert_eq!(installed.binary(), temporary.path().join(cargo_rail_name(target)));
+        assert_eq!(
+            std::fs::read(temporary.path().join("LICENSE")).unwrap(),
+            include_bytes!("../LICENSE")
+        );
         for name in [
             if target.ends_with("windows-msvc") {
                 "cargo-rail-fact-driver.exe"
@@ -1333,6 +1422,7 @@ mod tests {
                 "cargo-rail-fact-driver"
             },
             "cargo-rail-fact-driver-source-v1.json",
+            "LICENSE",
         ] {
             let path = temporary.path().join(name);
             let bytes = std::fs::read(&path).unwrap();
@@ -1380,6 +1470,7 @@ mod tests {
             &[
                 ("bundle/cargo-rail", component),
                 ("bundle/undeclared", b"extra"),
+                ("bundle/LICENSE", include_bytes!("../LICENSE")),
                 ("bundle/cargo-rail-components-v1.tsv", &manifest),
             ],
         );
@@ -1406,11 +1497,19 @@ mod tests {
             if cfg!(windows) { ".exe" } else { "" }
         ));
         std::fs::write(&executable, runtime).expect("runtime executable");
+        std::fs::write(directory.join("LICENSE"), crate::LICENSE_BYTES).unwrap();
 
         assert_eq!(
             verify_runtime_directory(&executable).expect("exact runtime inventory"),
             directory
         );
+
+        std::fs::write(directory.join("LICENSE"), b"changed license").unwrap();
+        assert_eq!(
+            verify_runtime_directory(&executable).unwrap_err().to_string(),
+            "action runtime LICENSE identity changed"
+        );
+        std::fs::write(directory.join("LICENSE"), crate::LICENSE_BYTES).unwrap();
 
         std::fs::write(directory.join("cargo"), b"unexpected executable").expect("extra executable");
         assert!(

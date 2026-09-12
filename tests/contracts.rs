@@ -115,14 +115,15 @@ fn public_schemas_reject_unknown_fields_and_bound_release_assets() {
     .expect("parse release schema");
     assert_eq!(release["additionalProperties"], false);
     assert_eq!(release["$defs"]["asset"]["additionalProperties"], false);
-    assert_eq!(release["properties"]["assets"]["minItems"], 4);
-    assert_eq!(release["properties"]["assets"]["maxItems"], 4);
+    assert_eq!(release["properties"]["assets"]["minItems"], 5);
+    assert_eq!(release["properties"]["assets"]["maxItems"], 5);
     assert_eq!(release["properties"]["assets"]["items"], false);
     for (asset, maximum) in [
         ("macos_runtime", 16 * 1024 * 1024),
         ("windows_runtime", 16 * 1024 * 1024),
         ("linux_runtime", 16 * 1024 * 1024),
         ("runtime_manifest", 64 * 1024),
+        ("license", 64 * 1024),
     ] {
         assert_eq!(
             release["$defs"][asset]["allOf"][1]["properties"]["bytes"]["maximum"], maximum,

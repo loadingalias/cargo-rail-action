@@ -93,6 +93,7 @@ jobs:
           done
           mkdir -p "$RUNNER_TEMP/runtime-assets"
           cp "$runtime" "$RUNNER_TEMP/runtime-assets/cargo-rail-action-$TARGET$suffix"
+          cp LICENSE "$RUNNER_TEMP/runtime-assets/LICENSE"
       - name: Test the Cargo-Rail source-to-release contract
         env:
           GH_TOKEN: ${{ github.token }}

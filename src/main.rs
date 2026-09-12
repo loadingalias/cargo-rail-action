@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
+const LICENSE_BYTES: &[u8] = include_bytes!("../LICENSE");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_RUNTIME_BYTES: u64 = 32 * 1024 * 1024;
 const QUALIFIED_TARGETS: [&str; 3] = [

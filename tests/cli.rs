@@ -209,7 +209,7 @@ fn documented_selectors_stop_before_execution_or_publication_on_rejection() {
         let value: serde_json::Value = serde_saphyr::from_str(yaml).expect("README YAML");
         scripts(&value, &mut examples);
     }
-    assert!(examples.len() >= 3);
+    assert_eq!(examples.len(), 2, "both documented Cargo selector examples");
     for example in examples {
         let script = format!(
             "cargo-rail-action() {{ \"$RUNTIME\" \"$@\"; }}\ncargo() {{ printf invoked > \"$EXECUTED\"; }}\n{example}"
@@ -361,6 +361,21 @@ cp "$FIXTURES/$asset" "$output"
     let installed = cache.join(format!(
         "cargo-rail-action/runtime/{version}/aarch64-apple-darwin-{digest}/{asset}"
     ));
+    let license = installed.parent().unwrap().join("LICENSE");
+    let license_bytes = include_bytes!("../LICENSE");
+    assert_eq!(fs::read(&license).unwrap(), license_bytes);
+    for invalid in [Some(b"changed license".as_slice()), None] {
+        if let Some(bytes) = invalid {
+            fs::write(&license, bytes).unwrap();
+        } else {
+            fs::remove_file(&license).unwrap();
+        }
+        let rejected = run();
+        assert!(!rejected.status.success(), "{rejected:?}");
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("immutable runtime destination is corrupt"));
+        assert_eq!(fs::read_to_string(&invocations).unwrap(), calls);
+        fs::write(&license, license_bytes).unwrap();
+    }
     let mut corrupt = runtime.to_vec();
     corrupt[0] = b'x';
     fs::write(installed, corrupt).unwrap();

@@ -104,6 +104,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+LICENSE_SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/LICENSE"
+[[ -f "$LICENSE_SOURCE" && ! -L "$LICENSE_SOURCE" ]] || fail "Action LICENSE must be a regular non-symbolic file"
+LICENSE_BYTES="$(wc -c < "$LICENSE_SOURCE" | tr -d ' ')"
+(( LICENSE_BYTES > 0 && LICENSE_BYTES <= 65536 )) || fail "Action LICENSE exceeds its 64 KiB bound"
+LICENSE_DIGEST="$(sha256_file "$LICENSE_SOURCE")"
+
 if [[ -n "$LOCAL_RUNTIME" || -n "$LOCAL_DIGEST" ]]; then
   [[ -n "$LOCAL_RUNTIME" && -n "$LOCAL_DIGEST" ]] || fail "local runtime path and SHA-256 must be supplied together"
   [[ "$LOCAL_RUNTIME" == /* && "$LOCAL_DIGEST" =~ ^[0-9a-f]{64}$ ]] || fail "local runtime authority is malformed"
@@ -181,11 +187,14 @@ fi
 mkdir -p -- "$INSTALL_BASE/$RUNTIME_VERSION"
 DESTINATION="$INSTALL_BASE/$RUNTIME_VERSION/$TARGET-$RUNTIME_DIGEST"
 RUNTIME_PATH="$DESTINATION/$RUNTIME_ASSET"
+LICENSE_PATH="$DESTINATION/LICENSE"
 runtime_destination_is_exact() (
   [[ -d "$DESTINATION" && ! -L "$DESTINATION" && -f "$RUNTIME_PATH" && ! -L "$RUNTIME_PATH" ]] || return 1
   shopt -s dotglob nullglob
   local entries=("$DESTINATION"/*)
-  (( ${#entries[@]} == 1 )) && [[ "${entries[0]}" == "$RUNTIME_PATH" ]] \
+  (( ${#entries[@]} == 2 )) && [[ -f "$LICENSE_PATH" && ! -L "$LICENSE_PATH" ]] \
+    && [[ "$(wc -c < "$LICENSE_PATH" | tr -d ' ')" == "$LICENSE_BYTES" ]] \
+    && [[ "$(sha256_file "$LICENSE_PATH")" == "$LICENSE_DIGEST" ]] \
     && [[ "$(wc -c < "$RUNTIME_PATH" | tr -d ' ')" == "$RUNTIME_BYTES" ]] \
     && [[ "$(sha256_file "$RUNTIME_PATH")" == "$RUNTIME_DIGEST" ]]
 )
@@ -202,6 +211,11 @@ if [[ ! -e "$DESTINATION" && ! -L "$DESTINATION" ]]; then
   STAGE="$(mktemp -d "$INSTALL_BASE/$RUNTIME_VERSION/.runtime-stage.XXXXXX")"
   chmod 700 "$STAGE"
   cp -- "$RUNTIME_SOURCE" "$STAGE/$RUNTIME_ASSET"
+  cp -- "$LICENSE_SOURCE" "$STAGE/LICENSE"
+  chmod 600 "$STAGE/LICENSE"
+  [[ "$(wc -c < "$STAGE/LICENSE" | tr -d ' ')" == "$LICENSE_BYTES" \
+    && "$(sha256_file "$STAGE/LICENSE")" == "$LICENSE_DIGEST" ]] \
+    || fail "staged LICENSE failed authentication"
   chmod 700 "$STAGE/$RUNTIME_ASSET"
   [[ "$(wc -c < "$STAGE/$RUNTIME_ASSET" | tr -d ' ')" == "$RUNTIME_BYTES" \
     && "$(sha256_file "$STAGE/$RUNTIME_ASSET")" == "$RUNTIME_DIGEST" ]] \
