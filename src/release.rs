@@ -956,7 +956,7 @@ fn read_bounded(path: &Path, maximum: u64, subject: &str) -> Result<Vec<u8>> {
 }
 
 fn validate_source_commit(value: &str) -> Result<()> {
-    if !(40..=64).contains(&value.len())
+    if !matches!(value.len(), 40 | 64)
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
@@ -1058,7 +1058,14 @@ x86_64-unknown-linux-gnu\tcargo-rail-action-x86_64-unknown-linux-gnu\t3\t{}\n",
             "b".repeat(64),
             "c".repeat(64)
         );
-        assert!(validate_runtime_manifest(bytes.as_bytes()).is_ok());
+        assert_eq!(
+            validate_runtime_manifest(bytes.as_bytes()).expect("valid manifest"),
+            BTreeMap::from([
+                ("aarch64-apple-darwin".to_string(), (1, "a".repeat(64))),
+                ("x86_64-pc-windows-msvc".to_string(), (2, "b".repeat(64))),
+                ("x86_64-unknown-linux-gnu".to_string(), (3, "c".repeat(64))),
+            ])
+        );
 
         let mut lines = bytes.lines().collect::<Vec<_>>();
         lines.swap(1, 2);
@@ -1067,7 +1074,7 @@ x86_64-unknown-linux-gnu\tcargo-rail-action-x86_64-unknown-linux-gnu\t3\t{}\n",
     }
 
     #[test]
-    fn runtime_manifest_generation_is_canonical_and_root_independent() {
+    fn runtime_manifest_generation_sorts_exact_target_rows() {
         let assets = vec![
             AssetRecord {
                 name: runtime_name("x86_64-unknown-linux-gnu").to_string(),
@@ -1086,22 +1093,35 @@ x86_64-unknown-linux-gnu\tcargo-rail-action-x86_64-unknown-linux-gnu\t3\t{}\n",
             },
         ];
         let generated = generate_runtime_manifest(&assets).expect("generate manifest");
-        let rows = validate_runtime_manifest(&generated).expect("validate generated manifest");
-        assert_eq!(rows.len(), 3);
-        assert!(generated.starts_with(format!("cargo-rail-action-runtime-v1\t{VERSION}\n").as_bytes()));
+        let expected = format!(
+            "cargo-rail-action-runtime-v1\t{VERSION}\n\
+aarch64-apple-darwin\tcargo-rail-action-aarch64-apple-darwin\t1\t{}\n\
+x86_64-pc-windows-msvc\tcargo-rail-action-x86_64-pc-windows-msvc.exe\t2\t{}\n\
+x86_64-unknown-linux-gnu\tcargo-rail-action-x86_64-unknown-linux-gnu\t3\t{}\n",
+            "a".repeat(64),
+            "b".repeat(64),
+            "c".repeat(64)
+        );
+        assert_eq!(generated, expected.as_bytes());
     }
 
     #[test]
     fn source_commit_rejects_abbreviations_and_uppercase() {
         assert!(validate_source_commit(&"a".repeat(40)).is_ok());
-        assert!(validate_source_commit(&"a".repeat(39)).is_err());
+        assert!(validate_source_commit(&"a".repeat(64)).is_ok());
+        for length in [39, 41, 63, 65] {
+            assert!(
+                validate_source_commit(&"a".repeat(length)).is_err(),
+                "accepted {length} digits"
+            );
+        }
         assert!(validate_source_commit(&"A".repeat(40)).is_err());
     }
 
     #[test]
     fn current_release_authorities_have_one_parseable_owner() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        assert!(!metadata_cargo_rail_version(root).expect("metadata default").is_empty());
+        assert_eq!(metadata_cargo_rail_version(root).expect("metadata default"), "0.26.0");
         assert_eq!(
             package_manifest_version(&root.join("Cargo.toml")).expect("package version"),
             VERSION

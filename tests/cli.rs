@@ -59,6 +59,27 @@ fn source_plan_selectors_validate_identity_and_reject_checkout_drift() {
     .unwrap();
     fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 7 }\n").unwrap();
     fs::write(workspace.join(".gitignore"), "target/\n").unwrap();
+    fs::create_dir(workspace.join(".config")).unwrap();
+    fs::write(
+        workspace.join(".config/rail.toml"),
+        "[plan.work.compatibility]\nscope = 'variants'\nvariant_catalog = 'variants.json'\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("variants.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "variant_catalog_version": 2,
+            "work": "compatibility",
+            "variants": [
+                {"id": "linux", "dimensions": {"family": "native", "runner": "ubuntu-latest"}, "external_paths": ["linux.txt"]},
+                {"id": "windows", "dimensions": {"family": "native", "runner": "windows-latest"}, "external_paths": ["windows.txt"]}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(workspace.join("linux.txt"), "before\n").unwrap();
+    fs::write(workspace.join("windows.txt"), "before\n").unwrap();
     for arguments in [
         vec!["init", "--initial-branch=main"],
         vec!["add", "."],
@@ -95,23 +116,58 @@ fn source_plan_selectors_validate_identity_and_reject_checkout_drift() {
             .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
     )
     .unwrap();
-    let select = || {
-        Command::new(env!("CARGO_BIN_EXE_cargo-rail-action"))
+    let select = |operation: &str, work: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cargo-rail-action"));
+        command
             .current_dir(&workspace)
             .env("PATH", &path)
-            .args(["plan", "required"])
-            .arg(&plan_path)
-            .output()
-            .expect("source plan selector")
+            .args(["plan", operation])
+            .arg(&plan_path);
+        if let Some(work) = work {
+            command.arg(work);
+        }
+        command.output().expect("source plan selector")
     };
-    let accepted = select();
+    let accepted = select("required", None);
     assert!(accepted.status.success(), "{accepted:?}");
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&accepted.stdout).unwrap(),
         value["required"]
     );
+    for (operation, work, expected) in [
+        ("is-required", "cargo.test", b"true\n".as_slice()),
+        ("cargo-scope", "cargo.test", b"workspace\n".as_slice()),
+        ("cargo-args", "cargo.test", b"".as_slice()),
+        ("package-names", "cargo.test", b"".as_slice()),
+        ("target-args", "cargo.test", b"".as_slice()),
+        ("matrix", "compatibility", b"all\n".as_slice()),
+    ] {
+        let selected = select(operation, Some(work));
+        assert_eq!(selected.status.code(), Some(0), "{operation}: {selected:?}");
+        assert_eq!(selected.stdout, expected, "{operation}");
+    }
+    for operation in ["cargo-args", "package-names", "target-args"] {
+        let rejected = select(operation, Some("compatibility"));
+        assert_eq!(rejected.status.code(), Some(2), "{operation}: {rejected:?}");
+        assert!(rejected.stdout.is_empty(), "{operation}: {rejected:?}");
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("does not have Cargo scope"));
+    }
+    fs::write(workspace.join("linux.txt"), "after\n").unwrap();
+    let changed = Command::new(&binary)
+        .current_dir(&workspace)
+        .args(["rail", "plan", "--since", "HEAD", "--json"])
+        .output()
+        .expect("source variant plan");
+    assert_eq!(changed.status.code(), Some(0), "{changed:?}");
+    fs::write(&plan_path, changed.stdout).unwrap();
+    let matrix = select("matrix", Some("compatibility"));
+    assert_eq!(matrix.status.code(), Some(0), "{matrix:?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&matrix.stdout).unwrap(),
+        serde_json::json!({"include": [{"id": "linux", "runner": "ubuntu-latest"}]})
+    );
     fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 8 }\n").unwrap();
-    let rejected = select();
+    let rejected = select("required", None);
     assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
     assert!(rejected.stdout.is_empty(), "{rejected:?}");
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("cargo-rail rejected current execution authority"));
@@ -256,7 +312,7 @@ while (( $# > 0 )); do
   esac
 done
 asset="${url##*/}"
-printf '%s\n' "$asset" >> "$DOWNLOADS"
+printf '%s\n' "$url" >> "$DOWNLOADS"
 cp "$FIXTURES/$asset" "$output"
 "#,
     )
@@ -283,16 +339,20 @@ cp "$FIXTURES/$asset" "$output"
             .unwrap()
     };
     let asset = "cargo-rail-action-aarch64-apple-darwin";
+    let release_url = format!("https://github.com/loadingalias/cargo-rail-action/releases/download/v{version}");
     let first = run();
     assert!(first.status.success(), "{first:?}");
     assert_eq!(
         fs::read_to_string(&downloads).unwrap(),
-        format!("{manifest_name}\n{asset}\n")
+        format!("{release_url}/{manifest_name}\n{release_url}/{asset}\n")
     );
     fs::write(&downloads, "").unwrap();
     let reused = run();
     assert!(reused.status.success(), "{reused:?}");
-    assert_eq!(fs::read_to_string(&downloads).unwrap(), format!("{manifest_name}\n"));
+    assert_eq!(
+        fs::read_to_string(&downloads).unwrap(),
+        format!("{release_url}/{manifest_name}\n")
+    );
     let calls = fs::read_to_string(&invocations).unwrap();
     let expected_calls =
         format!("self-check --expect-version {version} --expect-target aarch64-apple-darwin\nrun planner\n");
@@ -308,7 +368,10 @@ cp "$FIXTURES/$asset" "$output"
     let rejected = run();
     assert!(!rejected.status.success(), "{rejected:?}");
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("immutable runtime destination is corrupt"));
-    assert_eq!(fs::read_to_string(&downloads).unwrap(), format!("{manifest_name}\n"));
+    assert_eq!(
+        fs::read_to_string(&downloads).unwrap(),
+        format!("{release_url}/{manifest_name}\n")
+    );
     assert_eq!(fs::read_to_string(&invocations).unwrap(), calls);
     fs::remove_dir_all(directory).unwrap();
 }

@@ -1,14 +1,15 @@
 # Cargo-Rail Action
 
-Cargo-Rail Action installs authenticated native Cargo-Rail components, creates one authoritative named-work plan,
-and exposes exact selectors without running repository work for you. Version 9 uses one prebuilt Rust runtime; it
-does not require Python, Ruby, Node, `jq`, `cargo-binstall`, or a source-build fallback.
+Cargo-Rail Action installs Cargo-Rail, plans required CI work, and emits exact selectors for your commands.
+Version 9 uses one prebuilt Rust runtime with verified release checksums.
 
 Cargo-Rail Action v9 accepts only stable Cargo-Rail `0.26.PATCH` releases and defaults to `0.26.0`. It rejects every
 other Cargo-Rail minor line and validates the exact installed binary, plan, cache, and component contracts before use.
 The planner now requires plan contract v9, including identity-bound impact attribution. Existing v8 plans must be regenerated.
 
 ## Plan and run work in one job
+
+Install your Rust toolchain and command runners, such as nextest, before these steps.
 
 ```yaml
 - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -102,7 +103,9 @@ jobs:
           cargo nextest run "${CARGO_ARGS[@]}" --locked
 ```
 
-Do not download the plan into the checkout. Untracked artifact files correctly invalidate object-bound verification.
+Keep the downloaded plan outside the checkout. Match the planning job's source, Rust toolchain, platform, and relative
+workspace directory. Run selectors from that workspace directory; checkout verification rejects source drift.
+Create a separate plan for each platform when the workflow spans platforms.
 
 ## Read selectors
 
@@ -121,6 +124,8 @@ cargo-rail-action plan matrix PLAN WORK [--family FAMILY]
 
 `summary` emits readable Markdown. Line-oriented selectors emit one compact value and newline. Argument and package
 selectors emit NUL-delimited values.
+`matrix` emits an `include` object for selected rows, but emits the literal `all` for unrestricted variant scope.
+Handle `all` by using the work item's complete checked-in catalog before calling `fromJSON`.
 For a variant matrix:
 
 ```yaml
@@ -264,7 +269,8 @@ plan and cache contracts and the real archive installer tests. Cache setup uses 
 the tests do not publish releases or contact remote cache storage.
 
 CI validates the published Cargo-Rail archive when available. Before that release exists, it builds the authenticated
-archive from Cargo-Rail's `main` branch and runs the same contract tests. Release lookup and download errors fail CI.
+archive from the Cargo-Rail commit pinned in the CI workflow and runs the same contract tests. Update that pin when
+validating newer unreleased source. Release lookup and download errors fail CI.
 
 ## Support
 

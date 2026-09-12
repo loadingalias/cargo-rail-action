@@ -32,6 +32,9 @@ jobs:
           - runner: runs-on=${{ github.run_id }}/runner=x86_64-win/spot=false/env=production
             target: x86_64-pc-windows-msvc
             timeout: 60
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            timeout: 60
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
     env:
@@ -45,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loadingalias/cargo-rail
-          ref: a8eca3696f1284ade8142de35422304de05edbac
+          ref: 34bd6f4b49f22eb076643fa1303b5378a9449c71
           path: .ci-tooling
           persist-credentials: false
       - name: Install Linux tooling
@@ -55,6 +58,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ../.ci-tooling/scripts/tooling/x86_64-win.ps1
+      - name: Install macOS tooling
+        if: runner.os == 'macOS'
+        run: |
+          ../.ci-tooling/scripts/tooling/package-unix.sh aarch64-apple-darwin
+          expected="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
+          rustup component add --toolchain "$expected" clippy rustfmt
       - name: Validate active toolchain
         run: |
           expected="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
@@ -71,7 +80,11 @@ jobs:
           suffix=""
           [[ "$TARGET" != *windows-msvc ]] || suffix=.exe
           runtime="$(pwd -P)/target/release/cargo-rail-action$suffix"
-          digest="$(sha256sum "$runtime" | awk '{print $1}')"
+          if command -v sha256sum >/dev/null; then
+            digest="$(sha256sum "$runtime" | awk '{print $1}')"
+          else
+            digest="$(shasum -a 256 "$runtime" | awk '{print $1}')"
+          fi
           # Exercise both initial installation and reuse of the authenticated runtime.
           for _attempt in 1 2; do
             GITHUB_ACTION_PATH="$(pwd -P)" bash scripts/bootstrap.sh \
@@ -112,7 +125,14 @@ jobs:
           esac
           awk -v archive="$archive" '$2 == archive' "$temporary/SHA256SUMS" > "$temporary/checksum"
           [[ "$(wc -l < "$temporary/checksum")" -eq 1 ]]
-          (cd "$temporary"; sha256sum --check --strict checksum)
+          (
+            cd "$temporary"
+            if command -v sha256sum >/dev/null; then
+              sha256sum --check --strict checksum
+            else
+              shasum -a 256 --check --strict checksum
+            fi
+          )
           suffix=""
           if [[ "$TARGET" == *windows-msvc ]]; then
             suffix=.exe

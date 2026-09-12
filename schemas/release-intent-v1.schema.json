@@ -20,7 +20,7 @@
       "pattern": "^cargo-rail-action-release-intent-v1:sha256:[0-9a-f]{64}$"
     },
     "action_version": { "type": "string", "pattern": "^9\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
-    "source_commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "source_commit": { "type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$" },
     "cargo_rail_version": { "type": "string", "pattern": "^0\\.26\\.(0|[1-9][0-9]*)$" },
     "runtime_manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "assets": {

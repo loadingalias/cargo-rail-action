@@ -786,17 +786,6 @@ fn validate_selected_entries(entries: &[ManifestEntry], target: &str, requested:
             "installation receipt contains an unrequested capability",
         ));
     }
-    let counts = entries
-        .iter()
-        .fold(BTreeMap::<&str, usize>::new(), |mut counts, entry| {
-            *counts.entry(entry.capability.as_str()).or_default() += 1;
-            counts
-        });
-    if counts != requested.required_counts() {
-        return Err(ActionError::rejected(
-            "installation receipt does not contain the exact requested capabilities",
-        ));
-    }
     Ok(())
 }
 
@@ -1163,7 +1152,11 @@ mod tests {
     #[test]
     fn manifest_rows_are_pathless_and_canonical() {
         let digest = "a".repeat(64);
-        assert!(parse_manifest_entry(&format!("cargo-rail\t{digest}\t12\tcore"), "fixture").is_ok());
+        let entry = parse_manifest_entry(&format!("cargo-rail\t{digest}\t12\tcore"), "fixture").expect("valid entry");
+        assert_eq!(entry.name, "cargo-rail");
+        assert_eq!(entry.digest, digest);
+        assert_eq!(entry.bytes, 12);
+        assert_eq!(entry.capability, "core");
         assert!(parse_manifest_entry(&format!("../cargo-rail\t{digest}\t12\tcore"), "fixture").is_err());
         assert!(parse_manifest_entry(&format!("cargo-rail\t{digest}\t012\tcore"), "fixture").is_err());
     }
@@ -1180,55 +1173,35 @@ mod tests {
     }
 
     #[test]
-    fn unix_zip_is_fully_inspected_before_selected_extraction() {
-        let temporary = TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-unix-zip-test")
+    fn core_archive_extracts_exact_component_for_each_target() {
+        let temporary = TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-core-zip-test")
             .expect("temporary directory");
-        let archive_path = temporary.path().join("cargo-rail.zip");
-        let component = b"authenticated unix component";
-        let manifest = component_manifest("x86_64-unknown-linux-gnu", "cargo-rail", component);
-        write_zip(
-            &archive_path,
-            &[
-                ("bundle/cargo-rail", component),
-                ("bundle/cargo-rail-components-v1.tsv", &manifest),
-            ],
-        );
-
-        let layout = inspect_archive(&archive_path, "0.26.0", "x86_64-unknown-linux-gnu", ComponentSet::Core)
-            .expect("inspect archive");
-        let extracted = temporary.path().join("extracted");
-        std::fs::create_dir(&extracted).expect("extract directory");
-        extract_selected(&archive_path, &layout, ComponentSet::Core, &extracted).expect("extract selected component");
-        assert_eq!(
-            std::fs::read(extracted.join("cargo-rail")).expect("component"),
-            component
-        );
-    }
-
-    #[test]
-    fn zip_archive_uses_the_same_authenticated_component_contract() {
-        let temporary =
-            TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-zip-test").expect("temporary directory");
-        let archive_path = temporary.path().join("cargo-rail.zip");
-        let component = b"authenticated windows component";
-        let manifest = component_manifest("x86_64-pc-windows-msvc", "cargo-rail.exe", component);
-        write_zip(
-            &archive_path,
-            &[
-                ("bundle/cargo-rail.exe", component),
-                ("bundle/cargo-rail-components-v1.tsv", &manifest),
-            ],
-        );
-
-        let layout = inspect_archive(&archive_path, "0.26.0", "x86_64-pc-windows-msvc", ComponentSet::Core)
-            .expect("inspect archive");
-        let extracted = temporary.path().join("extracted");
-        std::fs::create_dir(&extracted).expect("extract directory");
-        extract_selected(&archive_path, &layout, ComponentSet::Core, &extracted).expect("extract selected component");
-        assert_eq!(
-            std::fs::read(extracted.join("cargo-rail.exe")).expect("component"),
-            component
-        );
+        for (target, name) in [
+            ("aarch64-apple-darwin", "cargo-rail"),
+            ("x86_64-unknown-linux-gnu", "cargo-rail"),
+            ("x86_64-pc-windows-msvc", "cargo-rail.exe"),
+        ] {
+            let archive_path = temporary.path().join("cargo-rail.zip");
+            let component = b"authenticated component";
+            let manifest = component_manifest(target, name, component);
+            write_zip(
+                &archive_path,
+                &[
+                    (&format!("bundle/{name}"), component),
+                    ("bundle/cargo-rail-components-v1.tsv", &manifest),
+                ],
+            );
+            let layout = inspect_archive(&archive_path, "0.26.0", target, ComponentSet::Core).expect("inspect archive");
+            let extracted = temporary.path().join(target);
+            std::fs::create_dir(&extracted).expect("extract directory");
+            extract_selected(&archive_path, &layout, ComponentSet::Core, &extracted).expect("extract component");
+            let files = std::fs::read_dir(&extracted)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>();
+            assert_eq!(files, [std::ffi::OsString::from(name)]);
+            assert_eq!(std::fs::read(extracted.join(name)).unwrap(), component);
+        }
     }
 
     #[test]

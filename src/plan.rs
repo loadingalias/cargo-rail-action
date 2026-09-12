@@ -287,7 +287,11 @@ impl ValidatedPlan {
             return Ok(Vec::new());
         }
         let scope = object_field(decision, "scope", "work decision")?;
-        let selection = object_field(scope, "selection", "work scope")?;
+        require(
+            scope["kind"] == "cargo",
+            format!("work {work} does not have Cargo scope"),
+        )?;
+        let selection = object_field(scope, "selection", "Cargo scope")?;
         let targets = selection["targets"]
             .as_array()
             .ok_or_else(|| ActionError::rejected(format!("work {work} targets are malformed")))?;
@@ -554,6 +558,12 @@ fn validate_plan(value: &Value) -> Result<()> {
             matches!(state, "required" | "skipped"),
             format!("work {work_id} has an invalid state"),
         )?;
+        let fields: &[&str] = if state == "required" {
+            &["state", "cause", "scope", "evidence"]
+        } else {
+            &["state", "evidence"]
+        };
+        exact_keys(decision, fields, &[], &format!("{state} work {work_id}"))?;
         let references = string_list(&decision["evidence"], &format!("work {work_id} evidence"), true, true)?;
         for reference in &references {
             let record = evidence
@@ -566,12 +576,6 @@ fn validate_plan(value: &Value) -> Result<()> {
             )?;
         }
         if state == "required" {
-            exact_keys(
-                decision,
-                &["state", "cause", "scope", "evidence"],
-                &[],
-                &format!("required work {work_id}"),
-            )?;
             let cause = required_string(decision, "cause", &format!("work {work_id}"))?;
             require(
                 matches!(cause, "changed_input" | "incomplete_evidence" | "forced_all"),
@@ -589,12 +593,6 @@ fn validate_plan(value: &Value) -> Result<()> {
             }
             projected.push(work_id.clone());
         } else {
-            exact_keys(
-                decision,
-                &["state", "evidence"],
-                &[],
-                &format!("skipped work {work_id}"),
-            )?;
             require(
                 references
                     .iter()
@@ -661,8 +659,9 @@ fn validate_inputs(inputs: &Map<String, Value>) -> Result<()> {
             format!("plan input {field} is empty"),
         )?;
     }
+    let head_commit = required_string(inputs, "head_commit", "plan inputs")?;
     require(
-        hex_range(required_string(inputs, "head_commit", "plan inputs")?, 40, 64),
+        matches!(head_commit.len(), 40 | 64) && hex_range(head_commit, 40, 64),
         "plan input head_commit is malformed",
     )?;
     require(
@@ -1509,6 +1508,59 @@ mod tests {
         let error =
             parse_unique_json(br#"{"outer":{"value":1,"value":2}}"#, "fixture").expect_err("duplicate key must fail");
         assert!(error.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn missing_decision_evidence_is_rejected_before_indexing() {
+        for (work, state) in [("cargo.test", "required"), ("cargo.fmt", "skipped")] {
+            let mut value = fixture();
+            value["work"][work].as_object_mut().unwrap().remove("evidence");
+            let error = ValidatedPlan::from_bytes(serde_json::to_vec(&value).unwrap())
+                .expect_err("missing evidence must be rejected");
+            assert_eq!(error.kind, crate::ErrorKind::Rejected);
+            assert_eq!(
+                error.to_string(),
+                format!("{state} work {work} is missing [\"evidence\"]")
+            );
+        }
+    }
+
+    #[test]
+    fn target_arguments_reject_non_cargo_work() {
+        for scope in [
+            fixture()["work"]["miri"]["scope"].clone(),
+            serde_json::json!({"kind": "repository"}),
+        ] {
+            let mut value = fixture();
+            value["work"]["miri"]["scope"] = scope;
+            if value["work"]["miri"]["scope"]["kind"] == "repository" {
+                value["attribution"]["miri"]["selections"] = serde_json::json!([]);
+            }
+            set_identity(&mut value);
+            let plan = ValidatedPlan::from_bytes(serde_json::to_vec(&value).unwrap()).unwrap();
+            let error = plan.target_args("miri").expect_err("non-Cargo scope");
+            assert_eq!(error.kind, crate::ErrorKind::Rejected);
+            assert_eq!(error.to_string(), "work miri does not have Cargo scope");
+        }
+    }
+
+    #[test]
+    fn head_commit_requires_a_complete_git_object_id() {
+        for length in [40, 64] {
+            let mut value = fixture();
+            value["inputs"]["head_commit"] = "a".repeat(length).into();
+            set_identity(&mut value);
+            validate_plan(&value).expect("full Git object ID");
+        }
+        for length in [39, 41, 63, 65] {
+            let mut value = fixture();
+            value["inputs"]["head_commit"] = "a".repeat(length).into();
+            set_identity(&mut value);
+            assert_eq!(
+                validate_plan(&value).unwrap_err().to_string(),
+                "plan input head_commit is malformed"
+            );
+        }
     }
 
     #[test]

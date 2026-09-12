@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 use crate::github::{Publication, publish};
 use crate::install::{self, ComponentSet};
 use crate::plan::parse_unique_json;
-use crate::repository::run_bounded;
+use crate::repository::{run_bounded, subprocess_failure};
 use crate::{ActionError, Result, env_string, optional_env};
 
 const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
@@ -70,7 +70,7 @@ pub(crate) fn run_action() -> Result<()> {
     setup.args(["-f", "json"]);
     let setup_output = run_bounded(&mut setup, MAX_DOCUMENT_BYTES, MAX_DOCUMENT_BYTES)?;
     if !setup_output.status.success() {
-        return Err(cache_subprocess_failure("Cargo-Rail cache setup", &setup_output));
+        return Err(subprocess_failure("Cargo-Rail cache setup", &setup_output));
     }
     let setup_value = parse_unique_json(&setup_output.stdout, "Cargo-Rail cache setup")
         .map_err(|error| after_setup(error, "cache setup response validation"))?;
@@ -85,7 +85,7 @@ pub(crate) fn run_action() -> Result<()> {
         .map_err(|error| after_setup(error, "cache status"))?;
     if !status_output.status.success() {
         return Err(after_setup(
-            cache_subprocess_failure("Cargo-Rail cache status", &status_output),
+            subprocess_failure("Cargo-Rail cache status", &status_output),
             "cache status",
         ));
     }
@@ -110,7 +110,7 @@ pub(crate) fn run_action() -> Result<()> {
             .map_err(|error| after_setup(error, "remote cache verification"))?;
         if !probe_output.status.success() {
             return Err(after_setup(
-                cache_subprocess_failure("Cargo-Rail cache probe", &probe_output),
+                subprocess_failure("Cargo-Rail cache probe", &probe_output),
                 "remote cache verification",
             ));
         }
@@ -873,10 +873,6 @@ fn after_setup(error: ActionError, operation: &str) -> ActionError {
     ))
 }
 
-fn cache_subprocess_failure(subject: &str, output: &crate::repository::BoundedOutput) -> ActionError {
-    crate::repository::subprocess_failure(subject, output)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -914,38 +910,64 @@ mod tests {
         let mut inputs = inputs("read", "physical");
         inputs.workspace = workspace.clone();
         inputs.remote = "s3://source-contract/cache?region=us-east-1&owner=123456789012".into();
-        let run = |arguments: &[&str]| {
-            let output = Command::new(&binary)
+        let run = |arguments: &[&str], transient_mode: Option<&str>| {
+            let mut command = Command::new(&binary);
+            command
                 .current_dir(&workspace)
                 .env("CARGO_HOME", &cargo_home)
-                .args(arguments)
-                .output()
-                .expect("source command");
+                .env_remove("CARGO_RAIL_CACHE_REMOTE")
+                .env_remove("CARGO_RAIL_CACHE_MODE")
+                .env_remove("CARGO_RAIL_CACHE_REMOTE_ENVIRONMENT")
+                .args(arguments);
+            if let Some(mode) = transient_mode {
+                command
+                    .env("CARGO_RAIL_CACHE_REMOTE", &inputs.remote)
+                    .env("CARGO_RAIL_CACHE_MODE", mode);
+            }
+            let output = command.output().expect("source command");
             assert!(output.status.success(), "{output:?}");
             parse_unique_json(&output.stdout, "source output").expect("one JSON value")
         };
-        let setup = run(&[
-            "rail",
-            "cache",
-            "setup",
-            "--remote",
-            &inputs.remote,
-            "--remote-mode",
-            &inputs.mode,
-            "--max-size",
-            &inputs.max_size,
-            "--root-portability",
-            &inputs.root_portability,
-            "-f",
-            "json",
-        ]);
+        let setup = run(
+            &[
+                "rail",
+                "cache",
+                "setup",
+                "--remote",
+                &inputs.remote,
+                "--remote-mode",
+                &inputs.mode,
+                "--max-size",
+                &inputs.max_size,
+                "--root-portability",
+                &inputs.root_portability,
+                "-f",
+                "json",
+            ],
+            None,
+        );
         let (setup_remote, setup_bytes) = validate_setup(&setup, &inputs).expect("source setup contract");
-        let status = run(&["rail", "cache", "status", "--scope", "local", "-f", "json"]);
+        let status = run(&["rail", "cache", "status", "--scope", "local", "-f", "json"], None);
         let (status_remote, status_bytes) = validate_status(&status, &inputs).expect("source status contract");
         require_remote_match(&setup_remote, &status_remote, "source setup/status").expect("same authority");
         assert_eq!(setup_bytes, inputs.max_bytes);
         assert_eq!(status_bytes, inputs.max_bytes);
-        run(&["rail", "cache", "uninstall", "-f", "json"]);
+        let conflicting_status = run(
+            &["rail", "cache", "status", "--scope", "local", "-f", "json"],
+            Some("read-write"),
+        );
+        assert_eq!(
+            conflicting_status["status"]["remote"]["selection_source"],
+            "transient_environment"
+        );
+        assert_eq!(conflicting_status["status"]["remote"]["mode"], "read-write");
+        assert_eq!(
+            validate_status(&conflicting_status, &inputs)
+                .expect_err("reject conflicting machine policy")
+                .message,
+            "cache status remote mode disagrees with input"
+        );
+        run(&["rail", "cache", "uninstall", "-f", "json"], None);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1057,10 +1079,18 @@ mod tests {
             remote_verification: "not_requested",
         };
         let value = serde_json::to_value(&projection).expect("projection");
-        assert_eq!(value.as_object().expect("object").len(), 7);
-        assert!(value.get("authority").is_none());
-        assert!(value.get("remote").is_none());
-        assert!(value.get("local_dir").is_none());
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "schema_version": 1,
+                "cargo_rail": "0.26.0",
+                "provider": "aws-s3",
+                "mode": "read",
+                "max_bytes": 10_737_418_240_u64,
+                "root_portability": "physical",
+                "remote_verification": "not_requested",
+            })
+        );
     }
 
     #[test]
@@ -1091,7 +1121,15 @@ mod tests {
             let from_probe = validate_probe(&probe(probe_remote, "initialized")).expect("probe contract");
             require_remote_match(&from_setup, &from_status, "setup/status").expect("setup/status authority");
             require_remote_match(&from_status, &from_probe, "status/probe").expect("status/probe authority");
-            assert_eq!(setup_bytes, status_bytes);
+            assert_eq!(setup_bytes, 10_737_418_240);
+            assert_eq!(status_bytes, 10_737_418_240);
+            assert_eq!(from_setup.provider, provider);
+            assert_eq!(from_setup.mode, "read");
+            assert_eq!(
+                from_setup.authority,
+                format!("remote-authority-v1-sha256-{}", "a".repeat(64))
+            );
+            assert_eq!(from_setup.activation, "direct_transport_selected");
         }
     }
 

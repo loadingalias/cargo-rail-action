@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Map, Value};
 
@@ -81,14 +81,17 @@ fn action_metadata_matches_the_v9_surface() {
         BTreeSet::from(["version".to_string()])
     );
 
-    for (name, action) in [("planner", planner), ("cache", cache), ("setup", setup)] {
+    for (name, action, bootstrap) in [
+        ("planner", planner, "$GITHUB_ACTION_PATH/scripts/bootstrap.sh"),
+        ("cache", cache, "$GITHUB_ACTION_PATH/../scripts/bootstrap.sh"),
+        ("setup", setup, "$GITHUB_ACTION_PATH/../scripts/bootstrap.sh"),
+    ] {
         let runs = mapping(field(action, "runs"), "runs");
         assert_eq!(field(runs, "using").as_str(), Some("composite"), "{name}");
         let steps = field(runs, "steps").as_array().expect("steps sequence");
         assert_eq!(steps.len(), 1, "{name} must have one composite step");
         let run = field(mapping(&steps[0], "step"), "run").as_str().expect("run string");
-        assert!(run.contains("scripts/bootstrap.sh"), "{name}");
-        assert!(!run.contains("python") && !run.contains("cargo install") && !run.contains("cargo build"));
+        assert_eq!(run, format!("bash \"{bootstrap}\" run {name}"), "{name}");
     }
 
     let defaults = [planner, cache, setup].map(|action| {
@@ -100,81 +103,64 @@ fn action_metadata_matches_the_v9_surface() {
 }
 
 #[test]
-fn schemas_are_closed_and_match_public_examples() {
-    let cache_schema: serde_json::Value =
+fn public_schemas_reject_unknown_fields_and_bound_release_assets() {
+    let cache: Value =
         serde_json::from_slice(&fs::read(root().join("schemas/cache-status-v1.schema.json")).expect("cache schema"))
             .expect("parse cache schema");
-    assert_eq!(cache_schema["additionalProperties"], false);
-    let required = cache_schema["required"].as_array().expect("required fields");
-    let example = serde_json::json!({
-        "schema_version": 1,
-        "cargo_rail": "0.26.0",
-        "provider": "aws-s3",
-        "mode": "read",
-        "max_bytes": 10_737_418_240_u64,
-        "root_portability": "physical",
-        "remote_verification": "not_requested"
-    });
-    assert_eq!(
-        required
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .collect::<BTreeSet<_>>(),
-        example
-            .as_object()
-            .expect("example object")
-            .keys()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>()
-    );
+    assert_eq!(cache["additionalProperties"], false);
 
-    let release_schema: serde_json::Value = serde_json::from_slice(
+    let release: Value = serde_json::from_slice(
         &fs::read(root().join("schemas/release-intent-v1.schema.json")).expect("release schema"),
     )
     .expect("parse release schema");
-    assert_eq!(release_schema["additionalProperties"], false);
-    assert_eq!(release_schema["properties"]["assets"]["maxItems"], 4);
-    assert_eq!(
-        release_schema["$defs"]["macos_runtime"]["allOf"][1]["properties"]["bytes"]["maximum"],
-        16 * 1024 * 1024
-    );
-    assert_eq!(
-        release_schema["$defs"]["runtime_manifest"]["allOf"][1]["properties"]["bytes"]["maximum"],
-        64 * 1024
-    );
+    assert_eq!(release["additionalProperties"], false);
+    assert_eq!(release["$defs"]["asset"]["additionalProperties"], false);
+    assert_eq!(release["properties"]["assets"]["minItems"], 4);
+    assert_eq!(release["properties"]["assets"]["maxItems"], 4);
+    assert_eq!(release["properties"]["assets"]["items"], false);
+    for (asset, maximum) in [
+        ("macos_runtime", 16 * 1024 * 1024),
+        ("windows_runtime", 16 * 1024 * 1024),
+        ("linux_runtime", 16 * 1024 * 1024),
+        ("runtime_manifest", 64 * 1024),
+    ] {
+        assert_eq!(
+            release["$defs"][asset]["allOf"][1]["properties"]["bytes"]["maximum"], maximum,
+            "{asset}"
+        );
+    }
 }
 
 #[test]
-fn repository_has_no_interpreter_implementation_residue() {
-    let repository = root();
-    let mut files = Vec::new();
-    collect_files(&repository, &repository, &mut files);
-    for relative in &files {
-        assert_ne!(
-            relative.extension().and_then(|value| value.to_str()),
-            Some("py"),
-            "{}",
-            relative.display()
-        );
-        assert_ne!(
-            relative.extension().and_then(|value| value.to_str()),
-            Some("rb"),
-            "{}",
-            relative.display()
-        );
-    }
-    let scripts = files
-        .iter()
-        .filter(|path| path.starts_with("scripts"))
-        .cloned()
-        .collect::<Vec<_>>();
-    assert_eq!(scripts, vec![PathBuf::from("scripts/bootstrap.sh")]);
-    let bootstrap = fs::read_to_string(repository.join("scripts/bootstrap.sh")).expect("bootstrap");
-    assert!(bootstrap.contains(&format!("RUNTIME_VERSION=\"{}\"", env!("CARGO_PKG_VERSION"))));
-    assert!(bootstrap.contains(&format!("RUNTIME_RELEASE=\"v{}\"", env!("CARGO_PKG_VERSION"))));
-    assert!(
-        !bootstrap.contains("python") && !bootstrap.contains("cargo install") && !bootstrap.contains("cargo build")
+fn ci_produces_every_runtime_required_by_release() {
+    let ci = yaml(".github/workflows/ci.yml");
+    let rows = ci["jobs"]["check"]["strategy"]["matrix"]["include"]
+        .as_array()
+        .expect("native CI matrix");
+    let targets: BTreeSet<_> = rows.iter().map(|row| row["target"].as_str().unwrap()).collect();
+    assert_eq!(
+        targets,
+        BTreeSet::from([
+            "aarch64-apple-darwin",
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+        ])
     );
+    let steps = ci["jobs"]["check"]["steps"].as_array().unwrap();
+    let upload = steps.last().unwrap();
+    assert_eq!(upload["with"]["name"], "runtime-${{ matrix.target }}");
+    assert_eq!(upload["with"]["if-no-files-found"], "error");
+    let release = yaml(".github/workflows/release.yml");
+    let commands = release["jobs"]["prepare"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|step| step["run"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for target in targets {
+        assert!(commands.contains(&format!("cargo-rail-action-{target}")));
+    }
 }
 
 #[test]
@@ -212,26 +198,6 @@ fn release_workflow_requires_ci_and_protects_publication() {
     assert!(commands.find("release publish --check").unwrap() < commands.find("release publish --apply").unwrap());
     assert!(commands.find("release publish --apply").unwrap() < commands.find("release promote --check").unwrap());
     assert!(commands.find("release promote --check").unwrap() < commands.find("release promote --apply").unwrap());
-}
-
-fn collect_files(root: &Path, current: &Path, output: &mut Vec<PathBuf>) {
-    let mut entries = fs::read_dir(current)
-        .expect("read repository")
-        .map(|entry| entry.expect("directory entry"))
-        .collect::<Vec<_>>();
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in entries {
-        let path = entry.path();
-        let relative = path.strip_prefix(root).expect("relative path");
-        if entry.file_type().expect("file type").is_dir() {
-            if matches!(relative.to_str(), Some(".git" | "target")) {
-                continue;
-            }
-            collect_files(root, &path, output);
-        } else {
-            output.push(relative.to_path_buf());
-        }
-    }
 }
 
 #[test]

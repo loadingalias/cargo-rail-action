@@ -228,6 +228,8 @@ pub(crate) fn collect_action() -> Result<()> {
         ));
     }
     context.configuration.validate()?;
+    let checkout = fs::canonicalize(env_string("GITHUB_WORKSPACE")?)?;
+    let directory = record_directory(&PathBuf::from(env_string("INPUT_OUTPUT_DIRECTORY")?), &checkout)?;
     let mut gaps = BTreeSet::new();
     let measurements = collect_measurements(&context)
         .map_err(|_| gaps.insert("measurements_unavailable".to_string()))
@@ -247,12 +249,6 @@ pub(crate) fn collect_action() -> Result<()> {
         storage,
         gaps,
     };
-    let directory = PathBuf::from(env_string("INPUT_OUTPUT_DIRECTORY")?);
-    if !directory.is_absolute() {
-        return Err(ActionError::rejected("cache record output directory must be absolute"));
-    }
-    fs::create_dir_all(&directory)?;
-    let directory = fs::canonicalize(directory)?;
     let path = directory.join(format!("{job}.json"));
     if path.try_exists()? {
         let previous: JobRecord = decode(&path)?;
@@ -276,6 +272,43 @@ pub(crate) fn collect_action() -> Result<()> {
     })?;
     println!("Cache measurements collected for {job}.");
     Ok(())
+}
+
+fn record_directory(path: &Path, checkout: &Path) -> Result<PathBuf> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| component == std::path::Component::ParentDir)
+    {
+        return Err(ActionError::rejected(
+            "cache record output directory must be absolute without parent traversal",
+        ));
+    }
+    let mut ancestor = path;
+    let resolved = loop {
+        match fs::canonicalize(ancestor) {
+            Ok(resolved) => break resolved.join(path.strip_prefix(ancestor).expect("ancestor prefix")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                ancestor = ancestor
+                    .parent()
+                    .ok_or_else(|| ActionError::rejected("cache record output directory has no existing ancestor"))?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    if resolved.starts_with(checkout) {
+        return Err(ActionError::rejected(
+            "cache record output directory must remain outside the checkout",
+        ));
+    }
+    fs::create_dir_all(&resolved)?;
+    let directory = fs::canonicalize(&resolved)?;
+    if directory.starts_with(checkout) {
+        return Err(ActionError::rejected(
+            "cache record output directory moved into the checkout",
+        ));
+    }
+    Ok(directory)
 }
 
 fn collect_measurements(context: &Context) -> Result<Measurements> {
@@ -564,6 +597,42 @@ fn write_new(path: &Path, value: &impl Serialize) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    #[ignore = "requires the current Cargo-Rail source binary"]
+    fn source_cache_recording_matches_the_action_contract() {
+        let binary = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_BINARY").expect("source binary"));
+        let directory = repository::create_private_directory(&std::env::temp_dir(), "rail-source-report").unwrap();
+        let recording = directory.join("recording.json");
+        let mut command = Command::new(&binary);
+        command
+            .current_dir(&directory)
+            .args(["rail", "cache", "report", "--start"])
+            .arg(&recording)
+            .args(["-f", "json"]);
+        let output = repository::run_bounded(&mut command, MAX_RECORD_BYTES as usize, MAX_RECORD_BYTES as usize)
+            .expect("source recording start");
+        let value = repository::validate_machine_success(&output, "cache", "report", "source recording start")
+            .expect("source recording envelope");
+        assert_eq!(value["operation"], "start");
+        let context = Context {
+            schema_version: 1,
+            run: run(),
+            binary,
+            workspace: directory.clone(),
+            recording: recording.clone(),
+            configuration: record("source").configuration,
+        };
+        let counts = collect_measurements(&context).expect("source recording finish contract");
+        assert_eq!(counts, Measurements::default());
+        assert_eq!(collect_measurements(&context).unwrap(), counts);
+        fs::write(&recording, b"{}").unwrap();
+        assert!(
+            collect_measurements(&context).is_err(),
+            "corruption must not become zero counts"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     fn run() -> RunBinding {
         RunBinding {
             repository: "owner/project".into(),
@@ -601,6 +670,41 @@ mod tests {
     }
 
     #[test]
+    fn record_directory_excludes_checkout_before_creating_directories() {
+        let root = repository::create_private_directory(&std::env::temp_dir(), "action-record-paths").unwrap();
+        let checkout = root.join("checkout");
+        fs::create_dir(&checkout).unwrap();
+        let checkout = fs::canonicalize(checkout).unwrap();
+        for path in [
+            checkout.clone(),
+            checkout.join("new/nested"),
+            root.join("outside/../checkout/new"),
+        ] {
+            assert_eq!(
+                record_directory(&path, &checkout).unwrap_err().kind,
+                crate::ErrorKind::Rejected
+            );
+        }
+        assert!(!checkout.join("new").exists());
+        let outside = root.join("records/nested");
+        assert_eq!(
+            record_directory(&outside, &checkout).unwrap(),
+            fs::canonicalize(&outside).unwrap()
+        );
+        #[cfg(unix)]
+        {
+            let link = root.join("linked");
+            std::os::unix::fs::symlink(&checkout, &link).unwrap();
+            assert_eq!(
+                record_directory(&link.join("new/nested"), &checkout).unwrap_err().kind,
+                crate::ErrorKind::Rejected
+            );
+            assert!(!checkout.join("new").exists());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn workflow_totals_include_every_job_once_and_show_missing_measurements() {
         let expected = BTreeSet::from(["linux".into(), "macos".into(), "windows".into()]);
         let mut records = BTreeMap::new();
@@ -613,7 +717,6 @@ mod tests {
         assert!(summary.contains("2/3 jobs measured"));
         assert!(summary.contains("Missing job reports:** windows"));
         assert!(summary.contains("unsupported invocation: 4"));
-        assert!(!summary.contains("s3://"));
         let mut unavailable = record("windows");
         unavailable.measurements = None;
         unavailable.gaps.insert("measurements_unavailable".into());

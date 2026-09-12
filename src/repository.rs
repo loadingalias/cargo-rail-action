@@ -39,25 +39,22 @@ struct PlannerInputs {
 }
 
 #[derive(Debug)]
-struct Comparison {
-    reference: String,
-    all: bool,
-    merge_base: bool,
+enum Comparison {
+    All,
+    Since { reference: String, merge_base: bool },
 }
 
 pub(crate) fn run_planner() -> Result<()> {
     let inputs = PlannerInputs::load()?;
     let installed = install::install_cargo_rail(&inputs.version, inputs.components)?;
-    let selected = select_comparison(&inputs.workspace, &inputs.since, inputs.force_all)?;
-    let base = if selected.all {
-        None
-    } else {
-        Some(ensure_history(
+    let base = match select_comparison(&inputs.workspace, &inputs.since, inputs.force_all)? {
+        Comparison::All => None,
+        Comparison::Since { reference, merge_base } => Some(ensure_history(
             &inputs.workspace,
-            &selected.reference,
-            selected.merge_base,
+            &reference,
+            merge_base,
             &inputs.repository_token,
-        )?)
+        )?),
     };
 
     if inputs.components.needs_surface() {
@@ -74,12 +71,10 @@ pub(crate) fn run_planner() -> Result<()> {
     let plan_path = plan_directory.join("plan.json");
     let mut command = Command::new(installed.binary());
     command.current_dir(&inputs.workspace).args(["rail", "plan", "--json"]);
-    if selected.all {
-        command.arg("--all");
+    if let Some(base) = base {
+        command.arg("--since").arg(base);
     } else {
-        command
-            .arg("--since")
-            .arg(base.as_ref().expect("non-all comparison has a base"));
+        command.arg("--all");
     }
     if let Some(evidence) = &inputs.evidence {
         command.arg("--evidence").arg(evidence);
@@ -180,47 +175,32 @@ impl PlannerInputs {
 
 fn select_comparison(workspace: &Path, explicit: &str, force_all: bool) -> Result<Comparison> {
     if force_all {
-        return Ok(Comparison {
-            reference: String::new(),
-            all: true,
-            merge_base: false,
-        });
+        return Ok(Comparison::All);
     }
     if !explicit.is_empty() {
         if is_zero_sha(explicit) {
-            return Ok(Comparison {
-                reference: String::new(),
-                all: true,
-                merge_base: false,
-            });
+            return Ok(Comparison::All);
         }
-        return Ok(Comparison {
+        return Ok(Comparison::Since {
             reference: explicit.to_string(),
-            all: false,
             merge_base: false,
         });
     }
     if optional_env("GITHUB_EVENT_NAME")? == "push" {
         let before = push_before()?;
         if is_zero_sha(&before) {
-            return Ok(Comparison {
-                reference: String::new(),
-                all: true,
-                merge_base: false,
-            });
+            return Ok(Comparison::All);
         }
-        return Ok(Comparison {
+        return Ok(Comparison::Since {
             reference: before,
-            all: false,
             merge_base: false,
         });
     }
     let pull_request_base = optional_env("GITHUB_BASE_REF")?;
     if !pull_request_base.is_empty() {
         validate_ref(&pull_request_base, "pull-request base")?;
-        return Ok(Comparison {
+        return Ok(Comparison::Since {
             reference: format!("origin/{pull_request_base}"),
-            all: false,
             merge_base: true,
         });
     }
@@ -229,24 +209,21 @@ fn select_comparison(workspace: &Path, explicit: &str, force_all: bool) -> Resul
         ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
     )? {
         validate_ref(&remote_default, "origin default branch")?;
-        return Ok(Comparison {
+        return Ok(Comparison::Since {
             reference: remote_default,
-            all: false,
             merge_base: true,
         });
     }
     for candidate in ["origin/main", "origin/master"] {
         if git_success(workspace, ["rev-parse", "--verify", &format!("{candidate}^{{commit}}")])? {
-            return Ok(Comparison {
+            return Ok(Comparison::Since {
                 reference: candidate.to_string(),
-                all: false,
                 merge_base: true,
             });
         }
     }
-    Ok(Comparison {
+    Ok(Comparison::Since {
         reference: "HEAD~1".to_string(),
-        all: false,
         merge_base: false,
     })
 }
@@ -713,7 +690,7 @@ fn validate_ref(value: &str, subject: &str) -> Result<()> {
 }
 
 fn is_sha(value: &str) -> bool {
-    (40..=64).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn is_zero_sha(value: &str) -> bool {
@@ -884,7 +861,13 @@ mod tests {
     #[test]
     fn recognizes_only_bounded_shas() {
         assert!(is_sha(&"a".repeat(40)));
-        assert!(!is_sha(&"a".repeat(39)));
+        for length in [39, 41, 63, 65] {
+            assert!(!is_sha(&"a".repeat(length)), "accepted {length} digits");
+            assert!(
+                !is_zero_sha(&"0".repeat(length)),
+                "accepted {length}-digit zero sentinel"
+            );
+        }
         assert!(is_zero_sha(&"0".repeat(64)));
     }
 

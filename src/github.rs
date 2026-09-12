@@ -121,29 +121,22 @@ fn publish_to(publication: Publication, controls: &mut ControlFiles) -> Result<(
         output_payload.push(b'\n');
     }
 
-    let mut attempted_any = false;
     let result = (|| {
         if let (Some(summary_file), Some(summary_payload)) = (&mut controls.summary, summary.as_deref()) {
-            attempted_any = true;
             summary_file.append(summary_payload.as_bytes())?;
         }
         if !path_payload.is_empty() {
-            attempted_any = true;
             controls.path.append(&path_payload)?;
         }
         if !output_payload.is_empty() {
-            attempted_any = true;
             controls.output.append(&output_payload)?;
         }
         Ok(())
     })();
     result.map_err(|error: std::io::Error| {
-        let suffix = if attempted_any {
-            "; a partial summary or environment-file write may remain, but no output from this failed step is valid authority"
-        } else {
-            ""
-        };
-        ActionError::operational(format!("cannot publish GitHub action result: {error}{suffix}"))
+        ActionError::operational(format!(
+            "cannot publish GitHub action result: {error}; a partial summary or environment-file write may remain, but no output from this failed step is valid authority"
+        ))
     })
 }
 
@@ -183,7 +176,7 @@ impl ControlFile {
     }
 }
 
-#[cfg(unix)]
+#[cfg(not(windows))]
 fn open_append_handle(path: &Path) -> std::io::Result<File> {
     OpenOptions::new().append(true).open(path)
 }
@@ -203,11 +196,6 @@ fn open_append_handle(path: &Path) -> std::io::Result<File> {
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn open_append_handle(path: &Path) -> std::io::Result<File> {
-    OpenOptions::new().append(true).open(path)
 }
 
 #[cfg(unix)]
