@@ -147,6 +147,22 @@ fn ci_produces_every_runtime_required_by_release() {
         ])
     );
     let steps = ci["jobs"]["check"]["steps"].as_array().unwrap();
+    for (name, command) in [
+        (
+            "Install Linux tooling",
+            "../.ci-tooling/scripts/tooling/x86_64-linux.sh ci",
+        ),
+        (
+            "Install Windows tooling",
+            "../.ci-tooling/scripts/tooling/x86_64-win.ps1 -Operation ci",
+        ),
+    ] {
+        let step = steps
+            .iter()
+            .find(|step| step["name"] == name)
+            .expect("native tooling step");
+        assert_eq!(step["run"], command, "tooling requires an explicit operation");
+    }
     let upload = steps.last().unwrap();
     assert_eq!(upload["with"]["name"], "runtime-${{ matrix.target }}");
     assert_eq!(upload["with"]["if-no-files-found"], "error");

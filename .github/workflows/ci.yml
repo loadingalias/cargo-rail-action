@@ -53,11 +53,11 @@ jobs:
           persist-credentials: false
       - name: Install Linux tooling
         if: runner.os == 'Linux'
-        run: ../.ci-tooling/scripts/tooling/x86_64-linux.sh
+        run: ../.ci-tooling/scripts/tooling/x86_64-linux.sh ci
       - name: Install Windows tooling
         if: runner.os == 'Windows'
         shell: powershell
-        run: ../.ci-tooling/scripts/tooling/x86_64-win.ps1
+        run: ../.ci-tooling/scripts/tooling/x86_64-win.ps1 -Operation ci
       - name: Install macOS tooling
         if: runner.os == 'macOS'
         run: |
