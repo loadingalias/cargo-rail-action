@@ -44,11 +44,11 @@ jobs:
         with:
           path: action
           persist-credentials: false
-      - name: Checkout pinned runner tooling
+      - name: Checkout pinned Cargo-Rail source and tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loadingalias/cargo-rail
-          ref: 5ee732473a4b2a05b5a2ef961b0f3ae38332c976
+          ref: be9d0e2e8b91b4ee1ac898d71451e34cd54d989e
           path: .ci-tooling
           persist-credentials: false
       - name: Install Linux tooling
@@ -94,7 +94,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/runtime-assets"
           cp "$runtime" "$RUNNER_TEMP/runtime-assets/cargo-rail-action-$TARGET$suffix"
           cp LICENSE "$RUNNER_TEMP/runtime-assets/LICENSE"
-      - name: Test the authenticated Cargo-Rail release contract
+      - name: Test the authenticated Cargo-Rail contract
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
@@ -102,11 +102,20 @@ jobs:
           temporary="$(mktemp -d)"
           trap 'rm -rf "$temporary"' EXIT
           archive="cargo-rail-$TARGET.zip"
-          url=https://github.com/loadingalias/cargo-rail/releases/download/v0.26.0
-          for asset in "$archive" SHA256SUMS; do
-            curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
-              "$url/$asset" --output "$temporary/$asset"
-          done
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            url=https://github.com/loadingalias/cargo-rail/releases/download/v0.26.0
+            for asset in "$archive" SHA256SUMS; do
+              curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+                "$url/$asset" --output "$temporary/$asset"
+            done
+          else
+            (
+              cd "$GITHUB_WORKSPACE/.ci-tooling"
+              cargo fetch --locked
+              cargo fetch --locked --manifest-path tools/compiler-fact-driver/Cargo.toml
+              just package-release "$temporary"
+            )
+          fi
           awk -v archive="$archive" '$2 == archive' "$temporary/SHA256SUMS" > "$temporary/checksum"
           [[ "$(wc -l < "$temporary/checksum")" -eq 1 ]]
           (

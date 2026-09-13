@@ -343,10 +343,13 @@ strict release-record rejection, and release adapter recovery through real Git f
 Cache setup uses an isolated temporary Cargo home;
 the tests do not publish releases or contact remote cache storage.
 
-CI validates the published Cargo-Rail archive.
-For the coordinated first release,
-qualify both source trees locally with `just check-cargo-rail` before publishing Cargo-Rail, then release the Action.
-There is no automatic fallback to older source when the required release is unavailable.
+Push and pull-request CI build authenticated Cargo-Rail archives from the exact source commit pinned
+in the workflow.
+Update that pin when qualifying newer producer source.
+Release-validation dispatches require the published Cargo-Rail archive.
+Both paths run the same independent contract tests.
+Publish Cargo-Rail before dispatching the Action's release validation.
+The event selects the archive source; failed downloads never fall back to a source build.
 The current archive contract requires `LICENSE`; older archives without it are rejected.
 Release lookup and download errors fail CI.
 
