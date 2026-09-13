@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUNTIME_VERSION="9.0.0"
-RUNTIME_RELEASE="v9.0.0"
+RUNTIME_VERSION="9.0.1"
+RUNTIME_RELEASE="v9.0.1"
 RUNTIME_MANIFEST="cargo-rail-action-runtime-v1.tsv"
 MAX_MANIFEST_BYTES=65536
 MAX_RUNTIME_BYTES=33554432

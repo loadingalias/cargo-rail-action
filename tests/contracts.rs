@@ -31,10 +31,12 @@ fn action_metadata_matches_the_v9_surface() {
     let planner = yaml("action.yaml");
     let cache = yaml("cache/action.yaml");
     let setup = yaml("setup/action.yaml");
+    let release = yaml("release/action.yaml");
 
     let planner = mapping(&planner, "planner");
     let cache = mapping(&cache, "cache");
     let setup = mapping(&setup, "setup");
+    let release = mapping(&release, "release");
     assert_eq!(
         keys(mapping(field(planner, "inputs"), "planner inputs")),
         BTreeSet::from([
@@ -94,12 +96,12 @@ fn action_metadata_matches_the_v9_surface() {
         assert_eq!(run, format!("bash \"{bootstrap}\" run {name}"), "{name}");
     }
 
-    let defaults = [planner, cache, setup].map(|action| {
+    let defaults = [planner, cache, setup, release].map(|action| {
         let inputs = mapping(field(action, "inputs"), "inputs");
         let version = mapping(field(inputs, "version"), "version input");
         field(version, "default").as_str().expect("version default")
     });
-    assert_eq!(defaults, ["0.26.0"; 3]);
+    assert_eq!(defaults, ["0.27.0"; 4]);
 }
 
 #[test]

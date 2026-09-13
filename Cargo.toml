@@ -1,6 +1,6 @@
 [package]
 name = "cargo-rail-action"
-version = "9.0.0"
+version = "9.0.1"
 edition = "2024"
 rust-version = "1.98.1"
 publish = false

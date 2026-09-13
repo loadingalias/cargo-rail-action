@@ -136,9 +136,9 @@ pub(crate) fn validate_cargo_rail_version(value: &str) -> Result<()> {
                 && part.bytes().all(|byte| byte.is_ascii_digit())
                 && (part.len() == 1 || !part.starts_with('0'))
         });
-    if !valid_numeric || components[0] != "0" || components[1] != "26" {
+    if !valid_numeric || components[0] != "0" || !matches!(components[1], "26" | "27") {
         return Err(ActionError::rejected(
-            "version must be an exact stable Cargo-Rail 0.26 patch release",
+            "version must be an exact stable Cargo-Rail 0.26 or 0.27 patch release",
         ));
     }
     Ok(())
@@ -1121,10 +1121,24 @@ mod tests {
     }
 
     #[test]
-    fn version_contract_accepts_only_stable_026_patches() {
-        assert!(validate_cargo_rail_version("0.26.0").is_ok());
-        assert!(validate_cargo_rail_version("0.26.19").is_ok());
-        for rejected in ["0.25.9", "0.27.0", "0.26.0-rc.1", "0.26.0+build", "00.26.0"] {
+    fn version_contract_accepts_only_stable_026_and_027_patches() {
+        for accepted in ["0.26.0", "0.26.19", "0.27.0", "0.27.19"] {
+            assert!(validate_cargo_rail_version(accepted).is_ok(), "rejected {accepted}");
+        }
+        for rejected in [
+            "0.25.9",
+            "0.28.0",
+            "1.0.0",
+            "0.26.0-rc.1",
+            "0.27.0-rc.1",
+            "0.26.0+build",
+            "0.27.0+build",
+            "00.26.0",
+            "0.027.0",
+            "0.27.00",
+            "0.27",
+            "0.27.0.1",
+        ] {
             assert!(validate_cargo_rail_version(rejected).is_err(), "accepted {rejected}");
         }
     }

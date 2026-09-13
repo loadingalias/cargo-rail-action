@@ -51,7 +51,7 @@ jobs:
       - name: Execute the shared release engine
         env:
           GH_TOKEN: ${{ github.token }}
-          INPUT_VERSION: "0.26.0"
+          INPUT_VERSION: "0.27.0"
           INPUT_PACKAGES: "[]"
           INPUT_BUMP: ${{ inputs.bump || 'auto' }}
           INPUT_PUBLISH: "false"

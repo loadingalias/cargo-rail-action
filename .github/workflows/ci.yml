@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loadingalias/cargo-rail
-          ref: be9d0e2e8b91b4ee1ac898d71451e34cd54d989e
+          ref: 9b4ce69b49be07f12f22d65d76bba388fc44078c
           path: .ci-tooling
           persist-credentials: false
       - name: Install Linux tooling
@@ -89,7 +89,7 @@ jobs:
           for _attempt in 1 2; do
             GITHUB_ACTION_PATH="$(pwd -P)" bash scripts/bootstrap.sh \
               --local-runtime "$runtime" --local-runtime-sha256 "$digest" \
-              self-check --expect-version 9.0.0 --expect-target "$TARGET"
+              self-check --expect-version 9.0.1 --expect-target "$TARGET"
           done
           mkdir -p "$RUNNER_TEMP/runtime-assets"
           cp "$runtime" "$RUNNER_TEMP/runtime-assets/cargo-rail-action-$TARGET$suffix"
@@ -103,7 +103,7 @@ jobs:
           trap 'rm -rf "$temporary"' EXIT
           archive="cargo-rail-$TARGET.zip"
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            url=https://github.com/loadingalias/cargo-rail/releases/download/v0.26.0
+            url=https://github.com/loadingalias/cargo-rail/releases/download/v0.27.0
             for asset in "$archive" SHA256SUMS; do
               curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
                 "$url/$asset" --output "$temporary/$asset"
@@ -135,7 +135,7 @@ jobs:
           else
             unzip -q "$temporary/$archive" -d "$temporary"
           fi
-          just check-cargo-rail "$temporary/cargo-rail/cargo-rail$suffix" "$temporary/$archive" 0.26.0
+          just check-cargo-rail "$temporary/cargo-rail/cargo-rail$suffix" "$temporary/$archive" 0.27.0
           git diff --exit-code HEAD
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

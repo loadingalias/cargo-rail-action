@@ -663,7 +663,7 @@ fn runtime_packaging_requires_the_complete_qualified_set_and_exact_license() {
     assert!(completed.status.success(), "{completed:?}");
     let contents = fs::read_to_string(&manifest).unwrap();
     assert_eq!(contents.lines().count(), 4);
-    assert!(contents.starts_with("cargo-rail-action-runtime-v1\t9.0.0\n"));
+    assert!(contents.starts_with("cargo-rail-action-runtime-v1\t9.0.1\n"));
     for (row, path) in contents.lines().skip(1).zip(&assets) {
         let fields = row.split('\t').collect::<Vec<_>>();
         assert_eq!(fields.len(), 4);
@@ -805,6 +805,8 @@ print(json.dumps(result))
             .env("GITHUB_PATH", &path_file)
             .arg("--cargo-rail")
             .arg(&core)
+            .arg("--version")
+            .arg(std::env::var("CARGO_RAIL_TEST_RELEASE_VERSION").expect("source core version"))
             .output()
             .unwrap()
     };

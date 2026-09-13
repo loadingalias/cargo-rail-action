@@ -19,7 +19,7 @@ pub(crate) struct ExecuteArgs {
     /// Exact source-built core for coordinated bootstrap; normal actions install the authenticated release.
     #[arg(long)]
     cargo_rail: Option<PathBuf>,
-    #[arg(long, default_value = "0.26.0")]
+    #[arg(long, default_value = "0.27.0")]
     version: String,
     #[arg(long, default_value = "[]")]
     packages: String,
