@@ -4,7 +4,7 @@ author: loadingalias
 inputs:
   version:
     description: Exact compatible Cargo-Rail release
-    default: '0.27.0'
+    default: '0.27.1'
   packages:
     description: JSON array of package names; an empty array selects the workspace
     default: '[]'

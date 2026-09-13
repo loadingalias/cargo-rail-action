@@ -6,7 +6,7 @@ Version 9 uses one prebuilt Rust runtime with verified release checksums.
 Bootstrap preserves the Action checkout’s MIT `LICENSE` beside the runtime and rejects modified
 or missing installed license text.
 
-Cargo-Rail Action v9.0.1 accepts stable Cargo-Rail `0.26.PATCH` and `0.27.PATCH` releases and defaults to `0.27.0`.
+Cargo-Rail Action v9.0.1 accepts stable Cargo-Rail `0.26.PATCH` and `0.27.PATCH` releases and defaults to `0.27.1`.
 It rejects every other Cargo-Rail minor line and validates the exact installed binary, plan, cache,
 and component contracts before use.
 The planner requires plan contract v9, including identity-bound impact attribution.
@@ -32,7 +32,7 @@ Install your Rust toolchain and command runners, such as nextest, before these s
 - uses: loadingalias/cargo-rail-action@v9
   id: rail
   with:
-    version: 0.27.0
+    version: 0.27.1
 
 - name: Run selected tests
   shell: bash
@@ -88,7 +88,7 @@ jobs:
       - uses: loadingalias/cargo-rail-action@v9
         id: rail
         with:
-          version: 0.27.0
+          version: 0.27.1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cargo-rail-plan
@@ -166,7 +166,7 @@ Operational failures, including I/O and failed subprocesses, exit `1`.
 - uses: loadingalias/cargo-rail-action/cache@v9
   id: cache
   with:
-    version: 0.27.0
+    version: 0.27.1
     remote: s3://cargo-rail-cache/team?region=us-east-1&owner=123456789012
     mode: read
     max-size: 10GiB
@@ -330,7 +330,7 @@ Runtime packaging only generates the authenticated component manifest.
 Cargo-Rail owns publication and the configured major alias promotion.
 A resumed dispatch can rediscover a merged PR when the merge-event runner was lost;
 it still requires the original prepared tree.
-Publish Cargo-Rail `0.27.0` before releasing the Action at `9.0.1`.
+Publish Cargo-Rail `0.27.1` before releasing the Action at `9.0.1`.
 
 ## Validate changes
 

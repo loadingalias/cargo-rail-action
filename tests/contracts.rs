@@ -101,7 +101,7 @@ fn action_metadata_matches_the_v9_surface() {
         let version = mapping(field(inputs, "version"), "version input");
         field(version, "default").as_str().expect("version default")
     });
-    assert_eq!(defaults, ["0.27.0"; 4]);
+    assert_eq!(defaults, ["0.27.1"; 4]);
 }
 
 #[test]
