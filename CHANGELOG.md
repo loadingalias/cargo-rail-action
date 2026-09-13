@@ -1,5 +1,8 @@
 # Changelog
 
+## [9.0.1] - 2026-09-13
+- Default to Cargo-Rail v0.27.1 with corrected prebuilt installation and GitHub draft recovery.
+  Accept stable v0.27.x releases while preserving support for stable v0.26.x releases.
 ## [9.0.0] - 2026-09-13
 - Use the native Action runtime and compatible Cargo-Rail 0.26 components
   for independently validated planning, compiler-cache setup, and release execution.
