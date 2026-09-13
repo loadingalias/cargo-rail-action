@@ -6,6 +6,8 @@ Use the native Action runtime and compatible Cargo-Rail 0.26 components
 for independently validated planning, compiler-cache setup, and release execution.
 Install authenticated component archives, including their source license,
 and reject unknown or inconsistent contracts before exposing outputs.
+Accept LF and CRLF rows in release checksum files collected from native runners,
+while rejecting embedded carriage returns and ambiguous checksums.
 
 Add the release Action for caller-owned GitHub publication jobs.
 Validate the original release record, repository, workflow, dispatch,

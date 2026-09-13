@@ -516,13 +516,13 @@ fn checksum_for(path: &Path, archive_name: &str) -> Result<String> {
     let bytes = read_bounded_file(path, MAX_CHECKSUM_BYTES, "release checksum manifest")?;
     let text =
         std::str::from_utf8(&bytes).map_err(|_| ActionError::rejected("release checksum manifest is not UTF-8"))?;
-    if text.contains('\r') {
-        return Err(ActionError::rejected(
-            "release checksum manifest must use LF line endings",
-        ));
-    }
     let mut selected = Vec::new();
     for line in text.lines().filter(|line| !line.is_empty()) {
+        if line.contains('\r') {
+            return Err(ActionError::rejected(
+                "release checksum manifest contains a bare carriage return",
+            ));
+        }
         let mut fields = line.split_ascii_whitespace();
         let digest = fields.next().unwrap_or_default();
         let name = fields.next().unwrap_or_default().trim_start_matches('*');
@@ -1162,6 +1162,44 @@ mod tests {
                 .to_string()
                 .contains("compression contract")
         );
+    }
+
+    #[test]
+    fn release_checksums_accept_native_line_endings() {
+        let temporary = TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-checksum-test").unwrap();
+        let path = temporary.path().join("SHA256SUMS");
+        let linux = "cargo-rail-x86_64-unknown-linux-gnu.zip";
+        let windows = "cargo-rail-x86_64-pc-windows-msvc.zip";
+        let linux_digest = "a".repeat(64);
+        let windows_digest = "b".repeat(64);
+        for (first, second) in [("\n", "\n"), ("\r\n", "\r\n"), ("\n", "\r\n"), ("\r\n", "\n")] {
+            std::fs::write(
+                &path,
+                format!("{linux_digest}  {linux}{first}{windows_digest}  {windows}{second}"),
+            )
+            .unwrap();
+            assert_eq!(checksum_for(&path, linux).unwrap(), linux_digest);
+            assert_eq!(checksum_for(&path, windows).unwrap(), windows_digest);
+        }
+    }
+
+    #[test]
+    fn release_checksums_reject_ambiguous_or_malformed_rows() {
+        let temporary =
+            TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-checksum-rejection-test").unwrap();
+        let path = temporary.path().join("SHA256SUMS");
+        let archive = "cargo-rail-x86_64-unknown-linux-gnu.zip";
+        let digest = "a".repeat(64);
+        for (extra, expected) in [
+            (format!("{digest}  {archive}\r\n"), "exactly one entry"),
+            (format!("{digest}\r  other.zip\n"), "bare carriage return"),
+            (format!("{digest}  ../other.zip\r\n"), "invalid row"),
+            (format!("{}  other.zip\r\n", "a".repeat(63)), "invalid row"),
+        ] {
+            std::fs::write(&path, format!("{digest}  {archive}\n{extra}")).unwrap();
+            let error = checksum_for(&path, archive).unwrap_err().to_string();
+            assert!(error.contains(expected), "{error}");
+        }
     }
 
     #[test]
