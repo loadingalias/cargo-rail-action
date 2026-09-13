@@ -109,27 +109,10 @@ fn public_schemas_reject_unknown_fields_and_bound_release_assets() {
             .expect("parse cache schema");
     assert_eq!(cache["additionalProperties"], false);
 
-    let release: Value = serde_json::from_slice(
-        &fs::read(root().join("schemas/release-intent-v1.schema.json")).expect("release schema"),
-    )
-    .expect("parse release schema");
+    let release: Value =
+        serde_json::from_slice(&fs::read(root().join("schemas/release-record-v9.schema.json")).unwrap()).unwrap();
     assert_eq!(release["additionalProperties"], false);
-    assert_eq!(release["$defs"]["asset"]["additionalProperties"], false);
-    assert_eq!(release["properties"]["assets"]["minItems"], 5);
-    assert_eq!(release["properties"]["assets"]["maxItems"], 5);
-    assert_eq!(release["properties"]["assets"]["items"], false);
-    for (asset, maximum) in [
-        ("macos_runtime", 16 * 1024 * 1024),
-        ("windows_runtime", 16 * 1024 * 1024),
-        ("linux_runtime", 16 * 1024 * 1024),
-        ("runtime_manifest", 64 * 1024),
-        ("license", 64 * 1024),
-    ] {
-        assert_eq!(
-            release["$defs"][asset]["allOf"][1]["properties"]["bytes"]["maximum"], maximum,
-            "{asset}"
-        );
-    }
+    assert_eq!(release["$defs"]["artifact_evidence"]["additionalProperties"], false);
 }
 
 #[test]
@@ -167,54 +150,29 @@ fn ci_produces_every_runtime_required_by_release() {
     let upload = steps.last().unwrap();
     assert_eq!(upload["with"]["name"], "runtime-${{ matrix.target }}");
     assert_eq!(upload["with"]["if-no-files-found"], "error");
-    let release = yaml(".github/workflows/release.yml");
-    let commands = release["jobs"]["prepare"]["steps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|step| step["run"].as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    for target in targets {
-        assert!(commands.contains(&format!("cargo-rail-action-{target}")));
-    }
+    assert_eq!(ci["jobs"]["collect"]["needs"], "check");
+    let upload = ci["jobs"]["collect"]["steps"].as_array().unwrap().last().unwrap();
+    assert_eq!(
+        upload["with"]["name"],
+        "release-cargo-rail-action-${{ github.run_id }}-${{ github.run_attempt }}"
+    );
 }
 
 #[test]
 fn release_workflow_requires_ci_and_protects_publication() {
     let workflow = yaml(".github/workflows/release.yml");
-    assert_eq!(
-        keys(mapping(&workflow["on"], "release triggers")),
-        BTreeSet::from(["workflow_dispatch".to_string()])
-    );
-    assert!(mapping(&workflow["permissions"], "default permissions").is_empty());
+    assert!(mapping(&workflow["permissions"], "permissions").is_empty());
     assert_eq!(workflow["concurrency"]["cancel-in-progress"], false);
-    let prepare = &workflow["jobs"]["prepare"];
-    assert_eq!(prepare["if"], "github.ref == 'refs/heads/main'");
-    assert_eq!(prepare["permissions"]["contents"], "read");
-    let steps = prepare["steps"].as_array().unwrap();
-    let gate = steps.iter().position(|step| step["id"] == "ci").unwrap();
-    let download = steps
-        .iter()
-        .position(|step| step["with"].get("run-id").is_some())
-        .unwrap();
-    assert!(gate < download);
+    let job = &workflow["jobs"]["release"];
+    assert_eq!(job["environment"], "release");
+    assert_eq!(job["permissions"]["contents"], "write");
+    assert_eq!(job["permissions"]["actions"], "write");
     assert!(
-        steps[gate]["run"]
+        job["steps"].as_array().unwrap().last().unwrap()["run"]
             .as_str()
             .unwrap()
-            .contains("actions/workflows/ci.yml/runs")
+            .contains("cargo-rail-action run release")
     );
-    assert_eq!(steps[download]["with"]["run-id"], "${{ steps.ci.outputs.run-id }}");
-    let publish = &workflow["jobs"]["publish"];
-    assert_eq!(publish["needs"], "prepare");
-    assert_eq!(publish["environment"], "release");
-    assert_eq!(publish["permissions"]["contents"], "write");
-    let steps = publish["steps"].as_array().unwrap();
-    let commands = steps.last().unwrap()["run"].as_str().unwrap();
-    assert!(commands.find("release publish --check").unwrap() < commands.find("release publish --apply").unwrap());
-    assert!(commands.find("release publish --apply").unwrap() < commands.find("release promote --check").unwrap());
-    assert!(commands.find("release promote --check").unwrap() < commands.find("release promote --apply").unwrap());
 }
 
 #[test]

@@ -1,7 +1,7 @@
 # Cargo-Rail Action
 
-Cargo-Rail Action installs Cargo-Rail, plans required CI work,
-and emits exact selectors for your commands.
+Cargo-Rail Action installs Cargo-Rail, plans required CI work, emits exact selectors,
+and delegates durable release execution to Cargo-Rail.
 Version 9 uses one prebuilt Rust runtime with verified release checksums.
 Bootstrap preserves the Action checkout’s MIT `LICENSE` beside the runtime and rejects modified
 or missing installed license text.
@@ -11,6 +11,14 @@ It rejects every other Cargo-Rail minor line and validates the exact installed b
 and component contracts before use.
 The planner requires plan contract v9, including identity-bound impact attribution.
 Regenerate plans from older contracts.
+
+The runtime also independently validates Cargo-Rail's [release execution records](schemas/release-record-v9.schema.json),
+including their canonical intent identity, expected source and repository,
+required workflow evidence, and upload attempt identities.
+The release Action independently validates hosted requests and reviewed merges
+before invoking the same Cargo-Rail transaction.
+Its own release workflow uses that engine and promotes `v9` only
+after the immutable release is verified.
 
 ## Plan and run work in one job
 
@@ -297,20 +305,48 @@ The planner's `repository-token` is used only for a same-repository Git fetch wh
 It is never placed in a URL, argv, repository configuration, output, summary,
 or unrelated child process.
 
+## Release integration
+
+`loadingalias/cargo-rail-action/release` runs the Cargo-Rail release engine from a caller-owned GitHub publication job.
+Pin the Action to a reviewed immutable commit.
+Configure `release.hosted_workflow` and required validation in Cargo-Rail first.
+
+Inputs are `version`, `packages` (a JSON array; `[]` selects all), `bump`, `publish`, and `review`.
+Publication defaults to false.
+The workflow accepts `transaction`, `intent`, and `source` dispatch inputs so Cargo-Rail can continue a retained request.
+A merged same-repository release PR can invoke the same Action through `pull_request_target`.
+The adapter validates the original record, workflow, repository, event, prepared commit,
+and merged tree before invoking the core.
+
+The job owns credentials and environment approvals.
+Serialize release jobs across dispatch and review events, preserve Git push credentials,
+and use full history.
+Outputs are `transaction-id`, `release-sha`, `state`, and `run-url`.
+See the [Cargo-Rail release guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md) for the complete workflow contract.
+
+The Action's own workflow builds its runtime from the reviewed source
+and installs the already released Cargo-Rail engine.
+Runtime packaging only generates the authenticated component manifest.
+Cargo-Rail owns publication and the configured major alias promotion.
+A resumed dispatch can rediscover a merged PR when the merge-event runner was lost;
+it still requires the original prepared tree.
+Publish Cargo-Rail `0.26.0` before releasing the Action at `9.0.0`.
+
 ## Validate changes
 
 Run `just check` for formatting, Clippy, unit and CLI tests, metadata contracts, and bootstrap syntax.
 When changing Cargo-Rail alongside the Action,
 run `just package-release OUTPUT_DIRECTORY` in the Cargo-Rail checkout to build and package its authenticated components.
 Then run `just check-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH VERSION` here.
-This explicitly runs the source plan and cache contracts and the real archive installer tests.
+This runs source plan and cache contracts, the real archive installer,
+strict release-record rejection, and release adapter recovery through real Git fixtures.
 Cache setup uses an isolated temporary Cargo home;
 the tests do not publish releases or contact remote cache storage.
 
-CI validates the published Cargo-Rail archive when available.
-Before that release exists, it builds the authenticated archive from the Cargo-Rail commit pinned in
-the CI workflow and runs the same contract tests.
-Update that pin when validating newer unreleased source.
+CI validates the published Cargo-Rail archive.
+For the coordinated first release,
+qualify both source trees locally with `just check-cargo-rail` before publishing Cargo-Rail, then release the Action.
+There is no automatic fallback to older source when the required release is unavailable.
 The current archive contract requires `LICENSE`; older archives without it are rejected.
 Release lookup and download errors fail CI.
 

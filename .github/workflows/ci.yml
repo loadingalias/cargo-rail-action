@@ -94,7 +94,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/runtime-assets"
           cp "$runtime" "$RUNNER_TEMP/runtime-assets/cargo-rail-action-$TARGET$suffix"
           cp LICENSE "$RUNNER_TEMP/runtime-assets/LICENSE"
-      - name: Test the Cargo-Rail source-to-release contract
+      - name: Test the authenticated Cargo-Rail release contract
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
@@ -103,27 +103,10 @@ jobs:
           trap 'rm -rf "$temporary"' EXIT
           archive="cargo-rail-$TARGET.zip"
           url=https://github.com/loadingalias/cargo-rail/releases/download/v0.26.0
-          status="$(curl --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --output "$temporary/release.json" --write-out '%{http_code}' \
-            https://api.github.com/repos/loadingalias/cargo-rail/releases/tags/v0.26.0)"
-          case "$status" in
-            200)
-              for asset in "$archive" SHA256SUMS; do
-                curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
-                  "$url/$asset" --output "$temporary/$asset"
-              done
-              ;;
-            404)
-              (
-                cd "$GITHUB_WORKSPACE/.ci-tooling"
-                cargo fetch --locked
-                cargo fetch --locked --manifest-path tools/compiler-fact-driver/Cargo.toml
-                just package-release "$temporary"
-              )
-              ;;
-            *) echo "Cargo-Rail release lookup failed with HTTP $status" >&2; exit 1 ;;
-          esac
+          for asset in "$archive" SHA256SUMS; do
+            curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+              "$url/$asset" --output "$temporary/$asset"
+          done
           awk -v archive="$archive" '$2 == archive' "$temporary/SHA256SUMS" > "$temporary/checksum"
           [[ "$(wc -l < "$temporary/checksum")" -eq 1 ]]
           (
@@ -152,3 +135,39 @@ jobs:
           path: ${{ runner.temp }}/runtime-assets/*
           if-no-files-found: error
           retention-days: 14
+
+  collect:
+    name: Collect release assets
+    needs: check
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: runtime-*
+          path: ${{ runner.temp }}/runtimes
+      - name: Build the authenticated runtime manifest
+        run: |
+          mkdir "$RUNNER_TEMP/assets"
+          cp "$RUNNER_TEMP"/runtimes/*/cargo-rail-action-* "$RUNNER_TEMP/assets/"
+          for license in "$RUNNER_TEMP"/runtimes/*/LICENSE; do cmp LICENSE "$license"; done
+          cp LICENSE "$RUNNER_TEMP/assets/LICENSE"
+          chmod 700 "$RUNNER_TEMP/assets/cargo-rail-action-x86_64-unknown-linux-gnu"
+          args=()
+          for asset in "$RUNNER_TEMP"/assets/*; do args+=(--asset "$asset"); done
+          "$RUNNER_TEMP/assets/cargo-rail-action-x86_64-unknown-linux-gnu" release package "${args[@]}" \
+            --output "$RUNNER_TEMP/assets/cargo-rail-action-runtime-v1.tsv"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-cargo-rail-action-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/assets/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

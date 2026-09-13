@@ -390,3 +390,493 @@ cp "$FIXTURES/$asset" "$output"
     assert_eq!(fs::read_to_string(&invocations).unwrap(), calls);
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "requires the current Cargo-Rail source binary"]
+fn source_release_record_is_independently_validated() {
+    let binary = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_BINARY").expect("source binary"));
+    let directory = temporary_directory();
+    let workspace = directory.join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    fs::create_dir(workspace.join(".config")).unwrap();
+    fs::create_dir(workspace.join(".changes")).unwrap();
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[package]\nname = 'release-contract'\nversion = '0.1.0'\nedition = '2024'\n[lib]\npath = 'lib.rs'\n",
+    )
+    .unwrap();
+    fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 7 }\n").unwrap();
+    fs::write(workspace.join(".gitignore"), "target/\n").unwrap();
+    fs::write(
+        workspace.join(".config/rail.toml"),
+        "[release]\nremote_effects = 'push'\nsemver_check = 'off'\nsign_tags = false\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.join(".changes/release.md"),
+        "---\nrelease-contract = 'patch'\n---\n\nPreserve release authority between runners.\n",
+    )
+    .unwrap();
+    let lock = Command::new("cargo")
+        .current_dir(&workspace)
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(lock.status.success(), "{lock:?}");
+    for arguments in [
+        vec!["init", "--initial-branch=main"],
+        vec!["config", "user.name", "Release Contract"],
+        vec!["config", "user.email", "contract@example.invalid"],
+        vec!["config", "commit.gpgsign", "false"],
+        vec![
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/release-contract.git",
+        ],
+        vec!["add", "."],
+        vec!["commit", "-m", "Review release intent"],
+    ] {
+        let output = Command::new("git")
+            .current_dir(&workspace)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let prepared = Command::new(&binary)
+        .current_dir(&workspace)
+        .env_remove("CARGO_TARGET_DIR")
+        .args([
+            "rail",
+            "release",
+            "run",
+            "--all",
+            "--bump",
+            "patch",
+            "--skip-tag",
+            "--prepare",
+            "--yes",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(prepared.status.success(), "{prepared:?}");
+    let summary: serde_json::Value = serde_json::from_slice(&prepared.stdout).unwrap();
+    let record_path = workspace
+        .join("target/cargo-rail/releases")
+        .join(format!("{}.json", summary["transaction_id"].as_str().unwrap()));
+    let original = fs::read(&record_path).unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    let intent = record["intent"]["identity"].as_str().unwrap();
+    let source = record["preparation"]["commit"].as_str().unwrap();
+    let validate = |expected_intent: &str, expected_source: &str, repository: &str| {
+        Command::new(env!("CARGO_BIN_EXE_cargo-rail-action"))
+            .args(["release", "validate-record"])
+            .arg(&record_path)
+            .args([
+                "--intent",
+                expected_intent,
+                "--source",
+                expected_source,
+                "--repository",
+                repository,
+            ])
+            .output()
+            .unwrap()
+    };
+    let accepted = validate(intent, source, "github.com/example/release-contract");
+    assert!(accepted.status.success(), "{accepted:?}");
+    let selected: serde_json::Value = serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(selected["transaction_id"], record["transaction_id"]);
+    assert_eq!(selected["source"], source);
+    assert_eq!(selected["state"], "active");
+    assert_eq!(selected["phase"], "prepared");
+    for rejected in [
+        validate("sha256:wrong", source, "github.com/example/release-contract"),
+        validate(intent, &"a".repeat(40), "github.com/example/release-contract"),
+        validate(intent, source, "github.com/example/another"),
+    ] {
+        assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
+        assert!(rejected.stdout.is_empty());
+    }
+    for (pointer, replacement) in [
+        ("/schema_version", serde_json::json!(10)),
+        ("/intent/plan/summary/total_crates", serde_json::json!(2)),
+        (
+            "/intent/plan/crates/0/manifest_path",
+            serde_json::json!("../Cargo.toml"),
+        ),
+        ("/intent/release_config/sign_tags", serde_json::Value::Null),
+        ("/intent/plan/crates/0/new_version", serde_json::json!("invalid")),
+        ("/crates/0/publication/status", serde_json::json!("in_progress")),
+        ("/status", serde_json::json!("complete")),
+    ] {
+        let mut changed = record.clone();
+        *changed.pointer_mut(pointer).unwrap() = replacement;
+        let mut unsigned = changed["intent"].clone();
+        unsigned.as_object_mut().unwrap().remove("identity");
+        let mut framed = b"cargo-rail-release-intent-v1\0".to_vec();
+        framed.extend(
+            serde_json::to_vec(&serde_json::json!({
+                "intent": unsigned, "transaction_id": changed["transaction_id"]
+            }))
+            .unwrap(),
+        );
+        let identity = format!(
+            "sha256:{}",
+            rscrypto::Sha256::digest(&framed)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        changed["intent"]["identity"] = serde_json::json!(identity);
+        fs::write(&record_path, serde_json::to_vec(&changed).unwrap()).unwrap();
+        let rejected = validate(&identity, source, "github.com/example/release-contract");
+        assert_eq!(rejected.status.code(), Some(2), "{pointer}: {rejected:?}");
+        assert!(rejected.stdout.is_empty());
+    }
+    for changed in [
+        String::from_utf8(original.clone()).unwrap().replacen(
+            "\"schema_version\": 9",
+            "\"schema_version\": 9, \"schema_version\": 9",
+            1,
+        ),
+        String::from_utf8(original.clone())
+            .unwrap()
+            .replacen("\"schema_version\": 9", "\"schema_version\": 9.0", 1),
+    ] {
+        assert_ne!(changed.as_bytes(), original);
+        fs::write(&record_path, changed).unwrap();
+        let rejected = validate(intent, source, "github.com/example/release-contract");
+        assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
+        assert!(rejected.stdout.is_empty());
+    }
+    // The independent reader checks producer/asset bindings, including a valid native record.
+    let mut native = record.clone();
+    native["intent"]["skip_tag"] = serde_json::json!(false);
+    native["tag_push"] = serde_json::json!({"status":"pending"});
+    for package in native["crates"].as_array_mut().unwrap() {
+        for field in ["tag", "forge_draft", "forge_publication"] {
+            package[field] = serde_json::json!({"status":"pending"});
+        }
+    }
+    native["intent"]["release_config"]["remote_effects"] = serde_json::json!("github");
+    native["intent"]["release_config"]["validation"] = serde_json::json!({".github/workflows/ci.yml":["package"]});
+    native["intent"]["release_config"]["artifacts"] = serde_json::json!({"release-contract":{
+        "workflow":".github/workflows/ci.yml", "files":{"{crate}-{version}.zip":{"target":"x86_64-unknown-linux-gnu","source":null}}}});
+    native["intent"]["plan"]["artifacts"] = serde_json::json!([{"package":"release-contract","workflow":".github/workflows/ci.yml",
+        "files":[{"name":"release-contract-0.1.1.zip","target":"x86_64-unknown-linux-gnu","source":null}]}]);
+    native["phase"] = serde_json::json!("awaiting_checks");
+    native["commit_push"] = serde_json::json!({"status":"complete","object":source});
+    native["readiness"] = serde_json::json!({"status":"complete","object":"exact workflow attempt verified"});
+    native["validation"] = serde_json::json!([{"workflow":".github/workflows/ci.yml","workflow_id":7,"run_id":42,"attempt":3,"jobs":[{"name":"package","id":17}]}]);
+    native["artifacts"] = serde_json::json!([{"package":"release-contract","run_id":42,"attempt":3,"artifact_id":91,"bytes":200,
+        "sha256":"a".repeat(64),"expires_at":4070908800_u64,"files":[{"name":"release-contract-0.1.1.zip","bytes":123,"sha256":"b".repeat(64)}]}]);
+    let check_native = |mut candidate: serde_json::Value| {
+        let mut unsigned = candidate["intent"].clone();
+        unsigned.as_object_mut().unwrap().remove("identity");
+        let mut framed = b"cargo-rail-release-intent-v1\0".to_vec();
+        framed.extend(
+            serde_json::to_vec(&serde_json::json!({"transaction_id":candidate["transaction_id"],"intent":unsigned}))
+                .unwrap(),
+        );
+        let identity = format!(
+            "sha256:{}",
+            rscrypto::Sha256::digest(&framed)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        candidate["intent"]["identity"] = serde_json::json!(identity);
+        fs::write(&record_path, serde_json::to_vec(&candidate).unwrap()).unwrap();
+        validate(&identity, source, "github.com/example/release-contract")
+    };
+    let accepted = check_native(native.clone());
+    assert!(accepted.status.success(), "{accepted:?}");
+    for (pointer, replacement) in [
+        ("/artifacts/0/attempt", serde_json::json!(4)),
+        ("/artifacts/0/files/0/name", serde_json::json!("another.zip")),
+        ("/artifacts/0/sha256", serde_json::json!("invalid")),
+        ("/readiness/status", serde_json::json!("pending")),
+        ("/intent/skip_tag", serde_json::json!(true)),
+        (
+            "/intent/plan/artifacts/0/files/0/target",
+            serde_json::json!("aarch64-unknown-linux-gnu"),
+        ),
+        (
+            "/intent/plan/artifacts/0/files/0/source",
+            serde_json::json!("../LICENSE"),
+        ),
+        (
+            "/intent/release_config/artifacts/release-contract/workflow",
+            serde_json::json!(".github/workflows/other.yml"),
+        ),
+    ] {
+        let mut candidate = native.clone();
+        *candidate.pointer_mut(pointer).unwrap() = replacement;
+        let rejected = check_native(candidate);
+        assert_eq!(rejected.status.code(), Some(2), "{pointer}: {rejected:?}");
+        assert!(rejected.stdout.is_empty());
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn runtime_packaging_requires_the_complete_qualified_set_and_exact_license() {
+    let directory = temporary_directory();
+    let mut assets = Vec::new();
+    for name in [
+        "cargo-rail-action-aarch64-apple-darwin",
+        "cargo-rail-action-x86_64-pc-windows-msvc.exe",
+        "cargo-rail-action-x86_64-unknown-linux-gnu",
+        "LICENSE",
+    ] {
+        let path = directory.join(name);
+        fs::write(
+            &path,
+            if name == "LICENSE" {
+                include_bytes!("../LICENSE").as_slice()
+            } else {
+                b"qualified runtime fixture"
+            },
+        )
+        .unwrap();
+        assets.push(path);
+    }
+    let manifest = directory.join("cargo-rail-action-runtime-v1.tsv");
+    let invoke = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cargo-rail-action"));
+        command.args(["release", "package", "--output"]).arg(&manifest);
+        for asset in &assets {
+            command.arg("--asset").arg(asset);
+        }
+        command.output().unwrap()
+    };
+    fs::write(directory.join("LICENSE"), "wrong source license").unwrap();
+    let rejected = invoke();
+    assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
+    assert!(!manifest.exists());
+    fs::write(directory.join("LICENSE"), include_bytes!("../LICENSE")).unwrap();
+    let completed = invoke();
+    assert!(completed.status.success(), "{completed:?}");
+    let contents = fs::read_to_string(&manifest).unwrap();
+    assert_eq!(contents.lines().count(), 4);
+    assert!(contents.starts_with("cargo-rail-action-runtime-v1\t9.0.0\n"));
+    for (row, path) in contents.lines().skip(1).zip(&assets) {
+        let fields = row.split('\t').collect::<Vec<_>>();
+        assert_eq!(fields.len(), 4);
+        assert_eq!(fields[1], path.file_name().unwrap().to_str().unwrap());
+        assert_eq!(fields[2], "25");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires the current Cargo-Rail source binary"]
+fn source_release_adapter_executes_and_independently_rejects_changed_invocation_authority() {
+    source_release_adapter(false);
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires the current Cargo-Rail source binary"]
+fn source_release_adapter_recovers_an_unrecorded_merge_and_rejects_a_changed_review_tree() {
+    source_release_adapter(true);
+}
+
+#[cfg(unix)]
+fn source_release_adapter(review: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let core = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_BINARY").expect("source core"));
+    let directory = temporary_directory();
+    let workspace = directory.join("workspace");
+    fs::create_dir_all(workspace.join(".config")).unwrap();
+    fs::create_dir(workspace.join(".changes")).unwrap();
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[package]\nname='adapter-fixture'\nversion='0.1.0'\nedition='2024'\n[lib]\npath='lib.rs'\n",
+    )
+    .unwrap();
+    fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
+    fs::write(workspace.join(".gitignore"), "target/\n").unwrap();
+    fs::write(
+        workspace.join(".changes/release.md"),
+        "---\nadapter-fixture='patch'\n---\n\nKeep one release authority.\n",
+    )
+    .unwrap();
+    fs::write(workspace.join(".config/rail.toml"),"[release]\nremote_effects='push'\nsemver_check='off'\nhosted_workflow='.github/workflows/release.yml'\nvalidation={'.github/workflows/ci.yml'=['tests']}\n").unwrap();
+    let cargo = Command::new("cargo")
+        .current_dir(&workspace)
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(cargo.status.success(), "{cargo:?}");
+    let git = |root: &std::path::Path, args: &[&str]| {
+        let result = Command::new("git")
+            .current_dir(root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{args:?}: {result:?}");
+        String::from_utf8(result.stdout).unwrap().trim().to_owned()
+    };
+    let remote = directory.join("origin.git");
+    git(
+        &directory,
+        &["init", "--bare", "--initial-branch=main", remote.to_str().unwrap()],
+    );
+    let ssh = directory.join("ssh");
+    fs::write(&ssh,format!("#!/bin/sh\ncase \"$*\" in *git-receive-pack*) exec git-receive-pack '{}' ;; *git-upload-pack*) exec git-upload-pack '{}' ;; esac\nexit 1\n",remote.display(),remote.display())).unwrap();
+    fs::set_permissions(&ssh, fs::Permissions::from_mode(0o755)).unwrap();
+    for args in [
+        vec!["init", "--initial-branch=main"],
+        vec!["config", "user.name", "Release adapter"],
+        vec!["config", "user.email", "adapter@example.invalid"],
+        vec!["config", "core.sshCommand", ssh.to_str().unwrap()],
+        vec!["remote", "add", "origin", "git@github.com:org/repo.git"],
+        vec!["add", "."],
+        vec!["commit", "-m", "Review release"],
+        vec!["push", "-u", "origin", "main"],
+    ] {
+        git(&workspace, &args);
+    }
+    let initial = git(&workspace, &["rev-parse", "HEAD"]);
+    let gh = directory.join("gh");
+    fs::write(&gh,r#"#!/usr/bin/env python3
+import json,pathlib,subprocess,sys
+if sys.argv[1]!='api':sys.exit(0)
+a=sys.argv[1:];endpoint=next(x for x in a if x.startswith('repos/'))
+sha=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+run={'id':42,'run_attempt':3,'workflow_id':7,'head_sha':sha,'path':'.github/workflows/ci.yml','repository':{'full_name':'org/repo'},'head_repository':{'full_name':'org/repo'},'event':'workflow_dispatch','status':'completed','conclusion':'success'}
+p=pathlib.Path(__file__).parent/'pull.json'
+if '/pulls' in endpoint:
+    if '--method' in a:
+        body=json.loads(pathlib.Path(a[a.index('--input')+1]).read_text())
+        p.write_text(json.dumps({'number':7,'head':{'sha':sha,'ref':body['head'],'repo':{'full_name':'org/repo'}},'base':{'ref':'main','repo':{'full_name':'org/repo'}},'state':'open','merged':False}))
+    print(json.dumps(([json.loads(p.read_text())] if p.exists() else []) if '/pulls?' in endpoint else json.loads(p.read_text())))
+    sys.exit(0)
+if endpoint.endswith('/ci.yml'):result={'id':7,'path':'.github/workflows/ci.yml','state':'active'}
+elif endpoint.endswith('/dispatches'):result={'workflow_run_id':42}
+elif '/runs?' in endpoint:result={'total_count':0,'workflow_runs':[]}
+elif '/jobs?' in endpoint:result={'total_count':1,'jobs':[{'id':17,'name':'tests','run_id':42,'run_attempt':3,'head_sha':sha,'status':'completed','conclusion':'success'}]}
+else:result=run
+print(json.dumps(result))
+"#).unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    let event = directory.join("event.json");
+    fs::write(&event, r#"{"repository":{"full_name":"org/repo"},"inputs":{}}"#).unwrap();
+    let output_file = directory.join("output");
+    let path_file = directory.join("path");
+    fs::write(&output_file, "").unwrap();
+    fs::write(&path_file, "").unwrap();
+    let invoke = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cargo-rail-action"));
+        if review {
+            command.arg("release").arg("execute").arg("--review");
+        } else {
+            command.arg("release").arg("execute");
+        }
+        command
+            .current_dir(&workspace)
+            .env_remove("CARGO_TARGET_DIR")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env(
+                "PATH",
+                format!("{}:{}", directory.display(), std::env::var("PATH").unwrap()),
+            )
+            .env("GITHUB_ACTIONS", "true")
+            .env("GITHUB_REPOSITORY", "org/repo")
+            .env("GITHUB_WORKSPACE", &workspace)
+            .env("GITHUB_EVENT_NAME", "workflow_dispatch")
+            .env("GITHUB_EVENT_PATH", &event)
+            .env("GITHUB_RUN_ID", "88")
+            .env(
+                "GITHUB_WORKFLOW_REF",
+                "org/repo/.github/workflows/release.yml@refs/heads/main",
+            )
+            .env("GITHUB_SHA", &initial)
+            .env("GITHUB_OUTPUT", &output_file)
+            .env("GITHUB_PATH", &path_file)
+            .arg("--cargo-rail")
+            .arg(&core)
+            .output()
+            .unwrap()
+    };
+    let completed = invoke();
+    assert!(completed.status.success(), "{completed:?}");
+    let record_path = fs::read_dir(workspace.join("target/cargo-rail/releases"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "json"))
+        .unwrap();
+    let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+    if review {
+        assert_eq!(record["phase"], "awaiting_review");
+        assert!(record["review"]["merge"].is_null());
+        let branch = format!("rail/{}", record["transaction_id"].as_str().unwrap());
+        git(&workspace, &["switch", "main"]);
+        git(
+            &workspace,
+            &["merge", "--no-ff", &branch, "-m", "Merge reviewed release"],
+        );
+        let merged = git(&workspace, &["rev-parse", "HEAD"]);
+        git(&workspace, &["push", "origin", "main"]);
+        let pull_path = directory.join("pull.json");
+        let mut pull: serde_json::Value = serde_json::from_slice(&fs::read(&pull_path).unwrap()).unwrap();
+        pull["merged"] = true.into();
+        pull["state"] = "closed".into();
+        pull["merged_at"] = "2026-09-13T12:00:00Z".into();
+        fs::write(workspace.join("unexpected.txt"), "changed reviewed tree").unwrap();
+        git(&workspace, &["add", "unexpected.txt"]);
+        git(&workspace, &["commit", "-m", "Change reviewed tree"]);
+        let changed = git(&workspace, &["rev-parse", "HEAD"]);
+        git(&remote, &["fetch", workspace.to_str().unwrap(), &changed]);
+        pull["merge_commit_sha"] = changed.into();
+        fs::write(&pull_path, serde_json::to_vec(&pull).unwrap()).unwrap();
+        let payload = serde_json::json!({"repository":{"full_name":"org/repo"},"inputs": {
+            "transaction": record["transaction_id"], "intent": record["intent"]["identity"], "source": initial
+        }});
+        fs::write(&event, serde_json::to_vec(&payload).unwrap()).unwrap();
+        let before = fs::read(&output_file).unwrap();
+        let rejected = invoke();
+        assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("reviewed merge changed the prepared release tree"),
+            "{rejected:?}"
+        );
+        assert_eq!(fs::read(&output_file).unwrap(), before);
+        pull["merge_commit_sha"] = merged.clone().into();
+        fs::write(&pull_path, serde_json::to_vec(&pull).unwrap()).unwrap();
+        git(&workspace, &["switch", &branch]);
+        let completed = invoke();
+        assert!(completed.status.success(), "{completed:?}");
+        record = serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+        assert_eq!(record["review"]["merge"]["commit"], merged);
+    }
+    assert_eq!(record["status"], "complete");
+    let prepared = record["review"]["merge"]["commit"]
+        .as_str()
+        .or_else(|| record["preparation"]["commit"].as_str())
+        .unwrap();
+    assert_eq!(git(&remote, &["rev-parse", "refs/tags/v0.1.1^{commit}"]), prepared);
+    assert!(
+        fs::read_to_string(&output_file)
+            .unwrap()
+            .contains(&format!("release-sha={prepared}\n"))
+    );
+    let immutable_outputs = fs::read(&output_file).unwrap();
+    let payload = serde_json::json!({"repository":{"full_name":"org/repo"},"inputs":{"transaction":record["transaction_id"],"intent":"sha256:wrong","source":prepared}});
+    fs::write(&event, serde_json::to_vec(&payload).unwrap()).unwrap();
+    let rejected = invoke();
+    assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("does not authorize the original release intent"));
+    assert_eq!(fs::read(&output_file).unwrap(), immutable_outputs);
+    assert_eq!(git(&remote, &["rev-parse", "refs/tags/v0.1.1^{commit}"]), prepared);
+    fs::remove_dir_all(directory).unwrap();
+}

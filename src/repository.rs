@@ -478,20 +478,6 @@ pub(crate) fn run_bounded_with_input(
     run_bounded_inner(command, Some(input), max_stdout, max_stderr)
 }
 
-pub(crate) fn run_bounded_gh(
-    command: &mut Command,
-    token: &str,
-    max_stdout: usize,
-    max_stderr: usize,
-) -> Result<BoundedOutput> {
-    command
-        .env_remove("INPUT_REPOSITORY_TOKEN")
-        .env_remove("INPUT_REMOTE")
-        .env_remove("INPUT_LOCAL_DIR")
-        .env("GH_TOKEN", token);
-    run_bounded_inner(command, None, max_stdout, max_stderr)
-}
-
 fn run_bounded_inner(
     command: &mut Command,
     input: Option<&[u8]>,

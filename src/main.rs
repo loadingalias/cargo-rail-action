@@ -3,8 +3,10 @@
 mod cache;
 mod github;
 mod install;
+mod package;
 mod plan;
 mod release;
+mod release_record;
 mod report;
 mod repository;
 
@@ -113,6 +115,7 @@ struct SelfCheck {
 
 #[derive(Debug, Subcommand)]
 enum RunOperation {
+    Release,
     Planner,
     Cache,
     Setup,
@@ -167,10 +170,9 @@ struct MatrixArgs {
 
 #[derive(Debug, Subcommand)]
 enum ReleaseOperation {
-    Preflight,
-    Intent(release::IntentArgs),
-    Publish(release::EffectArgs),
-    Promote(release::EffectArgs),
+    ValidateRecord(release_record::ValidateArgs),
+    Execute(release::ExecuteArgs),
+    Package(package::PackageArgs),
 }
 
 fn build_target() -> &'static str {
@@ -211,16 +213,16 @@ fn run() -> Result<()> {
         Command::Run { operation } => match operation {
             RunOperation::Planner => repository::run_planner(),
             RunOperation::Cache => cache::run_action(),
+            RunOperation::Release => release::run_action(),
             RunOperation::Setup => install::run_setup_action(),
             RunOperation::CacheCollect => report::collect_action(),
             RunOperation::CacheReport => report::report_action(),
         },
         Command::Plan { operation } => plan::run_command(operation),
         Command::Release { operation } => match operation {
-            ReleaseOperation::Preflight => release::preflight(),
-            ReleaseOperation::Intent(arguments) => release::write_intent(&arguments),
-            ReleaseOperation::Publish(arguments) => release::publish(&arguments),
-            ReleaseOperation::Promote(arguments) => release::promote(&arguments),
+            ReleaseOperation::ValidateRecord(arguments) => release_record::validate(&arguments),
+            ReleaseOperation::Execute(arguments) => release::execute(&arguments),
+            ReleaseOperation::Package(arguments) => package::package(&arguments),
         },
     }
 }
