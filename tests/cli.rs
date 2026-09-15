@@ -431,6 +431,67 @@ cp "$FIXTURES/$asset" "$output"
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn bootstrap_builds_an_explicit_source_runtime_without_release_downloads() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = temporary_directory();
+    let bin = directory.join("bin");
+    let runner_temp = directory.join("runner");
+    let cache = directory.join("cache");
+    for path in [&bin, &runner_temp, &cache] {
+        fs::create_dir(path).unwrap();
+    }
+
+    let curl = bin.join("curl");
+    fs::write(&curl, "#!/bin/sh\nprintf called > \"$CURL_CALLED\"\nexit 99\n").unwrap();
+    fs::set_permissions(&curl, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let curl_called = directory.join("curl-called");
+    let github_path = directory.join("github-path");
+    fs::write(&github_path, "").unwrap();
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())))
+            .unwrap();
+    let (runner_os, runner_arch, target) = if cfg!(target_os = "macos") {
+        ("macOS", "ARM64", "aarch64-apple-darwin")
+    } else if cfg!(target_arch = "aarch64") {
+        ("Linux", "ARM64", "aarch64-unknown-linux-gnu")
+    } else {
+        ("Linux", "X64", "x86_64-unknown-linux-gnu")
+    };
+    let version = env!("CARGO_PKG_VERSION");
+    let run = |mode: &str| {
+        Command::new("bash")
+            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/bootstrap.sh"))
+            .args(["self-check", "--expect-version", version, "--expect-target", target])
+            .env("PATH", &path)
+            .env("RUNNER_OS", runner_os)
+            .env("RUNNER_ARCH", runner_arch)
+            .env("RUNNER_TEMP", &runner_temp)
+            .env("RUNNER_TOOL_CACHE", &cache)
+            .env("CURL_CALLED", &curl_called)
+            .env("GITHUB_PATH", &github_path)
+            .env("CARGO_RAIL_ACTION_RUNTIME_SOURCE", mode)
+            .output()
+            .unwrap()
+    };
+
+    let output = run("source");
+    assert!(output.status.success(), "{output:?}");
+    assert!(!curl_called.exists());
+    let command_directory = fs::read_to_string(&github_path).unwrap();
+    let launcher = PathBuf::from(command_directory.trim()).join("cargo-rail-action");
+    assert!(launcher.is_file());
+
+    let invalid = run("checkout");
+    assert!(!invalid.status.success(), "{invalid:?}");
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("runtime-source must be release or source"));
+    assert!(!curl_called.exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 #[ignore = "requires the current Cargo-Rail source binary"]
 fn source_release_record_is_independently_validated() {

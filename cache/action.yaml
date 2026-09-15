@@ -7,6 +7,10 @@ branding:
   color: "orange"
 
 inputs:
+  runtime-source:
+    description: "Action runtime authority: authenticated release asset or checked-out source"
+    required: false
+    default: "release"
   remote:
     description: "AWS S3, Azure Blob Storage, Cloudflare R2, or S3-compatible cache authority"
     required: true
@@ -53,6 +57,7 @@ runs:
       id: runtime
       shell: bash
       env:
+        CARGO_RAIL_ACTION_RUNTIME_SOURCE: ${{ inputs.runtime-source }}
         INPUT_REMOTE: ${{ inputs.remote }}
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_MAX_SIZE: ${{ inputs.max-size }}

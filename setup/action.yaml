@@ -3,6 +3,10 @@ description: "Install the native Cargo-Rail Action runtime and matching Cargo-Ra
 author: "loadingalias"
 
 inputs:
+  runtime-source:
+    description: "Action runtime authority: authenticated release asset or checked-out source"
+    required: false
+    default: "release"
   version:
     description: "Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock"
     required: false
@@ -20,5 +24,6 @@ runs:
       id: runtime
       shell: bash
       env:
+        CARGO_RAIL_ACTION_RUNTIME_SOURCE: ${{ inputs.runtime-source }}
         INPUT_VERSION: ${{ inputs.version }}
       run: bash "$GITHUB_ACTION_PATH/../scripts/bootstrap.sh" run setup

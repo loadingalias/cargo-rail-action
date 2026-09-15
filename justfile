@@ -1,7 +1,7 @@
 check:
     cargo fmt --all --check
     cargo clippy --all-targets --all-features --locked -- -D warnings
-    cargo test --all-targets --all-features --locked --no-fail-fast
+    cargo nextest run --all-targets --all-features --locked
     bash -n scripts/bootstrap.sh scripts/read-cargo-rail-lock.sh
     bash scripts/read-cargo-rail-lock.sh
     git diff --check

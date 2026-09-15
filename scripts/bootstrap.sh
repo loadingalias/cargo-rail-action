@@ -62,6 +62,8 @@ case "${RUNNER_OS:-}-${RUNNER_ARCH:-}" in
   Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
   *) fail "Cargo-Rail Action v9 does not support ${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}" ;;
 esac
+RUNTIME_SUFFIX=""
+[[ "$TARGET" == *-windows-msvc ]] && RUNTIME_SUFFIX=".exe"
 
 if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
   if command -v getconf >/dev/null 2>&1; then
@@ -120,6 +122,29 @@ LICENSE_BYTES="$(wc -c < "$LICENSE_SOURCE" | tr -d ' ')"
 (( LICENSE_BYTES > 0 && LICENSE_BYTES <= 65536 )) || fail "Action LICENSE exceeds its 64 KiB bound"
 LICENSE_DIGEST="$(sha256_file "$LICENSE_SOURCE")"
 
+RUNTIME_SOURCE_MODE="${CARGO_RAIL_ACTION_RUNTIME_SOURCE:-release}"
+case "$RUNTIME_SOURCE_MODE" in
+  release) ;;
+  source)
+    [[ -z "$LOCAL_RUNTIME" && -z "$LOCAL_DIGEST" ]] \
+      || fail "source runtime mode cannot be combined with local runtime arguments"
+    require_command cargo
+    SOURCE_TARGET_DIRECTORY="$RUNNER_TEMP_PATH/cargo-rail-action-source/$RUNTIME_VERSION/$TARGET"
+    if ! (
+      cd -- "$ACTION_ROOT"
+      cargo build --release --locked --manifest-path "$ACTION_ROOT/Cargo.toml" \
+        --target-dir "$SOURCE_TARGET_DIRECTORY" --bin cargo-rail-action
+    ); then
+      fail "cannot build the Cargo-Rail Action runtime from source"
+    fi
+    LOCAL_RUNTIME="$SOURCE_TARGET_DIRECTORY/release/cargo-rail-action$RUNTIME_SUFFIX"
+    [[ -f "$LOCAL_RUNTIME" && ! -L "$LOCAL_RUNTIME" ]] \
+      || fail "source build did not produce the Cargo-Rail Action runtime"
+    LOCAL_DIGEST="$(sha256_file "$LOCAL_RUNTIME")"
+    ;;
+  *) fail "runtime-source must be release or source" ;;
+esac
+
 if [[ -n "$LOCAL_RUNTIME" || -n "$LOCAL_DIGEST" ]]; then
   [[ -n "$LOCAL_RUNTIME" && -n "$LOCAL_DIGEST" ]] || fail "local runtime path and SHA-256 must be supplied together"
   [[ "$LOCAL_RUNTIME" == /* && "$LOCAL_DIGEST" =~ ^[0-9a-f]{64}$ ]] || fail "local runtime authority is malformed"
@@ -131,8 +156,6 @@ if [[ -n "$LOCAL_RUNTIME" || -n "$LOCAL_DIGEST" ]]; then
   RUNTIME_BYTES="$(wc -c < "$LOCAL_RUNTIME" | tr -d ' ')"
   (( RUNTIME_BYTES > 0 && RUNTIME_BYTES <= MAX_RUNTIME_BYTES )) || fail "local runtime exceeds the 32 MiB bound"
   [[ "$(sha256_file "$LOCAL_RUNTIME")" == "$LOCAL_DIGEST" ]] || fail "local runtime digest does not match"
-  RUNTIME_SUFFIX=""
-  [[ "$TARGET" == *windows-msvc ]] && RUNTIME_SUFFIX=".exe"
   RUNTIME_ASSET="cargo-rail-action-$TARGET$RUNTIME_SUFFIX"
   RUNTIME_SOURCE="$LOCAL_RUNTIME"
   RUNTIME_DIGEST="$LOCAL_DIGEST"

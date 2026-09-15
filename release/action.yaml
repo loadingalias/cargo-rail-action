@@ -2,6 +2,9 @@ name: Cargo-Rail release
 description: Validate a GitHub release invocation and execute the durable Cargo-Rail transaction.
 author: loadingalias
 inputs:
+  runtime-source:
+    description: "Action runtime authority: authenticated release asset or checked-out source"
+    default: release
   version:
     description: Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock
     default: 0.27.1
@@ -37,6 +40,7 @@ runs:
       id: runtime
       shell: bash
       env:
+        CARGO_RAIL_ACTION_RUNTIME_SOURCE: ${{ inputs.runtime-source }}
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_PACKAGES: ${{ inputs.packages }}
         INPUT_BUMP: ${{ inputs.bump }}

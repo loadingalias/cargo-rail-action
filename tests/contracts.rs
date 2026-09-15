@@ -31,11 +31,15 @@ fn keys(object: &Map<String, Value>) -> BTreeSet<String> {
 fn action_metadata_matches_the_v9_surface() {
     let planner = yaml("action.yaml");
     let cache = yaml("cache/action.yaml");
+    let collect = yaml("cache/collect/action.yaml");
+    let report = yaml("cache/report/action.yaml");
     let setup = yaml("setup/action.yaml");
     let release = yaml("release/action.yaml");
 
     let planner = mapping(&planner, "planner");
     let cache = mapping(&cache, "cache");
+    let collect = mapping(&collect, "collect");
+    let report = mapping(&report, "report");
     let setup = mapping(&setup, "setup");
     let release = mapping(&release, "release");
     assert_eq!(
@@ -45,6 +49,7 @@ fn action_metadata_matches_the_v9_surface() {
             "components".to_string(),
             "evidence".to_string(),
             "repository-token".to_string(),
+            "runtime-source".to_string(),
             "since".to_string(),
             "version".to_string(),
             "working-directory".to_string(),
@@ -66,6 +71,7 @@ fn action_metadata_matches_the_v9_surface() {
             "mode".to_string(),
             "remote".to_string(),
             "root-portability".to_string(),
+            "runtime-source".to_string(),
             "verify-remote".to_string(),
             "version".to_string(),
             "working-directory".to_string(),
@@ -77,7 +83,7 @@ fn action_metadata_matches_the_v9_surface() {
     );
     assert_eq!(
         keys(mapping(field(setup, "inputs"), "setup inputs")),
-        BTreeSet::from(["version".to_string()])
+        BTreeSet::from(["runtime-source".to_string(), "version".to_string()])
     );
     assert_eq!(
         keys(mapping(field(setup, "outputs"), "setup outputs")),
@@ -88,6 +94,13 @@ fn action_metadata_matches_the_v9_surface() {
         ("planner", planner, "$GITHUB_ACTION_PATH/scripts/bootstrap.sh"),
         ("cache", cache, "$GITHUB_ACTION_PATH/../scripts/bootstrap.sh"),
         ("setup", setup, "$GITHUB_ACTION_PATH/../scripts/bootstrap.sh"),
+        (
+            "cache-collect",
+            collect,
+            "$GITHUB_ACTION_PATH/../../scripts/bootstrap.sh",
+        ),
+        ("cache-report", report, "$GITHUB_ACTION_PATH/../../scripts/bootstrap.sh"),
+        ("release", release, "$GITHUB_ACTION_PATH/../scripts/bootstrap.sh"),
     ] {
         let runs = mapping(field(action, "runs"), "runs");
         assert_eq!(field(runs, "using").as_str(), Some("composite"), "{name}");
@@ -95,6 +108,19 @@ fn action_metadata_matches_the_v9_surface() {
         assert_eq!(steps.len(), 1, "{name} must have one composite step");
         let run = field(mapping(&steps[0], "step"), "run").as_str().expect("run string");
         assert_eq!(run, format!("bash \"{bootstrap}\" run {name}"), "{name}");
+        let env = mapping(field(mapping(&steps[0], "step"), "env"), "step environment");
+        assert_eq!(
+            field(env, "CARGO_RAIL_ACTION_RUNTIME_SOURCE").as_str(),
+            Some("${{ inputs.runtime-source }}"),
+            "{name}"
+        );
+    }
+
+    for (name, action) in [("collect", collect), ("report", report), ("release", release)] {
+        assert!(
+            mapping(field(action, "inputs"), "inputs").contains_key("runtime-source"),
+            "{name}"
+        );
     }
 
     let defaults = [planner, cache, setup, release].map(|action| {
@@ -149,7 +175,8 @@ fn public_schemas_reject_unknown_fields_and_bound_release_assets() {
 
 #[test]
 fn cargo_rail_lock_is_the_single_validated_compatibility_authority() {
-    let output = Command::new("bash")
+    let bash = std::env::var_os("CARGO_RAIL_TEST_BASH").unwrap_or_else(|| "bash".into());
+    let output = Command::new(bash)
         .arg(root().join("scripts/read-cargo-rail-lock.sh"))
         .output()
         .expect("read Cargo-Rail lock");

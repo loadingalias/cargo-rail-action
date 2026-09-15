@@ -1,6 +1,10 @@
 name: "Report Cargo-Rail cache results"
 description: "Publish one workflow cache summary from bounded job records, including missing-job coverage."
 inputs:
+  runtime-source:
+    description: "Action runtime authority: authenticated release asset or checked-out source"
+    required: false
+    default: "release"
   records-directory:
     description: "Directory containing the downloaded job JSON records"
     required: true
@@ -13,6 +17,7 @@ runs:
     - name: Report workflow cache results
       shell: bash
       env:
+        CARGO_RAIL_ACTION_RUNTIME_SOURCE: ${{ inputs.runtime-source }}
         INPUT_RECORDS_DIRECTORY: ${{ inputs.records-directory }}
         INPUT_EXPECTED_JOBS: ${{ inputs.expected-jobs }}
       run: bash "$GITHUB_ACTION_PATH/../../scripts/bootstrap.sh" run cache-report

@@ -1,6 +1,10 @@
 name: "Collect Cargo-Rail cache measurements"
 description: "Collect one bounded job record after all cache-using commands. Publishes no job summary."
 inputs:
+  runtime-source:
+    description: "Action runtime authority: authenticated release asset or checked-out source"
+    required: false
+    default: "release"
   job:
     description: "Unique job label, including matrix dimensions when applicable"
     required: true
@@ -18,6 +22,7 @@ runs:
       id: runtime
       shell: bash
       env:
+        CARGO_RAIL_ACTION_RUNTIME_SOURCE: ${{ inputs.runtime-source }}
         INPUT_JOB: ${{ inputs.job }}
         INPUT_OUTPUT_DIRECTORY: ${{ inputs.output-directory }}
       run: bash "$GITHUB_ACTION_PATH/../../scripts/bootstrap.sh" run cache-collect

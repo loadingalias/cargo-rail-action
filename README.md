@@ -6,6 +6,11 @@ Version 9 uses one prebuilt Rust runtime with verified release checksums.
 Bootstrap preserves the Action checkout’s MIT `LICENSE` beside the runtime and rejects modified
 or missing installed license text.
 
+The `runtime-source` input defaults to `release`.
+Set it to `source` only when validating an immutable Action commit before publishing its runtime release.
+Source mode requires the Action's pinned Rust toolchain, builds the checked-out runtime with `--locked`,
+and authenticates the resulting executable before installation.
+
 Cargo-Rail Action installs the exact Cargo-Rail release recorded in `.github/cargo-rail.lock` by default.
 Set the `version` input to another exact stable release when a workflow needs a different compatible version.
 The Action validates the exact installed binary, plan, cache, and component contracts before use.
@@ -65,7 +70,7 @@ During explicit Surface preparation, Cargo-Rail may install `rustc-dev` and comp
 toolchain-bound compiler fact driver.
 Native cache preparation can also compile that driver from the authenticated source package
 when development components for the selected compiler are already installed.
-Neither the Action runtime nor Cargo-Rail itself is compiled in the workflow.
+Release mode does not compile the Action runtime or Cargo-Rail itself in the workflow.
 
 ## Transfer a plan across jobs
 
