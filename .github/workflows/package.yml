@@ -67,10 +67,7 @@ jobs:
         run: ../.ci-tooling/scripts/tooling/x86_64-win.ps1 -Operation ci
       - name: Install macOS tooling
         if: runner.os == 'macOS'
-        run: |
-          ../.ci-tooling/scripts/tooling/package-unix.sh aarch64-apple-darwin
-          expected="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
-          rustup component add --toolchain "$expected" clippy rustfmt
+        run: ../.ci-tooling/scripts/tooling/package-unix.sh aarch64-apple-darwin ci
       - name: Validate the active toolchain
         run: |
           expected="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
