@@ -10,7 +10,8 @@ A Cargo-Rail release does not require an Action release when the Action contract
 | ---------------------------------- | ----------------------------------- | -------- |
 | Action package and runtime version | `Cargo.toml`                        | Bootstrap, runtime manifest, exact Action release |
 | Tested Cargo-Rail release          | `.github/cargo-rail.lock` `version` | Package and release workflows |
-| Matching Cargo-Rail source         | `.github/cargo-rail.lock` `commit`  | CI tooling and source contract tests |
+| Matching release source            | `.github/cargo-rail.lock` `commit`  | Push and pull-request contract tests |
+| CI tooling source                  | `.github/cargo-rail.lock` `tooling` | Package workflow tool installation |
 | Public Cargo-Rail selection        | Action `version` input              | Calling workflow |
 | Compatible Action alias            | `.config/rail.toml`                 | Cargo-Rail release publication |
 
@@ -30,8 +31,8 @@ They change local or repository source only; the verification commands do not pu
    gh attestation verify "${CARGO_RAIL_ARCHIVE}" --repo loadingalias/cargo-rail
    ```
 
-1. Set `version` and the dereferenced release commit in `.github/cargo-rail.lock`.
-   Change both lines together.
+1. Set `version` and `commit` in `.github/cargo-rail.lock` to the exact Cargo-Rail release and its dereferenced tag
+   commit. Set `tooling` independently to the reviewed Cargo-Rail commit that owns the Action's CI tool installation.
 
 1. Validate the lock:
 
@@ -39,7 +40,8 @@ They change local or repository source only; the verification commands do not pu
    bash scripts/read-cargo-rail-lock.sh
    ```
 
-   The command prints one exact stable version and one full lowercase commit SHA.
+   The command prints one exact stable version, its full lowercase release commit SHA, and one full lowercase tooling
+   commit SHA.
 
 1. Run the complete local Action lane:
 
@@ -51,7 +53,8 @@ They change local or repository source only; the verification commands do not pu
    ```
 
 1. Push the reviewed lock update through normal CI.
-   CI checks the locked Cargo-Rail source but does not upload release assets.
+   CI builds and checks the locked release source with tooling from the separately pinned tooling commit. It does not
+   upload release assets.
 
 ## Release the Action
 

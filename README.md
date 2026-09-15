@@ -329,8 +329,9 @@ Outputs are `transaction-id`, `release-sha`, `state`, and `run-url`.
 See the [Cargo-Rail release guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md) for the complete workflow contract.
 
 The public Actions default to the exact Cargo-Rail release in `.github/cargo-rail.lock`.
-The release and package workflows read that version and its source commit from the same lock.
-Update that file only after publishing and verifying the selected Cargo-Rail release.
+The release and package workflows read that version and its release commit from the same lock.
+The package workflow reads the independent `tooling` commit when it installs CI tools.
+Update `version` and `commit` only after publishing and verifying the selected Cargo-Rail release.
 
 Push and pull-request CI call the same package workflow used for release validation,
 but only a direct release-validation dispatch uploads runtime assets.
@@ -355,8 +356,8 @@ Cache setup uses an isolated temporary Cargo home;
 the tests do not publish releases or contact remote cache storage.
 After updating `.github/cargo-rail.lock`, use `just check-locked-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH` to read the expected version from the lock.
 
-Push and pull-request CI build authenticated Cargo-Rail archives from the exact source commit pinned
-in `.github/cargo-rail.lock`.
+Push and pull-request CI build authenticated Cargo-Rail archives from the exact release source pinned by `commit`.
+Tool installation uses the independently pinned `tooling` commit.
 Release-validation dispatches download the published Cargo-Rail version from the same lock.
 Both paths run the same independent contract tests.
 Update the lock's version and commit together after publishing Cargo-Rail and

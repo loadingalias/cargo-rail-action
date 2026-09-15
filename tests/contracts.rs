@@ -174,7 +174,7 @@ fn public_schemas_reject_unknown_fields_and_bound_release_assets() {
 }
 
 #[test]
-fn cargo_rail_lock_is_the_single_validated_compatibility_authority() {
+fn cargo_rail_lock_separates_release_and_tooling_authority() {
     let bash = std::env::var_os("CARGO_RAIL_TEST_BASH").unwrap_or_else(|| "bash".into());
     let output = Command::new(bash)
         .arg(root().join("scripts/read-cargo-rail-lock.sh"))
@@ -186,15 +186,22 @@ fn cargo_rail_lock_is_the_single_validated_compatibility_authority() {
 
     let values = String::from_utf8(output.stdout).unwrap();
     let fields = values.lines().collect::<Vec<_>>();
-    assert_eq!(fields.len(), 2);
+    assert_eq!(fields.len(), 3);
     assert!(fields[0].strip_prefix("version=").is_some_and(|version| {
         semver::Version::parse(version).is_ok_and(|version| version.pre.is_empty() && version.build.is_empty())
     }));
-    assert!(
-        fields[1]
-            .strip_prefix("commit=")
-            .is_some_and(|commit| commit.len() == 40 && commit.bytes().all(|byte| byte.is_ascii_hexdigit()))
-    );
+    assert!(fields[1].strip_prefix("commit=").is_some_and(|commit| {
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    }));
+    assert!(fields[2].strip_prefix("tooling=").is_some_and(|commit| {
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    }));
 }
 
 #[test]
@@ -260,11 +267,19 @@ fn package_workflow_produces_every_authenticated_runtime() {
         lock["run"],
         "bash scripts/read-cargo-rail-lock.sh >> \"$GITHUB_OUTPUT\""
     );
+    let tooling = steps
+        .iter()
+        .find(|step| step["name"] == "Checkout locked Cargo-Rail tooling")
+        .expect("locked tooling checkout");
+    assert_eq!(tooling["with"]["ref"], "${{ steps.cargo-rail.outputs.tooling }}");
+    assert_eq!(tooling["with"]["path"], ".ci-tooling");
     let source = steps
         .iter()
-        .find(|step| step["name"] == "Checkout locked Cargo-Rail source and tooling")
-        .expect("locked source checkout");
+        .find(|step| step["name"] == "Checkout locked Cargo-Rail release source")
+        .expect("locked release source checkout");
+    assert_eq!(source["if"], "github.event_name != 'workflow_dispatch'");
     assert_eq!(source["with"]["ref"], "${{ steps.cargo-rail.outputs.commit }}");
+    assert_eq!(source["with"]["path"], ".cargo-rail-source");
     for (name, command) in [
         (
             "Install Linux tooling",
@@ -309,6 +324,12 @@ fn package_workflow_produces_every_authenticated_runtime() {
             .contains("https://github.com/loadingalias/cargo-rail/releases/download/v$CARGO_RAIL_VERSION")
     );
     assert!(!contract["run"].as_str().unwrap().contains("/releases/latest/"));
+    assert!(
+        contract["run"]
+            .as_str()
+            .unwrap()
+            .contains("$GITHUB_WORKSPACE/.cargo-rail-source")
+    );
     assert_eq!(
         contract["env"]["CARGO_RAIL_VERSION"],
         "${{ steps.cargo-rail.outputs.version }}"

@@ -49,12 +49,20 @@ jobs:
       - name: Read the Cargo-Rail lock
         id: cargo-rail
         run: bash scripts/read-cargo-rail-lock.sh >> "$GITHUB_OUTPUT"
-      - name: Checkout locked Cargo-Rail source and tooling
+      - name: Checkout locked Cargo-Rail tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: loadingalias/cargo-rail
+          ref: ${{ steps.cargo-rail.outputs.tooling }}
+          path: .ci-tooling
+          persist-credentials: false
+      - name: Checkout locked Cargo-Rail release source
+        if: github.event_name != 'workflow_dispatch'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: loadingalias/cargo-rail
           ref: ${{ steps.cargo-rail.outputs.commit }}
-          path: .ci-tooling
+          path: .cargo-rail-source
           persist-credentials: false
       - name: Install Linux tooling
         if: runner.os == 'Linux'
@@ -120,7 +128,7 @@ jobs:
             done
           else
             (
-              cd "$GITHUB_WORKSPACE/.ci-tooling"
+              cd "$GITHUB_WORKSPACE/.cargo-rail-source"
               cargo fetch --locked
               cargo fetch --locked --manifest-path tools/compiler-fact-driver/Cargo.toml
               just package-release "$temporary"
