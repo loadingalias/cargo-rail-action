@@ -171,7 +171,7 @@ fn cargo_rail_lock_is_the_single_validated_compatibility_authority() {
 }
 
 #[test]
-fn ci_reuses_the_package_contract_without_release_authority() {
+fn ci_reuses_the_package_contract_with_bounded_permissions() {
     let ci = yaml(".github/workflows/ci.yml");
     assert_eq!(
         keys(mapping(&ci["on"], "CI triggers")),
@@ -179,7 +179,22 @@ fn ci_reuses_the_package_contract_without_release_authority() {
     );
     assert_eq!(ci["permissions"]["contents"], "read");
     assert_eq!(ci["jobs"]["validate"]["uses"], "./.github/workflows/package.yml");
+    assert_eq!(
+        keys(mapping(
+            &ci["jobs"]["validate"]["permissions"],
+            "reusable package permissions"
+        )),
+        BTreeSet::from([
+            "artifact-metadata".into(),
+            "attestations".into(),
+            "contents".into(),
+            "id-token".into(),
+        ])
+    );
     assert_eq!(ci["jobs"]["validate"]["permissions"]["contents"], "read");
+    assert_eq!(ci["jobs"]["validate"]["permissions"]["id-token"], "write");
+    assert_eq!(ci["jobs"]["validate"]["permissions"]["attestations"], "write");
+    assert_eq!(ci["jobs"]["validate"]["permissions"]["artifact-metadata"], "write");
 }
 
 #[test]
