@@ -20,8 +20,9 @@ use clap::{Args, Parser, Subcommand};
 const LICENSE_BYTES: &[u8] = include_bytes!("../LICENSE");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_RUNTIME_BYTES: u64 = 32 * 1024 * 1024;
-const QUALIFIED_TARGETS: [&str; 3] = [
+const QUALIFIED_TARGETS: [&str; 4] = [
     "aarch64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
     "x86_64-pc-windows-msvc",
     "x86_64-unknown-linux-gnu",
 ];
@@ -176,6 +177,10 @@ enum ReleaseOperation {
 }
 
 fn build_target() -> &'static str {
+    #[cfg(all(target_os = "linux", target_arch = "aarch64", target_env = "gnu"))]
+    {
+        return "aarch64-unknown-linux-gnu";
+    }
     #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     {
         return "x86_64-unknown-linux-gnu";

@@ -63,7 +63,7 @@ pub(crate) fn run_planner() -> Result<()> {
             .current_dir(&inputs.workspace)
             .args(["rail", "surface", "--prepare", "-f", "json"]);
         let output = run_bounded(&mut command, MAX_SUBPROCESS_BYTES, MAX_SUBPROCESS_BYTES)?;
-        validate_machine_success(&output, "surface", "prepare", "Surface preparation")?;
+        validate_machine_result(&output, "surface", "prepare", "ready", "Surface preparation")?;
     }
 
     let runner_temp = canonical_directory_from_env("RUNNER_TEMP")?;
@@ -563,10 +563,11 @@ fn is_executable_file(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
 }
 
-pub(crate) fn validate_machine_success(
+pub(crate) fn validate_machine_result(
     output: &BoundedOutput,
     command_name: &str,
     mode: &str,
+    result: &str,
     subject: &str,
 ) -> Result<Value> {
     if !output.status.success() {
@@ -580,7 +581,7 @@ pub(crate) fn validate_machine_success(
         ("schema_version", Value::from(1)),
         ("command", Value::from(command_name)),
         ("mode", Value::from(mode)),
-        ("result", Value::from("success")),
+        ("result", Value::from(result)),
         ("exit_code", Value::from(0)),
     ] {
         if object.get(field) != Some(&expected) {
@@ -834,6 +835,81 @@ mod tests {
                 .to_string()
                 .contains("compiler unavailable")
         );
+    }
+
+    #[test]
+    fn machine_result_validation_requires_the_command_specific_outcome() {
+        let status = Command::new("git")
+            .arg("--version")
+            .output()
+            .expect("git fixture")
+            .status;
+        let output = BoundedOutput {
+            status,
+            stdout: serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1,
+                "command": "surface",
+                "mode": "prepare",
+                "result": "ready",
+                "exit_code": 0,
+            }))
+            .expect("JSON"),
+            stderr: Vec::new(),
+        };
+
+        let accepted = validate_machine_result(&output, "surface", "prepare", "ready", "Surface preparation")
+            .expect("Surface readiness result");
+        assert_eq!(accepted["result"], "ready");
+        let rejected = validate_machine_result(&output, "surface", "prepare", "success", "Surface preparation")
+            .expect_err("a cache-style success result must not satisfy Surface readiness");
+        assert_eq!(rejected.kind, crate::ErrorKind::Rejected);
+        assert_eq!(rejected.to_string(), "Surface preparation returned invalid result");
+    }
+
+    #[test]
+    #[ignore = "requires the current Cargo-Rail source binary and authenticated sibling components"]
+    fn source_surface_preparation_matches_the_action_result_contract() {
+        let binary = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_BINARY").expect("source binary"));
+        let workspace = create_private_directory(&std::env::temp_dir(), "rail-source-surface").unwrap();
+        std::fs::write(
+            workspace.join("Cargo.toml"),
+            "[package]\nname='surface-contract'\nversion='0.1.0'\nedition='2024'\n[lib]\npath='lib.rs'\n",
+        )
+        .unwrap();
+        std::fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 7 }\n").unwrap();
+        for arguments in [
+            vec!["init", "--initial-branch=main"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=Contract Test",
+                "-c",
+                "user.email=contract@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "Initial fixture",
+            ],
+        ] {
+            let output = Command::new("git")
+                .current_dir(&workspace)
+                .args(arguments)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+        }
+
+        let mut command = Command::new(binary);
+        command
+            .current_dir(&workspace)
+            .args(["rail", "surface", "--prepare", "-f", "json"]);
+        let output = run_bounded(&mut command, MAX_SUBPROCESS_BYTES, MAX_SUBPROCESS_BYTES).unwrap();
+        let value = validate_machine_result(&output, "surface", "prepare", "ready", "Surface preparation")
+            .expect("source Surface preparation contract");
+        assert_eq!(value["result"], "ready");
+        assert_eq!(value["exit_code"], 0);
+        std::fs::remove_dir_all(workspace).unwrap();
     }
 
     #[test]

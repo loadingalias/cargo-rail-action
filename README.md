@@ -274,11 +274,12 @@ the Action does not infer impact from filenames or explanation prose.
 
 V9.0 advertises exactly:
 
-| Runner              | Native target              | Requirement |
-| ------------------- | -------------------------- | ----------- |
-| Linux x86-64        | `x86_64-unknown-linux-gnu` | glibc 2.39 or newer |
-| macOS Apple silicon | `aarch64-apple-darwin`     | native execution |
-| Windows x86-64      | `x86_64-pc-windows-msvc`   | the runner's Bash shell |
+| Runner              | Native target               | Requirement |
+| ------------------- | --------------------------- | ----------- |
+| Linux x86-64        | `x86_64-unknown-linux-gnu`  | glibc 2.39 or newer |
+| Linux ARM64         | `aarch64-unknown-linux-gnu` | glibc 2.39 or newer |
+| macOS Apple silicon | `aarch64-apple-darwin`      | native execution |
+| Windows x86-64      | `x86_64-pc-windows-msvc`    | the runner's Bash shell |
 
 Bootstrap requires Bash, Git, `curl`, and `sha256sum` or `shasum`.
 Unsupported hosts fail before Cargo-Rail download or workspace mutation.

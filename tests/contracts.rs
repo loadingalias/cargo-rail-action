@@ -198,12 +198,16 @@ fn package_workflow_produces_every_authenticated_runtime() {
         targets,
         BTreeSet::from([
             "aarch64-apple-darwin",
+            "aarch64-unknown-linux-gnu",
             "x86_64-pc-windows-msvc",
             "x86_64-unknown-linux-gnu",
         ])
     );
     let runners: BTreeSet<_> = rows.iter().map(|row| row["runner"].as_str().unwrap()).collect();
-    assert_eq!(runners, BTreeSet::from(["macos-15", "ubuntu-24.04", "windows-2025"]));
+    assert_eq!(
+        runners,
+        BTreeSet::from(["macos-15", "ubuntu-24.04", "ubuntu-24.04-arm", "windows-2025"])
+    );
     assert_eq!(check["permissions"], Value::Null);
     let steps = check["steps"].as_array().unwrap();
     let lock = steps
@@ -222,7 +226,7 @@ fn package_workflow_produces_every_authenticated_runtime() {
     for (name, command) in [
         (
             "Install Linux tooling",
-            "../.ci-tooling/scripts/tooling/x86_64-linux.sh ci",
+            "../.ci-tooling/scripts/tooling/\"$PLATFORM\".sh ci",
         ),
         (
             "Install Windows tooling",
@@ -234,6 +238,9 @@ fn package_workflow_produces_every_authenticated_runtime() {
             .find(|step| step["name"] == name)
             .expect("native tooling step");
         assert_eq!(step["run"], command, "tooling requires an explicit operation");
+        if name == "Install Linux tooling" {
+            assert_eq!(step["env"]["PLATFORM"], "${{ matrix.tooling }}");
+        }
     }
     let upload = steps.last().unwrap();
     assert_eq!(upload["with"]["name"], "runtime-${{ matrix.target }}");

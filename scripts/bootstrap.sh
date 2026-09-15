@@ -56,24 +56,26 @@ else
 fi
 
 case "${RUNNER_OS:-}-${RUNNER_ARCH:-}" in
-  Linux-X64)
-    TARGET="x86_64-unknown-linux-gnu"
-    if command -v getconf >/dev/null 2>&1; then
-      GLIBC_VERSION="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
-    else
-      GLIBC_VERSION="$(ldd --version 2>&1 | head -n 1 | grep -Eo '[0-9]+\.[0-9]+' | tail -n 1)"
-    fi
-    [[ "$GLIBC_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || fail "Cargo-Rail Action v9 requires GNU libc 2.39 or newer"
-    GLIBC_MAJOR="${GLIBC_VERSION%%.*}"
-    GLIBC_MINOR="${GLIBC_VERSION#*.}"
-    if (( GLIBC_MAJOR < 2 || (GLIBC_MAJOR == 2 && GLIBC_MINOR < 39) )); then
-      fail "Cargo-Rail Action v9 requires GNU libc 2.39 or newer; found $GLIBC_VERSION"
-    fi
-    ;;
+  Linux-ARM64) TARGET="aarch64-unknown-linux-gnu" ;;
+  Linux-X64) TARGET="x86_64-unknown-linux-gnu" ;;
   macOS-ARM64) TARGET="aarch64-apple-darwin" ;;
   Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
   *) fail "Cargo-Rail Action v9 does not support ${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}" ;;
 esac
+
+if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
+  if command -v getconf >/dev/null 2>&1; then
+    GLIBC_VERSION="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"
+  else
+    GLIBC_VERSION="$(ldd --version 2>&1 | head -n 1 | grep -Eo '[0-9]+\.[0-9]+' | tail -n 1)"
+  fi
+  [[ "$GLIBC_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || fail "Cargo-Rail Action v9 requires GNU libc 2.39 or newer"
+  GLIBC_MAJOR="${GLIBC_VERSION%%.*}"
+  GLIBC_MINOR="${GLIBC_VERSION#*.}"
+  if (( GLIBC_MAJOR < 2 || (GLIBC_MAJOR == 2 && GLIBC_MINOR < 39) )); then
+    fail "Cargo-Rail Action v9 requires GNU libc 2.39 or newer; found $GLIBC_VERSION"
+  fi
+fi
 
 LOCAL_RUNTIME=""
 LOCAL_DIGEST=""
@@ -151,7 +153,7 @@ else
   [[ "$HEADER_LINE" == $'cargo-rail-action-runtime-v1\t'"$RUNTIME_VERSION" ]] \
     || fail "runtime manifest version header is incompatible"
 
-  EXPECTED_TARGETS=$'aarch64-apple-darwin\nx86_64-pc-windows-msvc\nx86_64-unknown-linux-gnu'
+  EXPECTED_TARGETS=$'aarch64-apple-darwin\naarch64-unknown-linux-gnu\nx86_64-pc-windows-msvc\nx86_64-unknown-linux-gnu'
   OBSERVED_TARGETS=""
   RUNTIME_ASSET=""
   RUNTIME_BYTES=""
@@ -166,6 +168,7 @@ else
       || fail "runtime manifest contains invalid authority"
     case "$ROW_TARGET" in
       aarch64-apple-darwin) EXPECTED_ASSET="cargo-rail-action-aarch64-apple-darwin" ;;
+      aarch64-unknown-linux-gnu) EXPECTED_ASSET="cargo-rail-action-aarch64-unknown-linux-gnu" ;;
       x86_64-pc-windows-msvc) EXPECTED_ASSET="cargo-rail-action-x86_64-pc-windows-msvc.exe" ;;
       x86_64-unknown-linux-gnu) EXPECTED_ASSET="cargo-rail-action-x86_64-unknown-linux-gnu" ;;
       *) fail "runtime manifest advertises an unsupported target" ;;

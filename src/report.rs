@@ -200,7 +200,7 @@ pub(crate) fn begin(binary: &Path, workspace: &Path, configuration: &str) -> Res
         .arg(&context.recording)
         .args(["-f", "json"]);
     let output = repository::run_bounded(&mut command, MAX_RECORD_BYTES as usize, MAX_RECORD_BYTES as usize)?;
-    repository::validate_machine_success(&output, "cache", "report", "Cache recording initialization")?;
+    repository::validate_machine_result(&output, "cache", "report", "success", "Cache recording initialization")?;
     let context_path = directory.join("context.json");
     write_new(&context_path, &context)?;
     github::publish_environment(&[(RECORDING_ENV, &context.recording), (CONTEXT_ENV, &context_path)])
@@ -319,7 +319,8 @@ fn collect_measurements(context: &Context) -> Result<Measurements> {
         .arg(&context.recording)
         .args(["-f", "json"]);
     let output = repository::run_bounded(&mut command, MAX_RECORD_BYTES as usize, MAX_RECORD_BYTES as usize)?;
-    let value = repository::validate_machine_success(&output, "cache", "report", "Cache measurement collection")?;
+    let value =
+        repository::validate_machine_result(&output, "cache", "report", "success", "Cache measurement collection")?;
     if value["operation"] != "finish" {
         return Err(ActionError::rejected("cache recording did not finish"));
     }
@@ -335,7 +336,7 @@ fn collect_storage(context: &Context) -> Result<Storage> {
         .current_dir(&context.workspace)
         .args(["rail", "cache", "status", "--scope", "local", "-f", "json"]);
     let output = repository::run_bounded(&mut command, 1024 * 1024, MAX_RECORD_BYTES as usize)?;
-    let value = repository::validate_machine_success(&output, "cache", "status", "Cache storage collection")?;
+    let value = repository::validate_machine_result(&output, "cache", "status", "success", "Cache storage collection")?;
     crate::cache::validate_report_status(
         &value,
         &context.configuration.mode,
@@ -611,8 +612,9 @@ mod tests {
             .args(["-f", "json"]);
         let output = repository::run_bounded(&mut command, MAX_RECORD_BYTES as usize, MAX_RECORD_BYTES as usize)
             .expect("source recording start");
-        let value = repository::validate_machine_success(&output, "cache", "report", "source recording start")
-            .expect("source recording envelope");
+        let value =
+            repository::validate_machine_result(&output, "cache", "report", "success", "source recording start")
+                .expect("source recording envelope");
         assert_eq!(value["operation"], "start");
         let context = Context {
             schema_version: 1,

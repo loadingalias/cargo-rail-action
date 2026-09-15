@@ -290,6 +290,7 @@ fn bootstrap_downloads_runtime_only_when_installation_is_absent() {
     let mut manifest = format!("cargo-rail-action-runtime-v1\t{version}\n");
     for target in [
         "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
         "x86_64-pc-windows-msvc",
         "x86_64-unknown-linux-gnu",
     ] {
@@ -325,13 +326,13 @@ cp "$FIXTURES/$asset" "$output"
     let path =
         std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())))
             .unwrap();
-    let run = || {
+    let run = |runner_os: &str, runner_arch: &str| {
         Command::new("bash")
             .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/bootstrap.sh"))
             .args(["run", "planner"])
             .env("PATH", &path)
-            .env("RUNNER_OS", "macOS")
-            .env("RUNNER_ARCH", "ARM64")
+            .env("RUNNER_OS", runner_os)
+            .env("RUNNER_ARCH", runner_arch)
             .env("RUNNER_TEMP", &runner_temp)
             .env("RUNNER_TOOL_CACHE", &cache)
             .env("FIXTURES", &fixtures)
@@ -343,14 +344,14 @@ cp "$FIXTURES/$asset" "$output"
     };
     let asset = "cargo-rail-action-aarch64-apple-darwin";
     let release_url = format!("https://github.com/loadingalias/cargo-rail-action/releases/download/v{version}");
-    let first = run();
+    let first = run("macOS", "ARM64");
     assert!(first.status.success(), "{first:?}");
     assert_eq!(
         fs::read_to_string(&downloads).unwrap(),
         format!("{release_url}/{manifest_name}\n{release_url}/{asset}\n")
     );
     fs::write(&downloads, "").unwrap();
-    let reused = run();
+    let reused = run("macOS", "ARM64");
     assert!(reused.status.success(), "{reused:?}");
     assert_eq!(
         fs::read_to_string(&downloads).unwrap(),
@@ -395,7 +396,7 @@ cp "$FIXTURES/$asset" "$output"
         } else {
             fs::remove_file(&license).unwrap();
         }
-        let rejected = run();
+        let rejected = run("macOS", "ARM64");
         assert!(!rejected.status.success(), "{rejected:?}");
         assert!(String::from_utf8_lossy(&rejected.stderr).contains("immutable runtime destination is corrupt"));
         assert_eq!(fs::read_to_string(&invocations).unwrap(), calls);
@@ -405,7 +406,7 @@ cp "$FIXTURES/$asset" "$output"
     corrupt[0] = b'x';
     fs::write(installed, corrupt).unwrap();
     fs::write(&downloads, "").unwrap();
-    let rejected = run();
+    let rejected = run("macOS", "ARM64");
     assert!(!rejected.status.success(), "{rejected:?}");
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("immutable runtime destination is corrupt"));
     assert_eq!(
@@ -413,6 +414,20 @@ cp "$FIXTURES/$asset" "$output"
         format!("{release_url}/{manifest_name}\n")
     );
     assert_eq!(fs::read_to_string(&invocations).unwrap(), calls);
+    #[cfg(target_os = "linux")]
+    {
+        fs::write(&downloads, "").unwrap();
+        let arm = run("Linux", "ARM64");
+        assert!(arm.status.success(), "{arm:?}");
+        let arm_asset = "cargo-rail-action-aarch64-unknown-linux-gnu";
+        assert_eq!(
+            fs::read_to_string(&downloads).unwrap(),
+            format!("{release_url}/{manifest_name}\n{release_url}/{arm_asset}\n")
+        );
+        assert!(fs::read_to_string(&invocations).unwrap().ends_with(&format!(
+            "self-check --expect-version {version} --expect-target aarch64-unknown-linux-gnu\nrun planner\n"
+        )));
+    }
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -654,6 +669,7 @@ fn runtime_packaging_requires_the_complete_qualified_set_and_exact_license() {
     let mut assets = Vec::new();
     for name in [
         "cargo-rail-action-aarch64-apple-darwin",
+        "cargo-rail-action-aarch64-unknown-linux-gnu",
         "cargo-rail-action-x86_64-pc-windows-msvc.exe",
         "cargo-rail-action-x86_64-unknown-linux-gnu",
         "LICENSE",
@@ -687,7 +703,7 @@ fn runtime_packaging_requires_the_complete_qualified_set_and_exact_license() {
     let completed = invoke();
     assert!(completed.status.success(), "{completed:?}");
     let contents = fs::read_to_string(&manifest).unwrap();
-    assert_eq!(contents.lines().count(), 4);
+    assert_eq!(contents.lines().count(), 5);
     assert!(contents.starts_with(&format!(
         "cargo-rail-action-runtime-v1\t{}\n",
         env!("CARGO_PKG_VERSION")

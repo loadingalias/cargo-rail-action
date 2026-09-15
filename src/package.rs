@@ -116,6 +116,7 @@ fn read_bounded(path: &Path, maximum: u64, subject: &str) -> Result<Vec<u8>> {
 fn runtime_name(target: &str) -> &'static str {
     match target {
         "aarch64-apple-darwin" => "cargo-rail-action-aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu" => "cargo-rail-action-aarch64-unknown-linux-gnu",
         "x86_64-pc-windows-msvc" => "cargo-rail-action-x86_64-pc-windows-msvc.exe",
         "x86_64-unknown-linux-gnu" => "cargo-rail-action-x86_64-unknown-linux-gnu",
         _ => "",

@@ -1200,6 +1200,7 @@ mod tests {
             QUALIFIED_TARGETS.map(cargo_rail_archive_name),
             [
                 "cargo-rail-aarch64-apple-darwin.zip".to_string(),
+                "cargo-rail-aarch64-unknown-linux-gnu.zip".to_string(),
                 "cargo-rail-x86_64-pc-windows-msvc.zip".to_string(),
                 "cargo-rail-x86_64-unknown-linux-gnu.zip".to_string(),
             ]
@@ -1357,6 +1358,7 @@ mod tests {
             .expect("temporary directory");
         for (target, name) in [
             ("aarch64-apple-darwin", "cargo-rail"),
+            ("aarch64-unknown-linux-gnu", "cargo-rail"),
             ("x86_64-unknown-linux-gnu", "cargo-rail"),
             ("x86_64-pc-windows-msvc", "cargo-rail.exe"),
         ] {
@@ -1399,7 +1401,8 @@ mod tests {
     #[test]
     fn cache_archives_and_receipts_require_the_driver_and_source() {
         let temporary = TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-cache-test").unwrap();
-        for (target, extension) in [("aarch64-apple-darwin", ""), ("x86_64-pc-windows-msvc", ".exe")] {
+        for target in QUALIFIED_TARGETS {
+            let extension = if target.contains("windows") { ".exe" } else { "" };
             let components = [
                 ("LICENSE".into(), "license"),
                 (format!("cargo-rail{extension}"), "core"),

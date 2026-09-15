@@ -25,6 +25,11 @@ jobs:
         include:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+            tooling: x86_64-linux
+            timeout: 30
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            tooling: aarch64-linux
             timeout: 30
           - runner: windows-2025
             target: x86_64-pc-windows-msvc
@@ -53,7 +58,9 @@ jobs:
           persist-credentials: false
       - name: Install Linux tooling
         if: runner.os == 'Linux'
-        run: ../.ci-tooling/scripts/tooling/x86_64-linux.sh ci
+        env:
+          PLATFORM: ${{ matrix.tooling }}
+        run: ../.ci-tooling/scripts/tooling/"$PLATFORM".sh ci
       - name: Install Windows tooling
         if: runner.os == 'Windows'
         shell: powershell

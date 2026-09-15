@@ -76,6 +76,8 @@ and the repository enforces immutable releases.
    gh release verify "v${ACTION_VERSION}" --repo loadingalias/cargo-rail-action
    gh attestation verify cargo-rail-action-aarch64-apple-darwin \
      --repo loadingalias/cargo-rail-action
+   gh attestation verify cargo-rail-action-aarch64-unknown-linux-gnu \
+     --repo loadingalias/cargo-rail-action
    gh attestation verify cargo-rail-action-x86_64-pc-windows-msvc.exe \
      --repo loadingalias/cargo-rail-action
    gh attestation verify cargo-rail-action-x86_64-unknown-linux-gnu \
