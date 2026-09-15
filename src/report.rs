@@ -263,15 +263,52 @@ pub(crate) fn collect_action() -> Result<()> {
     github::publish(github::Publication {
         summary: None,
         paths: Vec::new(),
-        outputs: vec![(
-            "record-file".to_string(),
-            path.to_str()
-                .ok_or_else(|| ActionError::rejected("cache record path is not UTF-8"))?
-                .to_string(),
-        )],
+        outputs: vec![("record-file".to_string(), github_output_path(&path)?)],
     })?;
     println!("Cache measurements collected for {job}.");
     Ok(())
+}
+
+fn github_output_path(path: &Path) -> Result<String> {
+    let path = github_compatible_path(path)?;
+    path.into_os_string()
+        .into_string()
+        .map_err(|_| ActionError::rejected("cache record path is not UTF-8"))
+}
+
+#[cfg(not(windows))]
+fn github_compatible_path(path: &Path) -> Result<PathBuf> {
+    Ok(path.to_path_buf())
+}
+
+#[cfg(windows)]
+fn github_compatible_path(path: &Path) -> Result<PathBuf> {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return Ok(path.to_path_buf());
+    };
+    let mut compatible = match prefix.kind() {
+        Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:", char::from(drive).to_ascii_uppercase())),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut raw = std::ffi::OsString::from(r"\\");
+            raw.push(server);
+            raw.push(r"\");
+            raw.push(share);
+            PathBuf::from(raw)
+        }
+        Prefix::Verbatim(_) | Prefix::DeviceNS(_) => {
+            return Err(ActionError::rejected(
+                "cache record path cannot be represented for GitHub artifact upload",
+            ));
+        }
+        _ => return Ok(path.to_path_buf()),
+    };
+    for component in components {
+        compatible.push(component.as_os_str());
+    }
+    Ok(compatible)
 }
 
 fn record_directory(path: &Path, checkout: &Path) -> Result<PathBuf> {
@@ -693,6 +730,15 @@ mod tests {
             record_directory(&outside, &checkout).unwrap(),
             fs::canonicalize(&outside).unwrap()
         );
+        let record = fs::canonicalize(&outside).unwrap().join("job.json");
+        let output = github_output_path(&record).unwrap();
+        assert!(Path::new(&output).is_absolute());
+        assert_eq!(
+            fs::canonicalize(Path::new(&output).parent().unwrap()).unwrap(),
+            fs::canonicalize(&outside).unwrap()
+        );
+        #[cfg(windows)]
+        assert!(!output.starts_with(r"\\?\"));
         #[cfg(unix)]
         {
             let link = root.join("linked");
