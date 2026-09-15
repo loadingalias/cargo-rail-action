@@ -6,9 +6,9 @@ Version 9 uses one prebuilt Rust runtime with verified release checksums.
 Bootstrap preserves the Action checkout’s MIT `LICENSE` beside the runtime and rejects modified
 or missing installed license text.
 
-Cargo-Rail Action v9.0.1 accepts stable Cargo-Rail `0.26.PATCH` and `0.27.PATCH` releases and defaults to `0.27.1`.
-It rejects every other Cargo-Rail minor line and validates the exact installed binary, plan, cache,
-and component contracts before use.
+Cargo-Rail Action installs the latest stable Cargo-Rail release by default.
+Set the `version` input to an exact stable release when a workflow needs a reproducible pin.
+The Action validates the exact installed binary, plan, cache, and component contracts before use.
 The planner requires plan contract v9, including identity-bound impact attribution.
 Regenerate plans from older contracts.
 
@@ -31,8 +31,6 @@ Install your Rust toolchain and command runners, such as nextest, before these s
 
 - uses: loadingalias/cargo-rail-action@v9
   id: rail
-  with:
-    version: 0.27.1
 
 - name: Run selected tests
   shell: bash
@@ -52,6 +50,7 @@ Every selector validates the complete plan, recomputes its canonical identity,
 and asks the exact installed Cargo-Rail to verify the current checkout before emitting stdout.
 Mutating the repository after selector emission and
 before the consuming command remains a caller error.
+The planner publishes `cargo-rail` and the stable `cargo-rail-action` launcher to later steps in the same job.
 
 The planner publishes only:
 
@@ -87,8 +86,6 @@ jobs:
           persist-credentials: false
       - uses: loadingalias/cargo-rail-action@v9
         id: rail
-        with:
-          version: 0.27.1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cargo-rail-plan
@@ -166,7 +163,6 @@ Operational failures, including I/O and failed subprocesses, exit `1`.
 - uses: loadingalias/cargo-rail-action/cache@v9
   id: cache
   with:
-    version: 0.27.1
     remote: s3://cargo-rail-cache/team?region=us-east-1&owner=123456789012
     mode: read
     max-size: 10GiB
@@ -298,8 +294,10 @@ before installing any selected component.
 Use ephemeral hosted runners or equivalently isolated single-tenant runners.
 The runtime validates bounded manifests, checksums, complete archives, component receipts, plans,
 GitHub environment files, and exact versions.
-Checksums bind bytes to the immutable Action or Cargo-Rail release authority;
-they are not an independent publisher signature.
+The runtime downloads each checksum from the same release as its executable or archive.
+That checksum detects inconsistent bytes but is not an independent publisher signature.
+The installer does not verify GitHub artifact attestations.
+Verify the exact release's immutability and attestation before trusting its publication authority.
 
 The planner's `repository-token` is used only for a same-repository Git fetch when required history is absent.
 It is never placed in a URL, argv, repository configuration, output, summary,
@@ -324,13 +322,21 @@ and use full history.
 Outputs are `transaction-id`, `release-sha`, `state`, and `run-url`.
 See the [Cargo-Rail release guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md) for the complete workflow contract.
 
-The Action's own workflow builds its runtime from the reviewed source
-and installs the already released Cargo-Rail engine.
-Runtime packaging only generates the authenticated component manifest.
-Cargo-Rail owns publication and the configured major alias promotion.
-A resumed dispatch can rediscover a merged PR when the merge-event runner was lost;
-it still requires the original prepared tree.
-Publish Cargo-Rail `0.27.1` before releasing the Action at `9.0.1`.
+This repository keeps its public Cargo-Rail default separate from its release engine.
+The public Actions default to `latest`.
+The release and package workflows read one exact Cargo-Rail version and source commit from `.github/cargo-rail.lock`.
+Update that file only after publishing and verifying the selected Cargo-Rail release.
+
+Push and pull-request CI call the same package workflow used for release validation,
+but only a direct release-validation dispatch uploads runtime assets.
+The release workflow runs from `main`, uses the protected `release` environment, and fixes its package selection,
+bump policy, registry publication, and review mode.
+Leave its recovery inputs empty for a new release.
+Supply all three retained values only when Cargo-Rail continues an existing transaction.
+
+Cargo-Rail owns publication and the configured `v9` alias promotion.
+The bootstrap derives the Action runtime release from the package version in `Cargo.toml`.
+See [Release Cargo-Rail Action](docs/releases.md) for the repository-specific procedure.
 
 ## Validate changes
 
@@ -342,13 +348,14 @@ This runs source plan and cache contracts, the real archive installer,
 strict release-record rejection, and release adapter recovery through real Git fixtures.
 Cache setup uses an isolated temporary Cargo home;
 the tests do not publish releases or contact remote cache storage.
+After updating `.github/cargo-rail.lock`, use `just check-locked-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH` to read the expected version from the lock.
 
 Push and pull-request CI build authenticated Cargo-Rail archives from the exact source commit pinned
-in the workflow.
-Update that pin when qualifying newer producer source.
-Release-validation dispatches require the published Cargo-Rail archive.
+in `.github/cargo-rail.lock`.
+Release-validation dispatches download the published Cargo-Rail version from the same lock.
 Both paths run the same independent contract tests.
-Publish Cargo-Rail before dispatching the Action's release validation.
+Update the lock's version and commit together after publishing Cargo-Rail and
+before dispatching the Action release.
 The event selects the archive source; failed downloads never fall back to a source build.
 The current archive contract requires `LICENSE`; older archives without it are rejected.
 Release lookup and download errors fail CI.

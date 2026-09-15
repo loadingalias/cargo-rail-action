@@ -30,9 +30,9 @@ inputs:
     required: false
     default: "false"
   version:
-    description: "Exact compatible Cargo-Rail release to install"
+    description: "Cargo-Rail release to install; defaults to latest stable, or use an exact version to pin"
     required: false
-    default: "0.27.1"
+    default: "latest"
   working-directory:
     description: "Workspace directory used for cache setup"
     required: false

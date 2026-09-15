@@ -15,7 +15,7 @@
   ],
   "properties": {
     "schema_version": { "const": 1 },
-    "cargo_rail": { "type": "string", "pattern": "^0\\.26\\.(0|[1-9][0-9]*)$" },
+    "cargo_rail": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
     "provider": { "enum": ["aws-s3", "azure-blob", "cloudflare-r2", "s3-compatible"] },
     "mode": { "enum": ["read", "read-write"] },
     "max_bytes": { "type": "integer", "minimum": 1 },

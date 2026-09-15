@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUNTIME_VERSION="9.0.1"
-RUNTIME_RELEASE="v9.0.1"
 RUNTIME_MANIFEST="cargo-rail-action-runtime-v1.tsv"
 MAX_MANIFEST_BYTES=65536
 MAX_RUNTIME_BYTES=33554432
@@ -14,6 +12,12 @@ fail() {
   printf '::error::%s\n' "$message" >&2
   exit 1
 }
+
+ACTION_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+RUNTIME_VERSION="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$ACTION_ROOT/Cargo.toml")"
+[[ "$RUNTIME_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+  || fail "Action package version must be an exact stable release"
+RUNTIME_RELEASE="v$RUNTIME_VERSION"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Cargo-Rail Action v9 requires $1"
@@ -96,15 +100,19 @@ RUNNER_TEMP_PATH="$(cd -- "$RUNNER_TEMP_PATH" && pwd -P)"
 BOOTSTRAP_TEMP="$(mktemp -d "$RUNNER_TEMP_PATH/cargo-rail-action-bootstrap.XXXXXX")"
 chmod 700 "$BOOTSTRAP_TEMP"
 PUBLICATION_LOCK=""
+COMMAND_DIRECTORY=""
 cleanup() {
   rm -rf -- "$BOOTSTRAP_TEMP"
+  if [[ -n "$COMMAND_DIRECTORY" ]]; then
+    rm -rf -- "$COMMAND_DIRECTORY"
+  fi
   if [[ -n "$PUBLICATION_LOCK" ]]; then
     rmdir -- "$PUBLICATION_LOCK" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
 
-LICENSE_SOURCE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/LICENSE"
+LICENSE_SOURCE="$ACTION_ROOT/LICENSE"
 [[ -f "$LICENSE_SOURCE" && ! -L "$LICENSE_SOURCE" ]] || fail "Action LICENSE must be a regular non-symbolic file"
 LICENSE_BYTES="$(wc -c < "$LICENSE_SOURCE" | tr -d ' ')"
 (( LICENSE_BYTES > 0 && LICENSE_BYTES <= 65536 )) || fail "Action LICENSE exceeds its 64 KiB bound"
@@ -115,11 +123,8 @@ if [[ -n "$LOCAL_RUNTIME" || -n "$LOCAL_DIGEST" ]]; then
   [[ "$LOCAL_RUNTIME" == /* && "$LOCAL_DIGEST" =~ ^[0-9a-f]{64}$ ]] || fail "local runtime authority is malformed"
   [[ -f "$LOCAL_RUNTIME" && ! -L "$LOCAL_RUNTIME" ]] || fail "local runtime must be a regular non-symbolic file"
   LOCAL_RUNTIME="$(canonical_file "$LOCAL_RUNTIME")"
-  ACTION_ROOT="${GITHUB_ACTION_PATH:-}"
-  [[ -n "$ACTION_ROOT" && -d "$ACTION_ROOT" ]] || fail "GITHUB_ACTION_PATH must name the Action repository"
-  ACTION_ROOT="$(cd -- "$ACTION_ROOT" && pwd -P)"
   if ! contained_by "$LOCAL_RUNTIME" "$ACTION_ROOT" && ! contained_by "$LOCAL_RUNTIME" "$RUNNER_TEMP_PATH"; then
-    fail "local runtime must remain inside GITHUB_ACTION_PATH or RUNNER_TEMP"
+    fail "local runtime must remain inside the Action repository or RUNNER_TEMP"
   fi
   RUNTIME_BYTES="$(wc -c < "$LOCAL_RUNTIME" | tr -d ' ')"
   (( RUNTIME_BYTES > 0 && RUNTIME_BYTES <= MAX_RUNTIME_BYTES )) || fail "local runtime exceeds the 32 MiB bound"
@@ -243,6 +248,20 @@ runtime_destination_is_exact \
   || fail "immutable runtime destination is corrupt; remove $DESTINATION and rerun"
 "$RUNTIME_PATH" self-check --expect-version "$RUNTIME_VERSION" --expect-target "$TARGET" \
   || fail "the installed Action runtime rejected its version or target identity"
+
+GITHUB_PATH_FILE="${GITHUB_PATH:-}"
+[[ -n "$GITHUB_PATH_FILE" && -f "$GITHUB_PATH_FILE" && ! -L "$GITHUB_PATH_FILE" ]] \
+  || fail "GITHUB_PATH must name an existing regular non-symbolic runner-control file"
+COMMAND_DIRECTORY="$(mktemp -d "$RUNNER_TEMP_PATH/cargo-rail-action-command.XXXXXX")"
+chmod 700 "$COMMAND_DIRECTORY"
+COMMAND_PATH="$COMMAND_DIRECTORY/cargo-rail-action"
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$RUNTIME_PATH" > "$COMMAND_PATH"
+chmod 700 "$COMMAND_PATH"
+[[ -f "$COMMAND_PATH" && ! -L "$COMMAND_PATH" ]] \
+  || fail "stable Action command launcher is not a regular non-symbolic file"
+printf '%s\n' "$COMMAND_DIRECTORY" >> "$GITHUB_PATH_FILE" \
+  || fail "cannot publish the stable Action command to GITHUB_PATH"
+
 rm -rf -- "$BOOTSTRAP_TEMP"
 trap - EXIT
 exec "$RUNTIME_PATH" "$@"

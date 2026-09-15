@@ -320,6 +320,8 @@ cp "$FIXTURES/$asset" "$output"
     fs::set_permissions(&curl, fs::Permissions::from_mode(0o700)).unwrap();
     let downloads = directory.join("downloads");
     let invocations = directory.join("invocations");
+    let github_path = directory.join("github-path");
+    fs::write(&github_path, "").unwrap();
     let path =
         std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())))
             .unwrap();
@@ -335,6 +337,7 @@ cp "$FIXTURES/$asset" "$output"
             .env("FIXTURES", &fixtures)
             .env("DOWNLOADS", &downloads)
             .env("INVOCATIONS", &invocations)
+            .env("GITHUB_PATH", &github_path)
             .output()
             .unwrap()
     };
@@ -357,6 +360,28 @@ cp "$FIXTURES/$asset" "$output"
     let expected_calls =
         format!("self-check --expect-version {version} --expect-target aarch64-apple-darwin\nrun planner\n");
     assert_eq!(calls, expected_calls.repeat(2));
+
+    let published_paths = fs::read_to_string(&github_path).unwrap();
+    let command_directories = published_paths.lines().map(PathBuf::from).collect::<Vec<_>>();
+    assert_eq!(command_directories.len(), 2);
+    for command_directory in &command_directories {
+        let launcher = command_directory.join("cargo-rail-action");
+        let metadata = fs::symlink_metadata(&launcher).unwrap();
+        assert!(metadata.is_file() && !metadata.file_type().is_symlink());
+    }
+    let selector_path = std::env::join_paths(
+        std::iter::once(command_directories.last().unwrap().clone()).chain(std::env::split_paths(&path)),
+    )
+    .unwrap();
+    let selector = Command::new("cargo-rail-action")
+        .args(["plan", "is-required", "plan.json", "cargo.test"])
+        .env("PATH", selector_path)
+        .env("INVOCATIONS", &invocations)
+        .output()
+        .unwrap();
+    assert!(selector.status.success(), "{selector:?}");
+    let calls = format!("{}plan is-required plan.json cargo.test\n", expected_calls.repeat(2));
+    assert_eq!(fs::read_to_string(&invocations).unwrap(), calls);
 
     let installed = cache.join(format!(
         "cargo-rail-action/runtime/{version}/aarch64-apple-darwin-{digest}/{asset}"
@@ -663,7 +688,10 @@ fn runtime_packaging_requires_the_complete_qualified_set_and_exact_license() {
     assert!(completed.status.success(), "{completed:?}");
     let contents = fs::read_to_string(&manifest).unwrap();
     assert_eq!(contents.lines().count(), 4);
-    assert!(contents.starts_with("cargo-rail-action-runtime-v1\t9.0.1\n"));
+    assert!(contents.starts_with(&format!(
+        "cargo-rail-action-runtime-v1\t{}\n",
+        env!("CARGO_PKG_VERSION")
+    )));
     for (row, path) in contents.lines().skip(1).zip(&assets) {
         let fields = row.split('\t').collect::<Vec<_>>();
         assert_eq!(fields.len(), 4);

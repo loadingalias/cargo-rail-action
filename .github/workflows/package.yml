@@ -1,0 +1,199 @@
+name: Package
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+    working-directory: action
+
+jobs:
+  check:
+    name: Check / ${{ matrix.target }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            timeout: 30
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            timeout: 60
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            timeout: 60
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: action
+          persist-credentials: false
+      - name: Read the Cargo-Rail lock
+        id: cargo-rail
+        run: bash scripts/read-cargo-rail-lock.sh >> "$GITHUB_OUTPUT"
+      - name: Checkout locked Cargo-Rail source and tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: loadingalias/cargo-rail
+          ref: ${{ steps.cargo-rail.outputs.commit }}
+          path: .ci-tooling
+          persist-credentials: false
+      - name: Install Linux tooling
+        if: runner.os == 'Linux'
+        run: ../.ci-tooling/scripts/tooling/x86_64-linux.sh ci
+      - name: Install Windows tooling
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ../.ci-tooling/scripts/tooling/x86_64-win.ps1 -Operation ci
+      - name: Install macOS tooling
+        if: runner.os == 'macOS'
+        run: |
+          ../.ci-tooling/scripts/tooling/package-unix.sh aarch64-apple-darwin
+          expected="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
+          rustup component add --toolchain "$expected" clippy rustfmt
+      - name: Validate the active toolchain
+        run: |
+          expected="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
+          [[ "$RUSTUP_TOOLCHAIN" == "$expected" ]]
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            printf 'CARGO_RAIL_TEST_BASH=%s\n' "$(cygpath -w "$BASH")" >> "$GITHUB_ENV"
+          fi
+      - name: Check, test, and exercise the packaged runtime
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          just check
+          cargo build --release --locked
+          suffix=""
+          [[ "$TARGET" != *windows-msvc ]] || suffix=.exe
+          runtime="$(pwd -P)/target/release/cargo-rail-action$suffix"
+          if command -v sha256sum >/dev/null; then
+            digest="$(sha256sum "$runtime" | awk '{print $1}')"
+          else
+            digest="$(shasum -a 256 "$runtime" | awk '{print $1}')"
+          fi
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          for _attempt in 1 2; do
+            GITHUB_ACTION_PATH="$(pwd -P)" bash scripts/bootstrap.sh \
+              --local-runtime "$runtime" --local-runtime-sha256 "$digest" \
+              self-check --expect-version "$version" --expect-target "$TARGET"
+          done
+          mkdir -p "$RUNNER_TEMP/runtime-assets"
+          cp "$runtime" "$RUNNER_TEMP/runtime-assets/cargo-rail-action-$TARGET$suffix"
+          cp LICENSE "$RUNNER_TEMP/runtime-assets/LICENSE"
+      - name: Test the stable Action command
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          cargo-rail-action self-check --expect-version "$version" --expect-target "$TARGET"
+      - name: Test the authenticated Cargo-Rail contract
+        env:
+          CARGO_RAIL_VERSION: ${{ steps.cargo-rail.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          temporary="$(mktemp -d)"
+          trap 'rm -rf "$temporary"' EXIT
+          archive="cargo-rail-$TARGET.zip"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            url="https://github.com/loadingalias/cargo-rail/releases/download/v$CARGO_RAIL_VERSION"
+            for asset in "$archive" SHA256SUMS; do
+              curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
+                "$url/$asset" --output "$temporary/$asset"
+            done
+          else
+            (
+              cd "$GITHUB_WORKSPACE/.ci-tooling"
+              cargo fetch --locked
+              cargo fetch --locked --manifest-path tools/compiler-fact-driver/Cargo.toml
+              just package-release "$temporary"
+            )
+          fi
+          awk -v archive="$archive" '$2 == archive' "$temporary/SHA256SUMS" > "$temporary/checksum"
+          [[ "$(wc -l < "$temporary/checksum")" -eq 1 ]]
+          (
+            cd "$temporary"
+            if command -v sha256sum >/dev/null; then
+              sha256sum --check --strict checksum
+            else
+              shasum -a 256 --check --strict checksum
+            fi
+          )
+          suffix=""
+          if [[ "$TARGET" == *windows-msvc ]]; then
+            suffix=.exe
+            # shellcheck disable=SC2016
+            ARCHIVE="$(cygpath -w "$temporary/$archive")" DESTINATION="$(cygpath -w "$temporary")" \
+              powershell -NoProfile -NonInteractive -Command \
+                'Expand-Archive -LiteralPath $env:ARCHIVE -DestinationPath $env:DESTINATION'
+          else
+            unzip -q "$temporary/$archive" -d "$temporary"
+          fi
+          just check-cargo-rail \
+            "$temporary/cargo-rail/cargo-rail$suffix" "$temporary/$archive" "$CARGO_RAIL_VERSION"
+          git diff --exit-code HEAD
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: runtime-${{ matrix.target }}
+          path: ${{ runner.temp }}/runtime-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  collect:
+    name: Collect release assets
+    needs: check
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # Mint the Sigstore signing certificate.
+      attestations: write # Persist the signed provenance.
+      artifact-metadata: write # Record the attested artifact subjects.
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: runtime-*
+          path: ${{ runner.temp }}/runtimes
+      - name: Build the authenticated runtime manifest
+        run: |
+          mkdir "$RUNNER_TEMP/assets"
+          cp "$RUNNER_TEMP"/runtimes/*/cargo-rail-action-* "$RUNNER_TEMP/assets/"
+          for license in "$RUNNER_TEMP"/runtimes/*/LICENSE; do cmp LICENSE "$license"; done
+          cp LICENSE "$RUNNER_TEMP/assets/LICENSE"
+          chmod 700 "$RUNNER_TEMP/assets/cargo-rail-action-x86_64-unknown-linux-gnu"
+          args=()
+          for asset in "$RUNNER_TEMP"/assets/*; do args+=(--asset "$asset"); done
+          "$RUNNER_TEMP/assets/cargo-rail-action-x86_64-unknown-linux-gnu" release package "${args[@]}" \
+            --output "$RUNNER_TEMP/assets/cargo-rail-action-runtime-v1.tsv"
+      - name: Attest executable runtimes
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/assets/cargo-rail-action-*-*-*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-cargo-rail-action-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/assets/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

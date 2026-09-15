@@ -19,7 +19,7 @@ pub(crate) struct ExecuteArgs {
     /// Exact source-built core for coordinated bootstrap; normal actions install the authenticated release.
     #[arg(long)]
     cargo_rail: Option<PathBuf>,
-    #[arg(long, default_value = "0.27.1")]
+    #[arg(long, default_value = "latest")]
     version: String,
     #[arg(long, default_value = "[]")]
     packages: String,
@@ -75,10 +75,12 @@ pub(crate) fn execute(args: &ExecuteArgs) -> Result<()> {
             "release event repository differs from invocation",
         ));
     }
-    install::validate_cargo_rail_version(&args.version)?;
+    install::validate_cargo_rail_selection(&args.version)?;
     let installed = if args.cargo_rail.is_none() {
         Some(install::install_cargo_rail(&args.version, ComponentSet::Core)?)
     } else {
+        install::validate_cargo_rail_version(&args.version)
+            .map_err(|_| ActionError::rejected("--cargo-rail requires an exact stable --version"))?;
         None
     };
     let binary = args
@@ -86,9 +88,12 @@ pub(crate) fn execute(args: &ExecuteArgs) -> Result<()> {
         .as_deref()
         .or_else(|| installed.as_ref().map(|installed| installed.binary()))
         .ok_or_else(|| ActionError::operational("release core is unavailable"))?;
+    let selected_version = installed
+        .as_ref()
+        .map_or(args.version.as_str(), |installed| installed.version());
     let version = run_bounded(Command::new(binary).arg("--version"), 1024, 1024)?;
     if !version.status.success()
-        || String::from_utf8_lossy(&version.stdout).trim() != format!("cargo-rail {}", args.version)
+        || String::from_utf8_lossy(&version.stdout).trim() != format!("cargo-rail {selected_version}")
     {
         return Err(ActionError::rejected(
             "release core version does not match the selected component",

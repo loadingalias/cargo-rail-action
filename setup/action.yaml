@@ -4,9 +4,9 @@ author: "loadingalias"
 
 inputs:
   version:
-    description: "Exact Cargo-Rail release used to create the transferred plan"
+    description: "Cargo-Rail release to install; defaults to latest stable, or use an exact version for a transferred plan"
     required: false
-    default: "0.27.1"
+    default: "latest"
 
 outputs:
   version:
@@ -16,7 +16,7 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Install exact Cargo-Rail plan consumer
+    - name: Install Cargo-Rail plan consumer
       id: runtime
       shell: bash
       env:

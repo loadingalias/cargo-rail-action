@@ -96,7 +96,7 @@ pub(crate) fn run_planner() -> Result<()> {
         summary: Some(plan.render_summary()),
         paths: vec![install::runtime_directory()?, installed.directory().to_path_buf()],
         outputs: vec![
-            ("version".to_string(), inputs.version.clone()),
+            ("version".to_string(), installed.version().to_string()),
             ("plan-file".to_string(), canonical_text(&plan_path)?),
             ("required-work".to_string(), required),
         ],
@@ -114,7 +114,7 @@ pub(crate) fn run_planner() -> Result<()> {
 impl PlannerInputs {
     fn load() -> Result<Self> {
         let version = env_string("INPUT_VERSION")?;
-        install::validate_cargo_rail_version(&version)?;
+        install::validate_cargo_rail_selection(&version)?;
         let components = ComponentSet::planner(&env_string("INPUT_COMPONENTS")?)?;
         let since = optional_env("INPUT_SINCE")?;
         validate_ref_or_empty(&since, "since")?;

@@ -94,11 +94,16 @@ impl ComponentSet {
 
 #[derive(Debug)]
 pub(crate) struct InstalledCargoRail {
+    version: String,
     directory: PathBuf,
     binary: PathBuf,
 }
 
 impl InstalledCargoRail {
+    pub(crate) fn version(&self) -> &str {
+        &self.version
+    }
+
     pub(crate) fn directory(&self) -> &Path {
         &self.directory
     }
@@ -118,6 +123,7 @@ struct ManifestEntry {
 
 #[derive(Debug)]
 struct ComponentManifest {
+    version: String,
     bytes: Vec<u8>,
     entries: Vec<ManifestEntry>,
 }
@@ -130,22 +136,30 @@ struct ArchiveLayout {
 
 pub(crate) fn validate_cargo_rail_version(value: &str) -> Result<()> {
     let components = value.split('.').collect::<Vec<_>>();
-    let valid_numeric = components.len() == 3
+    let valid_numeric = value.len() <= 64
+        && components.len() == 3
         && components.iter().all(|part| {
             !part.is_empty()
                 && part.bytes().all(|byte| byte.is_ascii_digit())
                 && (part.len() == 1 || !part.starts_with('0'))
         });
-    if !valid_numeric || components[0] != "0" || !matches!(components[1], "26" | "27") {
+    if !valid_numeric {
         return Err(ActionError::rejected(
-            "version must be an exact stable Cargo-Rail 0.26 or 0.27 patch release",
+            "version must be an exact stable Cargo-Rail release",
         ));
     }
     Ok(())
 }
 
-pub(crate) fn install_cargo_rail(version: &str, component_set: ComponentSet) -> Result<InstalledCargoRail> {
-    validate_cargo_rail_version(version)?;
+pub(crate) fn validate_cargo_rail_selection(value: &str) -> Result<()> {
+    if value == "latest" {
+        return Ok(());
+    }
+    validate_cargo_rail_version(value)
+}
+
+pub(crate) fn install_cargo_rail(selection: &str, component_set: ComponentSet) -> Result<InstalledCargoRail> {
+    validate_cargo_rail_selection(selection)?;
     let target = build_target();
     if !QUALIFIED_TARGETS.contains(&target) {
         return Err(ActionError::rejected(
@@ -153,22 +167,21 @@ pub(crate) fn install_cargo_rail(version: &str, component_set: ComponentSet) -> 
         ));
     }
     let install_base = installation_base()?;
-    let target_root = install_base.join(version).join(target);
-    std::fs::create_dir_all(&target_root).map_err(|error| {
-        ActionError::operational(format!(
-            "cannot create Cargo-Rail installation root '{}': {error}",
-            target_root.display()
-        ))
-    })?;
-    validate_real_directory(&target_root, &install_base)?;
-    if let Some(installed) = reusable_installation(&target_root, version, target, component_set)? {
-        return Ok(installed);
+    let exact_selection = (selection != "latest").then_some(selection);
+    if let Some(version) = exact_selection {
+        let target_root = installation_target_root(&install_base, version, target)?;
+        if let Some(installed) = reusable_installation(&target_root, version, target, component_set)? {
+            return Ok(installed);
+        }
     }
 
     let runner_temp = canonical_runner_directory("RUNNER_TEMP")?;
     let temporary = TemporaryDirectory::new(&runner_temp, "cargo-rail-download")?;
     let archive_name = cargo_rail_archive_name(target);
-    let release_root = format!("https://github.com/loadingalias/cargo-rail/releases/download/v{version}");
+    let release_root = exact_selection.map_or_else(
+        || "https://github.com/loadingalias/cargo-rail/releases/latest/download".to_string(),
+        |version| format!("https://github.com/loadingalias/cargo-rail/releases/download/v{version}"),
+    );
     let checksum_path = temporary.path().join("SHA256SUMS");
     download(
         &format!("{release_root}/SHA256SUMS"),
@@ -189,24 +202,29 @@ pub(crate) fn install_cargo_rail(version: &str, component_set: ComponentSet) -> 
         return Err(ActionError::rejected(format!("checksum mismatch for {archive_name}")));
     }
 
-    let layout = inspect_archive(&archive_path, version, target, component_set)?;
+    let layout = inspect_archive(&archive_path, exact_selection, target, component_set)?;
+    let version = layout.manifest.version.clone();
+    let target_root = installation_target_root(&install_base, &version, target)?;
+    if let Some(installed) = reusable_installation(&target_root, &version, target, component_set)? {
+        return Ok(installed);
+    }
     let manifest_digest = hex_digest(&layout.manifest.bytes);
     let destination = target_root.join(format!("{}-{manifest_digest}", component_set.as_str()));
     if destination.exists() {
-        return verify_installation(&destination, version, target, component_set, &manifest_digest);
+        return verify_installation(&destination, &version, target, component_set, &manifest_digest);
     }
 
     let stage = TemporaryDirectory::new(&target_root, &format!(".{}-stage", component_set.as_str()))?;
     extract_selected(&archive_path, &layout, component_set, stage.path())?;
     write_receipt(
         stage.path(),
-        version,
+        &version,
         target,
         component_set,
         &manifest_digest,
         &layout.manifest.entries,
     )?;
-    verify_installation(stage.path(), version, target, component_set, &manifest_digest)?;
+    verify_installation(stage.path(), &version, target, component_set, &manifest_digest)?;
     let publication_lock = target_root.join(format!(
         ".{}-{manifest_digest}.publication-lock",
         component_set.as_str()
@@ -216,7 +234,7 @@ pub(crate) fn install_cargo_rail(version: &str, component_set: ComponentSet) -> 
         None => {
             for _ in 0..100 {
                 if destination.exists() {
-                    return verify_installation(&destination, version, target, component_set, &manifest_digest);
+                    return verify_installation(&destination, &version, target, component_set, &manifest_digest);
                 }
                 if !publication_lock.exists() {
                     return Err(ActionError::operational(
@@ -232,7 +250,7 @@ pub(crate) fn install_cargo_rail(version: &str, component_set: ComponentSet) -> 
         }
     };
     if destination.exists() {
-        return verify_installation(&destination, version, target, component_set, &manifest_digest);
+        return verify_installation(&destination, &version, target, component_set, &manifest_digest);
     }
     std::fs::rename(stage.path(), &destination).map_err(|error| {
         ActionError::operational(format!(
@@ -242,7 +260,19 @@ pub(crate) fn install_cargo_rail(version: &str, component_set: ComponentSet) -> 
     })?;
     stage.keep();
     drop(lock);
-    verify_installation(&destination, version, target, component_set, &manifest_digest)
+    verify_installation(&destination, &version, target, component_set, &manifest_digest)
+}
+
+fn installation_target_root(install_base: &Path, version: &str, target: &str) -> Result<PathBuf> {
+    let target_root = install_base.join(version).join(target);
+    std::fs::create_dir_all(&target_root).map_err(|error| {
+        ActionError::operational(format!(
+            "cannot create Cargo-Rail installation root '{}': {error}",
+            target_root.display()
+        ))
+    })?;
+    validate_real_directory(&target_root, install_base)?;
+    Ok(target_root)
 }
 
 pub(crate) fn cargo_rail_archive_name(target: &str) -> String {
@@ -250,15 +280,15 @@ pub(crate) fn cargo_rail_archive_name(target: &str) -> String {
 }
 
 pub(crate) fn run_setup_action() -> Result<()> {
-    let version = env_string("INPUT_VERSION")?;
-    validate_cargo_rail_version(&version)?;
-    let installed = install_cargo_rail(&version, ComponentSet::Core)?;
+    let selection = env_string("INPUT_VERSION")?;
+    validate_cargo_rail_selection(&selection)?;
+    let installed = install_cargo_rail(&selection, ComponentSet::Core)?;
     publish(Publication {
         summary: None,
         paths: vec![runtime_directory()?, installed.directory().to_path_buf()],
-        outputs: vec![("version".to_string(), version.clone())],
+        outputs: vec![("version".to_string(), installed.version().to_string())],
     })?;
-    println!("Cargo-Rail setup ready: {version}");
+    println!("Cargo-Rail setup ready: {}", installed.version());
     Ok(())
 }
 
@@ -450,6 +480,7 @@ fn verify_installation(
     let binary = directory.join(cargo_rail_name(target));
     verify_binary_version(&binary, version)?;
     Ok(InstalledCargoRail {
+        version: version.to_string(),
         directory: directory.to_path_buf(),
         binary,
     })
@@ -543,7 +574,12 @@ fn checksum_for(path: &Path, archive_name: &str) -> Result<String> {
     Ok(selected.remove(0))
 }
 
-fn inspect_archive(path: &Path, version: &str, target: &str, component_set: ComponentSet) -> Result<ArchiveLayout> {
+fn inspect_archive(
+    path: &Path,
+    expected_version: Option<&str>,
+    target: &str,
+    component_set: ComponentSet,
+) -> Result<ArchiveLayout> {
     let (entries, manifests) = inspect_zip(path)?;
     if manifests.len() != 1 {
         return Err(ActionError::rejected(
@@ -556,7 +592,7 @@ fn inspect_archive(path: &Path, version: &str, target: &str, component_set: Comp
         .and_then(Path::to_str)
         .unwrap_or_default()
         .replace('\\', "/");
-    let manifest = parse_component_manifest(manifest_bytes, version, target)?;
+    let manifest = parse_component_manifest(manifest_bytes, expected_version, target)?;
     validate_manifest_inventory(&manifest.entries, target, component_set)?;
     let mut declared = BTreeMap::from([(manifest_path, manifest.bytes.len() as u64)]);
     for entry in &manifest.entries {
@@ -684,7 +720,7 @@ fn safe_archive_name(path: &Path) -> Result<String> {
     Ok(normalized)
 }
 
-fn parse_component_manifest(bytes: Vec<u8>, version: &str, target: &str) -> Result<ComponentManifest> {
+fn parse_component_manifest(bytes: Vec<u8>, expected_version: Option<&str>, target: &str) -> Result<ComponentManifest> {
     if bytes.len() as u64 > MAX_MANIFEST_BYTES || bytes.contains(&b'\r') || !bytes.ends_with(b"\n") {
         return Err(ActionError::rejected(
             "Cargo-Rail component manifest is not canonical LF-only text",
@@ -696,8 +732,17 @@ fn parse_component_manifest(bytes: Vec<u8>, version: &str, target: &str) -> Resu
         return Err(ActionError::rejected("Cargo-Rail component manifest must be ASCII"));
     }
     let mut lines = text.lines();
-    let expected = format!("cargo-rail-components-v1\t{version}\t{target}");
-    if lines.next() != Some(expected.as_str()) {
+    let header = lines.next().unwrap_or_default();
+    let mut fields = header.split('\t');
+    let authority = fields.next().unwrap_or_default();
+    let version = fields.next().unwrap_or_default();
+    let manifest_target = fields.next().unwrap_or_default();
+    if authority != "cargo-rail-components-v1"
+        || fields.next().is_some()
+        || validate_cargo_rail_version(version).is_err()
+        || expected_version.is_some_and(|expected| version != expected)
+        || manifest_target != target
+    {
         return Err(ActionError::rejected(
             "Cargo-Rail component manifest authority is incompatible",
         ));
@@ -716,7 +761,11 @@ fn parse_component_manifest(bytes: Vec<u8>, version: &str, target: &str) -> Resu
     if entries.is_empty() {
         return Err(ActionError::rejected("Cargo-Rail component manifest has no entries"));
     }
-    Ok(ComponentManifest { bytes, entries })
+    Ok(ComponentManifest {
+        version: version.to_string(),
+        bytes,
+        entries,
+    })
 }
 
 fn parse_manifest_entry(line: &str, subject: &str) -> Result<ManifestEntry> {
@@ -1121,14 +1170,14 @@ mod tests {
     }
 
     #[test]
-    fn version_contract_accepts_only_stable_026_and_027_patches() {
-        for accepted in ["0.26.0", "0.26.19", "0.27.0", "0.27.19"] {
+    fn version_contract_accepts_canonical_stable_releases_and_latest_selection() {
+        for accepted in ["0.26.0", "0.27.19", "1.0.0", "12.34.56"] {
             assert!(validate_cargo_rail_version(accepted).is_ok(), "rejected {accepted}");
+            assert!(validate_cargo_rail_selection(accepted).is_ok(), "rejected {accepted}");
         }
+        assert!(validate_cargo_rail_selection("latest").is_ok());
+        assert!(validate_cargo_rail_version("latest").is_err());
         for rejected in [
-            "0.25.9",
-            "0.28.0",
-            "1.0.0",
             "0.26.0-rc.1",
             "0.27.0-rc.1",
             "0.26.0+build",
@@ -1138,8 +1187,10 @@ mod tests {
             "0.27.00",
             "0.27",
             "0.27.0.1",
+            "1.222222222222222222222222222222222222222222222222222222222222222.3",
         ] {
             assert!(validate_cargo_rail_version(rejected).is_err(), "accepted {rejected}");
+            assert!(validate_cargo_rail_selection(rejected).is_err(), "accepted {rejected}");
         }
     }
 
@@ -1320,7 +1371,12 @@ mod tests {
                     ("bundle/cargo-rail-components-v1.tsv", &manifest),
                 ],
             );
-            let layout = inspect_archive(&archive_path, "0.26.0", target, ComponentSet::Core).expect("inspect archive");
+            let layout =
+                inspect_archive(&archive_path, Some("0.26.0"), target, ComponentSet::Core).expect("inspect archive");
+            let latest = inspect_archive(&archive_path, None, target, ComponentSet::Core)
+                .expect("latest selection reads authenticated version");
+            assert_eq!(latest.manifest.version, "0.26.0");
+            assert!(inspect_archive(&archive_path, Some("0.27.0"), target, ComponentSet::Core).is_err());
             let extracted = temporary.path().join(target);
             std::fs::create_dir(&extracted).expect("extract directory");
             extract_selected(&archive_path, &layout, ComponentSet::Core, &extracted).expect("extract component");
@@ -1372,7 +1428,7 @@ mod tests {
                 .collect::<Vec<_>>();
             entries.push(("bundle/cargo-rail-components-v1.tsv", manifest.as_bytes()));
             write_zip(&archive_path, &entries);
-            let layout = inspect_archive(&archive_path, "0.26.0", target, ComponentSet::Cache).unwrap();
+            let layout = inspect_archive(&archive_path, Some("0.26.0"), target, ComponentSet::Cache).unwrap();
             let extracted = temporary.path().join(target);
             std::fs::create_dir(&extracted).unwrap();
             extract_selected(&archive_path, &layout, ComponentSet::Cache, &extracted).unwrap();
@@ -1433,7 +1489,7 @@ mod tests {
                 incomplete_entries.push(("bundle/cargo-rail-components-v1.tsv", incomplete_manifest.as_bytes()));
                 write_zip(&archive_path, &incomplete_entries);
                 assert!(
-                    inspect_archive(&archive_path, "0.26.0", target, ComponentSet::Cache)
+                    inspect_archive(&archive_path, Some("0.26.0"), target, ComponentSet::Cache)
                         .unwrap_err()
                         .to_string()
                         .contains("complete cache component set")
@@ -1448,7 +1504,7 @@ mod tests {
         let archive = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_RELEASE_ARCHIVE").expect("release archive"));
         let version = std::env::var("CARGO_RAIL_TEST_RELEASE_VERSION").expect("release version");
         let target = build_target();
-        let layout = inspect_archive(&archive, &version, target, ComponentSet::Cache).unwrap();
+        let layout = inspect_archive(&archive, Some(&version), target, ComponentSet::Cache).unwrap();
         let temporary = TemporaryDirectory::new(&std::env::temp_dir(), "cargo-rail-action-release-test").unwrap();
         extract_selected(&archive, &layout, ComponentSet::Cache, temporary.path()).unwrap();
         let digest = hex_digest(&layout.manifest.bytes);
@@ -1528,10 +1584,15 @@ mod tests {
         );
 
         assert!(
-            inspect_archive(&archive_path, "0.26.0", "x86_64-unknown-linux-gnu", ComponentSet::Core,)
-                .expect_err("undeclared file must fail")
-                .to_string()
-                .contains("inventory")
+            inspect_archive(
+                &archive_path,
+                Some("0.26.0"),
+                "x86_64-unknown-linux-gnu",
+                ComponentSet::Core,
+            )
+            .expect_err("undeclared file must fail")
+            .to_string()
+            .contains("inventory")
         );
     }
 

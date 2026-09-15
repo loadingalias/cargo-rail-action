@@ -8,9 +8,9 @@ branding:
 
 inputs:
   version:
-    description: "Exact compatible Cargo-Rail release to install"
+    description: "Cargo-Rail release to install; defaults to latest stable, or use an exact version to pin"
     required: false
-    default: "0.27.1"
+    default: "latest"
   components:
     description: "Verified component set: core, surface, or complete"
     required: false

@@ -1,3 +1,9 @@
 # Personal
 .DS_Store
 /target/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+.agents/skills/
+docs/tasks/
+.ignore
