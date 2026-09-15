@@ -8,9 +8,9 @@ branding:
 
 inputs:
   version:
-    description: "Cargo-Rail release to install; defaults to latest stable, or use an exact version to pin"
+    description: "Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock"
     required: false
-    default: "latest"
+    default: "0.27.1"
   components:
     description: "Verified component set: core, surface, or complete"
     required: false

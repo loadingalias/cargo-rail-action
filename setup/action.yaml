@@ -4,9 +4,9 @@ author: "loadingalias"
 
 inputs:
   version:
-    description: "Cargo-Rail release to install; defaults to latest stable, or use an exact version for a transferred plan"
+    description: "Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock"
     required: false
-    default: "latest"
+    default: "0.27.1"
 
 outputs:
   version:

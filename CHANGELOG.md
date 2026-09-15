@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- Install the latest stable Cargo-Rail release by default across planner, cache, setup,
-  and release actions.
-  Preserve exact version pins and publish the authenticated resolved version to downstream jobs.
+- Keep planner, cache, setup, and release defaults on the exact Cargo-Rail release in `.github/cargo-rail.lock`
+  until a published Action runtime supports authenticated moving selection.
+  Preserve exact version pins.
+  Publish the authenticated installed version to downstream jobs.
 - Generate SLSA provenance for every executable Action runtime in the release asset workflow.
 - Keep the Cargo-Rail release version and matching source commit in one validated lock file.
   Reuse one package workflow for CI and release validation,

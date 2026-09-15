@@ -14,8 +14,8 @@ A Cargo-Rail release does not require an Action release when the Action contract
 | Public Cargo-Rail selection        | Action `version` input              | Calling workflow |
 | Compatible Action alias            | `.config/rail.toml`                 | Cargo-Rail release publication |
 
-The public Action defaults to the latest stable Cargo-Rail release.
-Publication does not use that moving selection.
+The public Action defaults to the exact Cargo-Rail release in `.github/cargo-rail.lock`.
+Publication uses the same locked release.
 ASF consumers pin both the Action commit and Cargo-Rail version.
 
 ## Qualify a Cargo-Rail release

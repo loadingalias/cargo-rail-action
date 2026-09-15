@@ -30,9 +30,9 @@ inputs:
     required: false
     default: "false"
   version:
-    description: "Cargo-Rail release to install; defaults to latest stable, or use an exact version to pin"
+    description: "Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock"
     required: false
-    default: "latest"
+    default: "0.27.1"
   working-directory:
     description: "Workspace directory used for cache setup"
     required: false

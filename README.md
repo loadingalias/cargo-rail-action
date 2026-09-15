@@ -6,8 +6,8 @@ Version 9 uses one prebuilt Rust runtime with verified release checksums.
 Bootstrap preserves the Action checkout’s MIT `LICENSE` beside the runtime and rejects modified
 or missing installed license text.
 
-Cargo-Rail Action installs the latest stable Cargo-Rail release by default.
-Set the `version` input to an exact stable release when a workflow needs a reproducible pin.
+Cargo-Rail Action installs the exact Cargo-Rail release recorded in `.github/cargo-rail.lock` by default.
+Set the `version` input to another exact stable release when a workflow needs a different compatible version.
 The Action validates the exact installed binary, plan, cache, and component contracts before use.
 The planner requires plan contract v9, including identity-bound impact attribution.
 Regenerate plans from older contracts.
@@ -322,9 +322,8 @@ and use full history.
 Outputs are `transaction-id`, `release-sha`, `state`, and `run-url`.
 See the [Cargo-Rail release guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md) for the complete workflow contract.
 
-This repository keeps its public Cargo-Rail default separate from its release engine.
-The public Actions default to `latest`.
-The release and package workflows read one exact Cargo-Rail version and source commit from `.github/cargo-rail.lock`.
+The public Actions default to the exact Cargo-Rail release in `.github/cargo-rail.lock`.
+The release and package workflows read that version and its source commit from the same lock.
 Update that file only after publishing and verifying the selected Cargo-Rail release.
 
 Push and pull-request CI call the same package workflow used for release validation,

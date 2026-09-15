@@ -102,7 +102,12 @@ fn action_metadata_matches_the_v9_surface() {
         let version = mapping(field(inputs, "version"), "version input");
         field(version, "default").as_str().expect("version default")
     });
-    assert_eq!(defaults, ["latest"; 4]);
+    let lock = fs::read_to_string(root().join(".github/cargo-rail.lock")).expect("read Cargo-Rail lock");
+    let locked_version = lock
+        .lines()
+        .find_map(|line| line.strip_prefix("version="))
+        .expect("Cargo-Rail lock version");
+    assert_eq!(defaults, [locked_version; 4]);
 }
 
 #[test]

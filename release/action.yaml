@@ -3,8 +3,8 @@ description: Validate a GitHub release invocation and execute the durable Cargo-
 author: loadingalias
 inputs:
   version:
-    description: Cargo-Rail release to install; defaults to latest stable, or use an exact version to pin
-    default: latest
+    description: Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock
+    default: 0.27.1
   packages:
     description: JSON array of package names; an empty array selects the workspace
     default: '[]'
