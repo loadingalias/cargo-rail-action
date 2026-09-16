@@ -1,7 +1,7 @@
 [release]
 remote_effects = "github"
 hosted_workflow = ".github/workflows/release.yml"
-aliases = { cargo-rail-action = "v9" }
+aliases = { cargo-rail-action = "v10" }
 validation = { ".github/workflows/package.yml" = ["Check / aarch64-apple-darwin", "Check / aarch64-unknown-linux-gnu", "Check / x86_64-pc-windows-msvc", "Check / x86_64-unknown-linux-gnu", "Collect release assets"] }
 
 [release.artifacts.cargo-rail-action]

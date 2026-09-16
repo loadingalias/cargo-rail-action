@@ -20,7 +20,7 @@ RUNTIME_VERSION="$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$ACTION_ROOT/
 RUNTIME_RELEASE="v$RUNTIME_VERSION"
 
 require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "Cargo-Rail Action v9 requires $1"
+  command -v "$1" >/dev/null 2>&1 || fail "Cargo-Rail Action v10 requires $1"
 }
 
 sha256_file() {
@@ -52,7 +52,7 @@ if command -v sha256sum >/dev/null 2>&1; then
 elif command -v shasum >/dev/null 2>&1; then
   :
 else
-  fail "Cargo-Rail Action v9 requires sha256sum or shasum"
+  fail "Cargo-Rail Action v10 requires sha256sum or shasum"
 fi
 
 case "${RUNNER_OS:-}-${RUNNER_ARCH:-}" in
@@ -60,7 +60,7 @@ case "${RUNNER_OS:-}-${RUNNER_ARCH:-}" in
   Linux-X64) TARGET="x86_64-unknown-linux-gnu" ;;
   macOS-ARM64) TARGET="aarch64-apple-darwin" ;;
   Windows-X64) TARGET="x86_64-pc-windows-msvc" ;;
-  *) fail "Cargo-Rail Action v9 does not support ${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}" ;;
+  *) fail "Cargo-Rail Action v10 does not support ${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}" ;;
 esac
 RUNTIME_SUFFIX=""
 [[ "$TARGET" == *-windows-msvc ]] && RUNTIME_SUFFIX=".exe"
@@ -71,11 +71,11 @@ if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
   else
     GLIBC_VERSION="$(ldd --version 2>&1 | head -n 1 | grep -Eo '[0-9]+\.[0-9]+' | tail -n 1)"
   fi
-  [[ "$GLIBC_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || fail "Cargo-Rail Action v9 requires GNU libc 2.39 or newer"
+  [[ "$GLIBC_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || fail "Cargo-Rail Action v10 requires GNU libc 2.39 or newer"
   GLIBC_MAJOR="${GLIBC_VERSION%%.*}"
   GLIBC_MINOR="${GLIBC_VERSION#*.}"
   if (( GLIBC_MAJOR < 2 || (GLIBC_MAJOR == 2 && GLIBC_MINOR < 39) )); then
-    fail "Cargo-Rail Action v9 requires GNU libc 2.39 or newer; found $GLIBC_VERSION"
+    fail "Cargo-Rail Action v10 requires GNU libc 2.39 or newer; found $GLIBC_VERSION"
   fi
 fi
 

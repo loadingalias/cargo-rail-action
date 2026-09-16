@@ -14,7 +14,7 @@ inputs:
   version:
     description: "Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock"
     required: false
-    default: "0.27.1"
+    default: "0.28.1"
   components:
     description: "Verified component set: core, surface, or complete"
     required: false

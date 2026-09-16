@@ -28,7 +28,7 @@ fn keys(object: &Map<String, Value>) -> BTreeSet<String> {
 }
 
 #[test]
-fn action_metadata_matches_the_v9_surface() {
+fn action_metadata_matches_the_v10_surface() {
     let planner = yaml("action.yaml");
     let cache = yaml("cache/action.yaml");
     let collect = yaml("cache/collect/action.yaml");

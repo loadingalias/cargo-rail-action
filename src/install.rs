@@ -163,7 +163,7 @@ pub(crate) fn install_cargo_rail(selection: &str, component_set: ComponentSet) -
     let target = build_target();
     if !QUALIFIED_TARGETS.contains(&target) {
         return Err(ActionError::rejected(
-            "this operating system, architecture, or libc is not advertised by Cargo-Rail Action v9",
+            "this operating system, architecture, or libc is not advertised by Cargo-Rail Action v10",
         ));
     }
     let install_base = installation_base()?;

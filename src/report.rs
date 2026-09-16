@@ -44,7 +44,16 @@ impl RunBinding {
                 "cache report requires a valid workflow run binding",
             ));
         }
+        binding.attempt_number()?;
         Ok(binding)
+    }
+
+    fn attempt_number(&self) -> Result<u64> {
+        self.attempt
+            .parse::<u64>()
+            .ok()
+            .filter(|attempt| *attempt > 0)
+            .ok_or_else(|| ActionError::rejected("cache report requires a valid workflow run attempt"))
     }
 }
 
@@ -438,9 +447,20 @@ fn admit(
     run: &RunBinding,
     expected: &BTreeSet<String>,
 ) -> Result<()> {
-    if record.schema_version != 1 || &record.run != run || !expected.contains(&record.job) {
+    if record.schema_version != 1
+        || record.run.repository != run.repository
+        || record.run.run_id != run.run_id
+        || !expected.contains(&record.job)
+    {
         return Err(ActionError::rejected(
-            "cache record belongs to an unexpected job, run, attempt, or contract",
+            "cache record belongs to an unexpected job, workflow run, or contract",
+        ));
+    }
+    let current_attempt = run.attempt_number()?;
+    let record_attempt = record.run.attempt_number()?;
+    if record_attempt > current_attempt {
+        return Err(ActionError::rejected(
+            "cache record belongs to a later workflow attempt",
         ));
     }
     record.configuration.validate()?;
@@ -466,8 +486,13 @@ fn admit(
         ));
     }
     if let Some(previous) = records.get(&record.job) {
-        if previous != &record {
-            return Err(ActionError::rejected("conflicting duplicate cache job record"));
+        let previous_attempt = previous.run.attempt_number()?;
+        if record_attempt == previous_attempt {
+            if previous != &record {
+                return Err(ActionError::rejected("conflicting duplicate cache job record"));
+            }
+        } else if record_attempt > previous_attempt {
+            records.insert(record.job.clone(), record);
         }
     } else {
         records.insert(record.job.clone(), record);
@@ -776,22 +801,46 @@ mod tests {
     }
 
     #[test]
-    fn conflicting_stale_and_inconsistent_records_are_rejected() {
+    fn conflicting_future_and_inconsistent_records_are_rejected() {
         let expected = BTreeSet::from(["linux".into()]);
         let mut records = BTreeMap::new();
         admit(&mut records, record("linux"), &run(), &expected).unwrap();
         let mut conflict = record("linux");
         conflict.measurements.as_mut().unwrap().hits += 1;
         assert!(admit(&mut records, conflict, &run(), &expected).is_err());
-        let mut stale = record("linux");
-        stale.run.attempt = "2".into();
-        assert!(admit(&mut records, stale, &run(), &expected).is_err());
+        let mut future = record("linux");
+        future.run.attempt = "2".into();
+        assert!(admit(&mut records, future, &run(), &expected).is_err());
         let mut missing = record("linux");
         missing.measurements = None;
         assert!(admit(&mut records, missing, &run(), &expected).is_err());
         let mut private = serde_json::to_value(record("linux")).unwrap();
         private["remote_url"] = "s3://private".into();
         assert!(serde_json::from_value::<JobRecord>(private).is_err());
+    }
+
+    #[test]
+    fn prior_attempt_records_are_admitted_and_latest_evidence_wins() {
+        let expected = BTreeSet::from(["linux".into()]);
+        let mut current = run();
+        current.attempt = "3".into();
+        let mut records = BTreeMap::new();
+
+        let mut first = record("linux");
+        first.measurements.as_mut().unwrap().hits = 1;
+        admit(&mut records, first.clone(), &current, &expected).unwrap();
+        assert_eq!(records["linux"].run.attempt, "1");
+
+        let mut second = record("linux");
+        second.run.attempt = "2".into();
+        second.measurements.as_mut().unwrap().hits = 2;
+        admit(&mut records, second, &current, &expected).unwrap();
+        assert_eq!(records["linux"].run.attempt, "2");
+        assert_eq!(records["linux"].measurements.as_ref().unwrap().hits, 2);
+
+        admit(&mut records, first, &current, &expected).unwrap();
+        assert_eq!(records["linux"].run.attempt, "2");
+        assert_eq!(records["linux"].measurements.as_ref().unwrap().hits, 2);
     }
 
     #[test]

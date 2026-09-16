@@ -2,7 +2,7 @@
 
 Cargo-Rail Action installs Cargo-Rail, plans required CI work, emits exact selectors,
 and delegates durable release execution to Cargo-Rail.
-Version 9 uses one prebuilt Rust runtime with verified release checksums.
+Version 10 uses one prebuilt Rust runtime with verified release checksums.
 Bootstrap preserves the Action checkout’s MIT `LICENSE` beside the runtime and rejects modified
 or missing installed license text.
 
@@ -22,7 +22,7 @@ including their canonical intent identity, expected source and repository,
 required workflow evidence, and upload attempt identities.
 The release Action independently validates hosted requests and reviewed merges
 before invoking the same Cargo-Rail transaction.
-Its own release workflow uses that engine and promotes `v9` only
+Its own release workflow uses that engine and promotes `v10` only
 after the immutable release is verified.
 
 ## Plan and run work in one job
@@ -34,7 +34,7 @@ Install your Rust toolchain and command runners, such as nextest, before these s
   with:
     persist-credentials: false
 
-- uses: loadingalias/cargo-rail-action@v9
+- uses: loadingalias/cargo-rail-action@v10
   id: rail
 
 - name: Run selected tests
@@ -89,7 +89,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: loadingalias/cargo-rail-action@v9
+      - uses: loadingalias/cargo-rail-action@v10
         id: rail
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -109,7 +109,7 @@ jobs:
         with:
           name: cargo-rail-plan
           path: ${{ runner.temp }}/cargo-rail-plan
-      - uses: loadingalias/cargo-rail-action/setup@v9
+      - uses: loadingalias/cargo-rail-action/setup@v10
         with:
           version: ${{ needs.plan.outputs.cargo-rail-version }}
       - name: Run selected tests
@@ -165,7 +165,7 @@ Operational failures, including I/O and failed subprocesses, exit `1`.
   with:
     persist-credentials: false
 
-- uses: loadingalias/cargo-rail-action/cache@v9
+- uses: loadingalias/cargo-rail-action/cache@v10
   id: cache
   with:
     remote: s3://cargo-rail-cache/team?region=us-east-1&owner=123456789012
@@ -203,7 +203,7 @@ The final report combines all jobs into one summary.
 
 ```yaml
 # Append these steps to each cache-enabled job.
-- uses: loadingalias/cargo-rail-action/cache/collect@v9
+- uses: loadingalias/cargo-rail-action/cache/collect@v10
   if: always()
   id: cache-record
   with:
@@ -242,7 +242,7 @@ cache-report:
         pattern: cache-record-*
         merge-multiple: true
         path: ${{ runner.temp }}/cache-records
-    - uses: loadingalias/cargo-rail-action/cache/report@v9
+    - uses: loadingalias/cargo-rail-action/cache/report@v10
       if: always()
       with:
         records-directory: ${{ runner.temp }}/cache-records
@@ -277,7 +277,7 @@ the Action does not infer impact from filenames or explanation prose.
 
 ## Supported runners
 
-V9.0 advertises exactly:
+V10.0 advertises exactly:
 
 | Runner              | Native target               | Requirement |
 | ------------------- | --------------------------- | ----------- |
@@ -340,7 +340,7 @@ bump policy, registry publication, and review mode.
 Leave its recovery inputs empty for a new release.
 Supply all three retained values only when Cargo-Rail continues an existing transaction.
 
-Cargo-Rail owns publication and the configured `v9` alias promotion.
+Cargo-Rail owns publication and the configured `v10` alias promotion.
 The bootstrap derives the Action runtime release from the package version in `Cargo.toml`.
 See [Release Cargo-Rail Action](docs/releases.md) for the repository-specific procedure.
 

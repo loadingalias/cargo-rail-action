@@ -1,21 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- Keep planner, cache, setup, and release defaults on the exact Cargo-Rail release in `.github/cargo-rail.lock`
-  until a published Action runtime supports authenticated moving selection.
-  Preserve exact version pins.
-  Publish the authenticated installed version to downstream jobs.
-- Generate SLSA provenance for every executable Action runtime in the release asset workflow.
-- Keep the Cargo-Rail release version and matching source commit in one validated lock file.
-  Reuse one package workflow for CI and release validation,
-  and build release assets only on GitHub-hosted runners.
-- Publish a stable `cargo-rail-action` launcher for later workflow steps
-  without changing the authenticated target runtime's immutable installation.
-- Restrict this repository's publication workflow to manual `main` dispatches and fixed release policy.
-  Derive the Action runtime release from `Cargo.toml`
-  and retain only the inputs required to resume a durable transaction.
-
 ## [9.0.1] - 2026-09-13
 
 - Default to Cargo-Rail v0.27.1 with corrected prebuilt installation and GitHub draft recovery.

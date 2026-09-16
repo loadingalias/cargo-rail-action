@@ -70,7 +70,7 @@ and the repository enforces immutable releases.
    The workflow downloads the exact locked Cargo-Rail release, runs the independent contracts,
    builds all runtimes on GitHub-hosted runners, and attests each executable.
 
-1. Wait for Cargo-Rail to publish the complete immutable Action release and advance `v9`.
+1. Wait for Cargo-Rail to publish the complete immutable Action release and advance `v10`.
    Alias promotion occurs after the exact release succeeds.
 
 1. Verify the release and every executable runtime:

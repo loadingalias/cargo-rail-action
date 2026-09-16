@@ -7,7 +7,7 @@ inputs:
     default: release
   version:
     description: Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock
-    default: 0.27.1
+    default: 0.28.1
   packages:
     description: JSON array of package names; an empty array selects the workspace
     default: '[]'
