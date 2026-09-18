@@ -175,6 +175,10 @@ Operational failures, including I/O and failed subprocesses, exit `1`.
     verify-remote: false
 ```
 
+When one job uses both actions, configure `loadingalias/cargo-rail-action/cache` before
+`loadingalias/cargo-rail-action`. Cache setup changes Cargo configuration, and plan verification binds that
+configuration. Capturing the plan first causes later selectors to reject the changed execution authority.
+
 `mode` is always explicit.
 Use `read` for pull requests and other untrusted jobs.
 `verify-remote: true` authenticates to the selected provider and requires the protocol marker
