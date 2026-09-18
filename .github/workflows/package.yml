@@ -198,10 +198,10 @@ jobs:
           for asset in "$RUNNER_TEMP"/assets/*; do args+=(--asset "$asset"); done
           "$RUNNER_TEMP/assets/cargo-rail-action-x86_64-unknown-linux-gnu" release package "${args[@]}" \
             --output "$RUNNER_TEMP/assets/cargo-rail-action-runtime-v1.tsv"
-      - name: Attest executable runtimes
+      - name: Attest release assets
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ runner.temp }}/assets/cargo-rail-action-*-*-*
+          subject-path: ${{ runner.temp }}/assets/*
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-cargo-rail-action-${{ github.run_id }}-${{ github.run_attempt }}

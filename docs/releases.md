@@ -73,7 +73,7 @@ and the repository enforces immutable releases.
 1. Wait for Cargo-Rail to publish the complete immutable Action release and advance `v10`.
    Alias promotion occurs after the exact release succeeds.
 
-1. Verify the release and every executable runtime:
+1. Verify the release and every release asset:
 
    ```bash
    gh release verify "v${ACTION_VERSION}" --repo loadingalias/cargo-rail-action
@@ -84,6 +84,10 @@ and the repository enforces immutable releases.
    gh attestation verify cargo-rail-action-x86_64-pc-windows-msvc.exe \
      --repo loadingalias/cargo-rail-action
    gh attestation verify cargo-rail-action-x86_64-unknown-linux-gnu \
+     --repo loadingalias/cargo-rail-action
+   gh attestation verify cargo-rail-action-runtime-v1.tsv \
+     --repo loadingalias/cargo-rail-action
+   gh attestation verify LICENSE \
      --repo loadingalias/cargo-rail-action
    ```
 

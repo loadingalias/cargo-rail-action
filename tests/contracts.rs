@@ -344,16 +344,13 @@ fn package_workflow_produces_every_authenticated_runtime() {
     let steps = collect["steps"].as_array().unwrap();
     let attestation = steps
         .iter()
-        .find(|step| step["name"] == "Attest executable runtimes")
-        .expect("runtime attestation step");
+        .find(|step| step["name"] == "Attest release assets")
+        .expect("release asset attestation step");
     assert_eq!(
         attestation["uses"],
         "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
     );
-    assert_eq!(
-        attestation["with"]["subject-path"],
-        "${{ runner.temp }}/assets/cargo-rail-action-*-*-*"
-    );
+    assert_eq!(attestation["with"]["subject-path"], "${{ runner.temp }}/assets/*");
     let upload = steps.last().unwrap();
     assert_eq!(
         upload["with"]["name"],
