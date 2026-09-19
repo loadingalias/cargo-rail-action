@@ -20,6 +20,9 @@ Regenerate plans from older contracts.
 The runtime also independently validates Cargo-Rail's [release execution records](schemas/release-record-v9.schema.json),
 including their canonical intent identity, expected source and repository,
 required workflow evidence, and upload attempt identities.
+Release-record compatibility is separate from plan compatibility.
+This Action revision accepts record v9; a Cargo-Rail release that writes record v10 cannot drive the release Action
+until its independent schema and reader are updated and qualified.
 The release Action independently validates hosted requests and reviewed merges
 before invoking the same Cargo-Rail transaction.
 Its own release workflow uses that engine and promotes `v10` only
@@ -306,8 +309,9 @@ The runtime validates bounded manifests, checksums, complete archives, component
 GitHub environment files, and exact versions.
 The runtime downloads each checksum from the same release as its executable or archive.
 That checksum detects inconsistent bytes but is not an independent publisher signature.
-The installer does not verify GitHub artifact attestations.
-Verify the exact release's immutability and attestation before trusting its publication authority.
+The installer verifies checksums, component manifests, and the installed license,
+but it does not verify GitHub artifact attestations.
+Verify the exact release's immutability and every release-asset attestation before trusting its publication authority.
 
 The planner's `repository-token` is used only for a same-repository Git fetch when required history is absent.
 It is never placed in a URL, argv, repository configuration, output, summary,
