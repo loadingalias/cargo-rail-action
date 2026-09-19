@@ -21,8 +21,8 @@ The runtime also independently validates Cargo-Rail's [release execution records
 including their canonical intent identity, expected source and repository,
 required workflow evidence, and upload attempt identities.
 Release-record compatibility is separate from plan compatibility.
-This Action revision accepts record v9; a Cargo-Rail release that writes record v10 cannot drive the release Action
-until its independent schema and reader are updated and qualified.
+The runtime accepts only release-record v10 and fails closed on other contract versions.
+The locked Cargo-Rail release writes that contract.
 The release Action independently validates hosted requests and reviewed merges
 before invoking the same Cargo-Rail transaction.
 Its own release workflow uses that engine and promotes `v10` only
