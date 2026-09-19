@@ -54,7 +54,7 @@ pub(crate) fn read(bytes: &[u8], expected_intent: &str, expected_source: &str, r
     }
     let value = parse_unique_json(bytes, "release record")?;
     require_integers(&value)?;
-    let schema: Value = serde_json::from_str(include_str!("../schemas/release-record-v9.schema.json"))
+    let schema: Value = serde_json::from_str(include_str!("../schemas/release-record-v10.schema.json"))
         .map_err(|error| ActionError::operational(format!("invalid built-in release schema: {error}")))?;
     let validator = jsonschema::validator_for(&schema)
         .map_err(|error| ActionError::operational(format!("invalid built-in release schema: {error}")))?;

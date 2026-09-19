@@ -603,7 +603,7 @@ fn source_release_record_is_independently_validated() {
         assert!(rejected.stdout.is_empty());
     }
     for (pointer, replacement) in [
-        ("/schema_version", serde_json::json!(10)),
+        ("/schema_version", serde_json::json!(9)),
         ("/intent/plan/summary/total_crates", serde_json::json!(2)),
         (
             "/intent/plan/crates/0/manifest_path",
@@ -640,13 +640,13 @@ fn source_release_record_is_independently_validated() {
     }
     for changed in [
         String::from_utf8(original.clone()).unwrap().replacen(
-            "\"schema_version\": 9",
-            "\"schema_version\": 9, \"schema_version\": 9",
+            "\"schema_version\": 10",
+            "\"schema_version\": 10, \"schema_version\": 10",
             1,
         ),
         String::from_utf8(original.clone())
             .unwrap()
-            .replacen("\"schema_version\": 9", "\"schema_version\": 9.0", 1),
+            .replacen("\"schema_version\": 10", "\"schema_version\": 10.0", 1),
     ] {
         assert_ne!(changed.as_bytes(), original);
         fs::write(&record_path, changed).unwrap();
@@ -971,7 +971,10 @@ print(json.dumps(result))
         .as_str()
         .or_else(|| record["preparation"]["commit"].as_str())
         .unwrap();
-    assert_eq!(git(&remote, &["rev-parse", "refs/tags/v0.1.1^{commit}"]), prepared);
+    assert_eq!(
+        git(&remote, &["rev-parse", "refs/tags/adapter-fixture-v0.1.1^{commit}"],),
+        prepared
+    );
     assert!(
         fs::read_to_string(&output_file)
             .unwrap()
@@ -984,6 +987,9 @@ print(json.dumps(result))
     assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("does not authorize the original release intent"));
     assert_eq!(fs::read(&output_file).unwrap(), immutable_outputs);
-    assert_eq!(git(&remote, &["rev-parse", "refs/tags/v0.1.1^{commit}"]), prepared);
+    assert_eq!(
+        git(&remote, &["rev-parse", "refs/tags/adapter-fixture-v0.1.1^{commit}"],),
+        prepared
+    );
     fs::remove_dir_all(directory).unwrap();
 }

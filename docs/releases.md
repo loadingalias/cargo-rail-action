@@ -33,7 +33,7 @@ They change local or repository source only; the verification commands do not pu
 
 1. Compare Cargo-Rail's release-record contract with the schema and reader embedded by this Action.
    If the producer version changed, update the schema, reader, and contract tests before moving the lock.
-   The current Action source accepts release-record v9 and fails closed on v10.
+   The Action reader accepts release-record v10 and fails closed on other versions.
 
 1. Set `version` and `commit` in `.github/cargo-rail.lock` to the exact Cargo-Rail release and its dereferenced tag
    commit. Set `tooling` independently to the reviewed Cargo-Rail commit that owns the Action's CI tool installation.

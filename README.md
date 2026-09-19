@@ -17,7 +17,7 @@ The Action validates the exact installed binary, plan, cache, and component cont
 The planner requires plan contract v9, including identity-bound impact attribution.
 Regenerate plans from older contracts.
 
-The runtime also independently validates Cargo-Rail's [release execution records](schemas/release-record-v9.schema.json),
+The runtime also independently validates Cargo-Rail's [release execution records](schemas/release-record-v10.schema.json),
 including their canonical intent identity, expected source and repository,
 required workflow evidence, and upload attempt identities.
 Release-record compatibility is separate from plan compatibility.

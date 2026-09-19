@@ -168,7 +168,7 @@ fn public_schemas_reject_unknown_fields_and_bound_release_assets() {
     }
 
     let release: Value =
-        serde_json::from_slice(&fs::read(root().join("schemas/release-record-v9.schema.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(root().join("schemas/release-record-v10.schema.json")).unwrap()).unwrap();
     assert_eq!(release["additionalProperties"], false);
     assert_eq!(release["$defs"]["artifact_evidence"]["additionalProperties"], false);
 }
