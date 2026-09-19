@@ -75,6 +75,9 @@ jobs:
         run: ../.ci-tooling/scripts/tooling/x86_64-win.ps1 -Operation ci
       - name: Install macOS tooling
         if: runner.os == 'macOS'
+        env:
+          # cargo-binstall resolves pinned release assets through the GitHub API; anonymous hosted-runner requests are throttled.
+          GITHUB_TOKEN: ${{ github.token }}
         run: ../.ci-tooling/scripts/tooling/package-unix.sh aarch64-apple-darwin ci
       - name: Validate the active toolchain
         run: |

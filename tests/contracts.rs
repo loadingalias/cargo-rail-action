@@ -257,6 +257,8 @@ fn package_workflow_produces_every_authenticated_runtime() {
         runners,
         BTreeSet::from(["macos-15", "ubuntu-24.04", "ubuntu-24.04-arm", "windows-2025"])
     );
+    // The check job inherits this read-only grant, so its installer token cannot write.
+    assert_eq!(package["permissions"], serde_json::json!({"contents": "read"}));
     assert_eq!(check["permissions"], Value::Null);
     let steps = check["steps"].as_array().unwrap();
     let lock = steps
@@ -289,6 +291,10 @@ fn package_workflow_produces_every_authenticated_runtime() {
             "Install Windows tooling",
             "../.ci-tooling/scripts/tooling/x86_64-win.ps1 -Operation ci",
         ),
+        (
+            "Install macOS tooling",
+            "../.ci-tooling/scripts/tooling/package-unix.sh aarch64-apple-darwin ci",
+        ),
     ] {
         let step = steps
             .iter()
@@ -297,6 +303,13 @@ fn package_workflow_produces_every_authenticated_runtime() {
         assert_eq!(step["run"], command, "tooling requires an explicit operation");
         if name == "Install Linux tooling" {
             assert_eq!(step["env"]["PLATFORM"], "${{ matrix.tooling }}");
+        }
+        if name == "Install macOS tooling" {
+            // Hosted runners have no ambient GitHub credentials for cargo-binstall to discover.
+            assert_eq!(
+                step["env"]["GITHUB_TOKEN"], "${{ github.token }}",
+                "macOS binary resolution must authenticate to the GitHub API"
+            );
         }
     }
     let upload = steps.last().unwrap();
