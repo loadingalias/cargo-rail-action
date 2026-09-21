@@ -1,32 +1,29 @@
 # Cargo-Rail Action
 
-Cargo-Rail Action installs Cargo-Rail, plans required CI work, emits exact selectors,
-and delegates durable release execution to Cargo-Rail.
-Version 10 uses one prebuilt Rust runtime with verified release checksums.
-Bootstrap preserves the Action checkout’s MIT `LICENSE` beside the runtime and rejects modified
-or missing installed license text.
+Cargo-Rail Action brings Cargo-Rail planning, verified compiler reuse, and durable releases to GitHub Actions.
+It installs an exact Cargo-Rail release and validates each plan, cache, and release boundary before use.
+Cargo and the workflow still run the work.
 
-The `runtime-source` input defaults to `release`.
-Set it to `source` only when validating an immutable Action commit before publishing its runtime release.
-Source mode requires the Action's pinned Rust toolchain, builds the checked-out runtime with `--locked`,
-and authenticates the resulting executable before installation.
+## Reduce work at each layer
 
-Cargo-Rail Action installs the exact Cargo-Rail release recorded in `.github/cargo-rail.lock` by default.
-Set the `version` input to another exact stable release when a workflow needs a different compatible version.
-The Action validates the exact installed binary, plan, cache, and component contracts before use.
-The planner requires plan contract v9, including identity-bound impact attribution.
-Regenerate plans from older contracts.
+| Action | Resource effect |
+| ------ | --------------- |
+| Planner | Lets the workflow skip jobs that are not required and gives required jobs exact Cargo selectors. |
+| Cache | Restores compatible compiler results inside the jobs that still run. |
+| Release | Carries reviewed Rust changesets into one durable, resumable publication transaction. |
 
-The runtime also independently validates Cargo-Rail's [release execution records](schemas/release-record-v10.schema.json),
-including their canonical intent identity, expected source and repository,
-required workflow evidence, and upload attempt identities.
-Release-record compatibility is separate from plan compatibility.
-The runtime accepts only release-record v10 and fails closed on other contract versions.
-The locked Cargo-Rail release writes that contract.
-The release Action independently validates hosted requests and reviewed merges
-before invoking the same Cargo-Rail transaction.
-Its own release workflow uses that engine and promotes `v10` only
-after the immutable release is verified.
+```text
+all declared workflow jobs
+└─ planner keeps required jobs and emits exact Cargo scope
+   └─ cache restores compatible compiler results in those jobs
+      └─ Cargo runs freshness checks and the remaining misses
+```
+
+Planning and caching solve different problems, so their reductions stack.
+Start with the planner alone.
+Add caching when the job has explicit remote authority and credentials.
+Add the release Action only to a protected publication job.
+Use the plan summary and cache report to see the actual result; the Action does not invent a time-saved estimate.
 
 ## Plan and run work in one job
 
@@ -282,6 +279,34 @@ No fixed number of directly affected items is silently hidden.
 Attribution comes from Cargo-Rail's captured plan;
 the Action does not infer impact from filenames or explanation prose.
 
+## Runtime and compatibility
+
+Version 10 uses one prebuilt Rust runtime with verified release checksums.
+Bootstrap keeps the Action checkout's MIT `LICENSE` beside the runtime and rejects modified
+or missing installed license text.
+
+The `runtime-source` input defaults to `release`.
+Use `source` only to validate an immutable Action commit before publishing its runtime release.
+Source mode requires the pinned Rust toolchain, builds the checked-out runtime with `--locked`,
+and authenticates the executable before installation.
+
+By default, the Action installs the exact Cargo-Rail release recorded in `.github/cargo-rail.lock`.
+Set `version` to another exact stable release only when the workflow needs a different compatible version.
+The Action validates the installed binary, plan, cache, and component contracts before use.
+
+The planner accepts plan contract v9, including identity-bound impact attribution.
+Regenerate plans from older contracts.
+
+Release-record compatibility is separate from plan compatibility.
+The runtime accepts Cargo-Rail [release execution records](schemas/release-record-v10.schema.json) at v10
+and fails closed on other versions.
+It validates intent identity, expected source and repository, required workflow evidence,
+and upload attempt identities.
+The locked Cargo-Rail release writes that contract.
+
+The release Action validates hosted requests and reviewed merges before invoking the same Cargo-Rail transaction.
+This repository uses that engine for its own releases and promotes `v10` only after verifying the immutable release.
+
 ## Supported runners
 
 V10.0 advertises exactly:
@@ -350,7 +375,6 @@ Supply all three retained values only when Cargo-Rail continues an existing tran
 
 Cargo-Rail owns publication and the configured `v10` alias promotion.
 The bootstrap derives the Action runtime release from the package version in `Cargo.toml`.
-See [Release Cargo-Rail Action](docs/releases.md) for the repository-specific procedure.
 
 ## Validate changes
 
