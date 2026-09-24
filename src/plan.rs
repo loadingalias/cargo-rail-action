@@ -4,117 +4,24 @@ use std::io::Read as _;
 use std::path::Path;
 use std::process::Command;
 
-use rscrypto::Sha256;
-use serde::de::{self, Deserialize as _, MapAccess, SeqAccess, Visitor};
-use serde_json::{Map, Number, Value};
+use serde_json::{Map, Value};
 
+use crate::digest::sha256_hex as hex_digest;
+use crate::validation::{exact_keys, object_field, parse_unique_json, require};
 use crate::{ActionError, PlanOperation, Result, github, repository, write_stdout};
 
 pub(crate) const MAX_PLAN_BYTES: usize = 64 * 1024 * 1024;
 const MAX_SUBPROCESS_BYTES: usize = 1024 * 1024;
 const MAX_SELECTOR_BYTES: usize = 256 * 1024;
 
+/// A plan whose complete schema and portable identity passed Action validation.
+///
+/// Checkout binding is separate. Callers must verify it before publishing or
+/// executing a projection from the plan.
 #[derive(Debug)]
 pub(crate) struct ValidatedPlan {
     bytes: Vec<u8>,
     value: Value,
-}
-
-#[derive(Debug)]
-struct UniqueValue(Value);
-
-impl<'de> serde::Deserialize<'de> for UniqueValue {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct UniqueVisitor;
-
-        impl<'de> Visitor<'de> for UniqueVisitor {
-            type Value = UniqueValue;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a JSON value without duplicate object keys")
-            }
-
-            fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E> {
-                Ok(UniqueValue(Value::Bool(value)))
-            }
-
-            fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E> {
-                Ok(UniqueValue(Value::Number(Number::from(value))))
-            }
-
-            fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
-                Ok(UniqueValue(Value::Number(Number::from(value))))
-            }
-
-            fn visit_f64<E>(self, value: f64) -> std::result::Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Number::from_f64(value)
-                    .map(Value::Number)
-                    .map(UniqueValue)
-                    .ok_or_else(|| E::custom("JSON number is not finite"))
-            }
-
-            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                self.visit_string(value.to_string())
-            }
-
-            fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E> {
-                Ok(UniqueValue(Value::String(value)))
-            }
-
-            fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
-                Ok(UniqueValue(Value::Null))
-            }
-
-            fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
-                Ok(UniqueValue(Value::Null))
-            }
-
-            fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let mut values = Vec::new();
-                while let Some(value) = sequence.next_element::<UniqueValue>()? {
-                    values.push(value.0);
-                }
-                Ok(UniqueValue(Value::Array(values)))
-            }
-
-            fn visit_map<A>(self, mut object: A) -> std::result::Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut values = Map::new();
-                while let Some((key, value)) = object.next_entry::<String, UniqueValue>()? {
-                    if values.insert(key.clone(), value.0).is_some() {
-                        return Err(de::Error::custom(format!("duplicate JSON object key {key:?}")));
-                    }
-                }
-                Ok(UniqueValue(Value::Object(values)))
-            }
-        }
-
-        deserializer.deserialize_any(UniqueVisitor)
-    }
-}
-
-pub(crate) fn parse_unique_json(bytes: &[u8], subject: &str) -> Result<Value> {
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    let parsed = UniqueValue::deserialize(&mut deserializer)
-        .map_err(|error| ActionError::rejected(format!("{subject} is invalid JSON: {error}")))?;
-    deserializer
-        .end()
-        .map_err(|error| ActionError::rejected(format!("{subject} has trailing data: {error}")))?;
-    Ok(parsed.0)
 }
 
 impl ValidatedPlan {
@@ -295,15 +202,18 @@ impl ValidatedPlan {
         let targets = selection["targets"]
             .as_array()
             .ok_or_else(|| ActionError::rejected(format!("work {work} targets are malformed")))?;
+        if targets.iter().any(|target| {
+            let kinds = target["kind"].as_array().expect("validated target kinds");
+            kinds.len() != 1 || kinds[0].as_str() != Some("test")
+        }) {
+            return Ok(Vec::new());
+        }
         let mut names = BTreeSet::new();
         for target in targets {
             let target = target
                 .as_object()
                 .ok_or_else(|| ActionError::rejected(format!("work {work} target is malformed")))?;
-            let kinds = string_list(&target["kind"], "target kinds", false, true)?;
-            if kinds.iter().any(|kind| kind == "test") {
-                names.insert(required_string(target, "name", "target")?.to_string());
-            }
+            names.insert(required_string(target, "name", "target")?.to_string());
         }
         Ok(names
             .into_iter()
@@ -856,15 +766,15 @@ fn validate_selection(
         let targets = selection["targets"]
             .as_array()
             .ok_or_else(|| ActionError::rejected("Cargo targets must be an array"))?;
+        let mut target_packages = BTreeSet::new();
         for target in targets {
             let target = target
                 .as_object()
                 .ok_or_else(|| ActionError::rejected("Cargo target must be an object"))?;
             exact_keys(target, &["package", "name", "kind"], &[], "Cargo target")?;
-            require(
-                !required_string(target, "package", "Cargo target")?.is_empty(),
-                "Cargo target package is malformed",
-            )?;
+            let package = required_string(target, "package", "Cargo target")?;
+            require(!package.is_empty(), "Cargo target package is malformed")?;
+            target_packages.insert(package);
             require(
                 !required_string(target, "name", "Cargo target")?.is_empty(),
                 "Cargo target name is malformed",
@@ -905,13 +815,10 @@ fn validate_selection(
                 cargo_args == expected_args,
                 format!("work {work_id} Cargo argv disagrees with typed packages"),
             )?;
+            let selected_packages = keys.iter().map(String::as_str).collect::<BTreeSet<_>>();
             require(
-                targets.iter().all(|target| {
-                    target["package"]
-                        .as_str()
-                        .is_some_and(|package| keys.iter().any(|key| key == package))
-                }),
-                format!("work {work_id} target references an unselected package"),
+                target_packages.is_empty() || target_packages == selected_packages,
+                format!("work {work_id} target selectors do not cover every selected package"),
             )?;
         } else {
             require(
@@ -1194,27 +1101,6 @@ fn nul_values(values: Vec<String>) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-fn exact_keys(object: &Map<String, Value>, required: &[&str], optional: &[&str], subject: &str) -> Result<()> {
-    let required_set = required.iter().copied().collect::<BTreeSet<_>>();
-    let optional_set = optional.iter().copied().collect::<BTreeSet<_>>();
-    let keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
-    let missing = required_set.difference(&keys).copied().collect::<Vec<_>>();
-    let unknown = keys
-        .difference(&required_set)
-        .filter(|key| !optional_set.contains(**key))
-        .copied()
-        .collect::<Vec<_>>();
-    require(missing.is_empty(), format!("{subject} is missing {missing:?}"))?;
-    require(unknown.is_empty(), format!("{subject} has unknown fields {unknown:?}"))
-}
-
-fn object_field<'a>(object: &'a Map<String, Value>, field: &str, subject: &str) -> Result<&'a Map<String, Value>> {
-    object
-        .get(field)
-        .and_then(Value::as_object)
-        .ok_or_else(|| ActionError::rejected(format!("{subject}.{field} is missing or invalid")))
-}
-
 fn array_field<'a>(object: &'a Map<String, Value>, field: &str, subject: &str) -> Result<&'a [Value]> {
     object
         .get(field)
@@ -1251,14 +1137,6 @@ fn string_list(value: &Value, subject: &str, nonempty: bool, unique: bool) -> Re
     Ok(result)
 }
 
-fn require(condition: bool, message: impl Into<String>) -> Result<()> {
-    if condition {
-        Ok(())
-    } else {
-        Err(ActionError::rejected(message))
-    }
-}
-
 fn valid_id(value: &str) -> bool {
     let mut bytes = value.bytes();
     bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
@@ -1284,17 +1162,6 @@ fn valid_version_hash(value: &str, prefix: &str) -> bool {
             !version.is_empty() && version.bytes().all(|byte| byte.is_ascii_digit()) && hex_range(digest, 64, 64)
         })
     })
-}
-
-fn hex_digest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
 }
 
 #[cfg(test)]
@@ -1504,13 +1371,6 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_json_keys_are_rejected_at_every_depth() {
-        let error =
-            parse_unique_json(br#"{"outer":{"value":1,"value":2}}"#, "fixture").expect_err("duplicate key must fail");
-        assert!(error.to_string().contains("duplicate"));
-    }
-
-    #[test]
     fn missing_decision_evidence_is_rejected_before_indexing() {
         for (work, state) in [("cargo.test", "required"), ("cargo.fmt", "skipped")] {
             let mut value = fixture();
@@ -1542,6 +1402,35 @@ mod tests {
             assert_eq!(error.kind, crate::ErrorKind::Rejected);
             assert_eq!(error.to_string(), "work miri does not have Cargo scope");
         }
+    }
+
+    #[test]
+    fn target_arguments_widen_when_selection_contains_non_test_target() {
+        let mut value = fixture();
+        value["work"]["cargo.test"]["scope"]["selection"]["targets"] = serde_json::json!([
+            {"package": "demo", "name": "demo", "kind": ["lib"]},
+            {"package": "demo", "name": "integration", "kind": ["test"]},
+        ]);
+        set_identity(&mut value);
+        let plan = ValidatedPlan::from_bytes(serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(plan.target_args("cargo.test").unwrap().is_empty());
+    }
+
+    #[test]
+    fn target_validation_requires_complete_package_coverage() {
+        let mut value = fixture();
+        let selection = &mut value["work"]["cargo.test"]["scope"]["selection"];
+        selection["packages"] = serde_json::json!([
+            {"key": "demo", "name": "demo", "cargo_spec": "demo"},
+            {"key": "other", "name": "other", "cargo_spec": "other"},
+        ]);
+        selection["cargo_args"] = serde_json::json!(["-p", "demo", "-p", "other"]);
+        set_identity(&mut value);
+        let error = ValidatedPlan::from_bytes(serde_json::to_vec(&value).unwrap()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "work cargo.test target selectors do not cover every selected package"
+        );
     }
 
     #[test]

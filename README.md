@@ -1,15 +1,17 @@
 # Cargo-Rail Action
 
-Cargo-Rail Action brings Cargo-Rail planning, verified compiler reuse, and durable releases to GitHub Actions.
-It installs an exact Cargo-Rail release and validates each plan, cache, and release boundary before use.
+Cargo-Rail Action brings Cargo-Rail planning, verified compiler reuse,
+and durable releases to GitHub Actions.
+It installs an exact Cargo-Rail release and validates each plan, cache,
+and release boundary before use.
 Cargo and the workflow still run the work.
 
 ## Reduce work at each layer
 
-| Action | Resource effect |
-| ------ | --------------- |
+| Action  | Resource effect |
+| ------- | --------------- |
 | Planner | Lets the workflow skip jobs that are not required and gives required jobs exact Cargo selectors. |
-| Cache | Restores compatible compiler results inside the jobs that still run. |
+| Cache   | Restores compatible compiler results inside the jobs that still run. |
 | Release | Carries reviewed Rust changesets into one durable, resumable publication transaction. |
 
 ```text
@@ -23,7 +25,8 @@ Planning and caching solve different problems, so their reductions stack.
 Start with the planner alone.
 Add caching when the job has explicit remote authority and credentials.
 Add the release Action only to a protected publication job.
-Use the plan summary and cache report to see the actual result; the Action does not invent a time-saved estimate.
+Use the plan summary and cache report to see the actual result;
+the Action does not invent a time-saved estimate.
 
 ## Plan and run work in one job
 
@@ -148,6 +151,9 @@ cargo-rail-action plan matrix PLAN WORK [--family FAMILY]
 `summary` emits readable Markdown.
 Line-oriented selectors emit one compact value and newline.
 Argument and package selectors emit NUL-delimited values.
+`target-args` emits `--test NAME` pairs only when every selected target is an integration test.
+It emits nothing for an empty, mixed,
+or unsupported target set so Cargo runs the selected packages without unsafe narrowing.
 `matrix` emits an `include` object for selected rows, but emits the literal `all` for unrestricted variant scope.
 Handle `all` by using the work item's complete checked-in catalog before calling `fromJSON`.
 `--family FAMILY` filters selected rows and nests each row under that family name.
@@ -175,9 +181,9 @@ Operational failures, including I/O and failed subprocesses, exit `1`.
     verify-remote: false
 ```
 
-When one job uses both actions, configure `loadingalias/cargo-rail-action/cache` before
-`loadingalias/cargo-rail-action`. Cache setup changes Cargo configuration, and plan verification binds that
-configuration. Capturing the plan first causes later selectors to reject the changed execution authority.
+When one job uses both actions, configure `loadingalias/cargo-rail-action/cache` before `loadingalias/cargo-rail-action`.
+Cache setup changes Cargo configuration, and plan verification binds that configuration.
+Capturing the plan first causes later selectors to reject the changed execution authority.
 
 `mode` is always explicit.
 Use `read` for pull requests and other untrusted jobs.
@@ -304,8 +310,10 @@ It validates intent identity, expected source and repository, required workflow 
 and upload attempt identities.
 The locked Cargo-Rail release writes that contract.
 
-The release Action validates hosted requests and reviewed merges before invoking the same Cargo-Rail transaction.
-This repository uses that engine for its own releases and promotes `v10` only after verifying the immutable release.
+The release Action validates hosted requests and reviewed merges
+before invoking the same Cargo-Rail transaction.
+This repository uses that engine for its own releases and promotes `v10` only
+after verifying the immutable release.
 
 ## Supported runners
 
@@ -336,7 +344,8 @@ The runtime downloads each checksum from the same release as its executable or a
 That checksum detects inconsistent bytes but is not an independent publisher signature.
 The installer verifies checksums, component manifests, and the installed license,
 but it does not verify GitHub artifact attestations.
-Verify the exact release's immutability and every release-asset attestation before trusting its publication authority.
+Verify the exact release's immutability and every release-asset attestation
+before trusting its publication authority.
 
 The planner's `repository-token` is used only for a same-repository Git fetch when required history is absent.
 It is never placed in a URL, argv, repository configuration, output, summary,
@@ -388,7 +397,8 @@ Cache setup uses an isolated temporary Cargo home;
 the tests do not publish releases or contact remote cache storage.
 After updating `.github/cargo-rail.lock`, use `just check-locked-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH` to read the expected version from the lock.
 
-Push and pull-request CI build authenticated Cargo-Rail archives from the exact release source pinned by `commit`.
+Push and pull-request CI build authenticated Cargo-Rail archives from the exact release source
+pinned by `commit`.
 Tool installation uses the independently pinned `tooling` commit.
 Release-validation dispatches download the published Cargo-Rail version from the same lock.
 Both paths run the same independent contract tests.

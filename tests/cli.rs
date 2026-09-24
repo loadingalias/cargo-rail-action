@@ -47,7 +47,24 @@ fn missing_plan_is_operational_and_keeps_stdout_empty() {
 
 #[test]
 #[ignore = "requires the current Cargo-Rail source binary"]
-fn source_plan_selectors_validate_identity_and_reject_checkout_drift() {
+fn source_planner_authenticates_shallow_history_and_publishes_valid_plans() {
+    let output = Command::new(if cfg!(windows) { "python" } else { "python3" })
+        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/history.py"))
+        .arg(env!("CARGO_BIN_EXE_cargo-rail-action"))
+        .arg(std::env::var_os("CARGO_RAIL_TEST_BINARY").expect("source binary"))
+        .output()
+        .expect("run source planner history fixture");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "requires the current Cargo-Rail source binary"]
+fn source_plan_selectors_preserve_target_coverage_and_reject_checkout_drift() {
     let binary = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_BINARY").expect("source binary"));
     let directory = temporary_directory();
     let workspace = directory.join("workspace");
@@ -57,7 +74,14 @@ fn source_plan_selectors_validate_identity_and_reject_checkout_drift() {
         "[package]\nname = 'source-contract'\nversion = '0.1.0'\nedition = '2024'\n[lib]\npath = 'lib.rs'\n",
     )
     .unwrap();
-    fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 7 }\n").unwrap();
+    fs::write(
+        workspace.join("lib.rs"),
+        "mod helper;\npub fn value() -> u8 { helper::value() }\n",
+    )
+    .unwrap();
+    fs::write(workspace.join("helper.rs"), "pub fn value() -> u8 { 7 }\n").unwrap();
+    fs::create_dir(workspace.join("tests")).unwrap();
+    fs::write(workspace.join("tests/integration.rs"), "#[test]\nfn integration() {}\n").unwrap();
     fs::write(workspace.join(".gitignore"), "target/\n").unwrap();
     fs::create_dir(workspace.join(".config")).unwrap();
     fs::write(
@@ -152,6 +176,31 @@ fn source_plan_selectors_validate_identity_and_reject_checkout_drift() {
         assert!(rejected.stdout.is_empty(), "{operation}: {rejected:?}");
         assert!(String::from_utf8_lossy(&rejected.stderr).contains("does not have Cargo scope"));
     }
+    fs::write(workspace.join("helper.rs"), "pub fn value() -> u8 { 8 }\n").unwrap();
+    fs::write(
+        workspace.join("tests/integration.rs"),
+        "#[test]\nfn integration() { assert_eq!(2 + 2, 4); }\n",
+    )
+    .unwrap();
+    let mixed = Command::new(&binary)
+        .current_dir(&workspace)
+        .args(["rail", "plan", "--since", "HEAD", "--json"])
+        .output()
+        .expect("mixed-target source plan");
+    assert!(mixed.status.success(), "{mixed:?}");
+    let mixed_value: serde_json::Value = serde_json::from_slice(&mixed.stdout).unwrap();
+    assert_eq!(
+        mixed_value["work"]["cargo.test"]["scope"]["selection"]["targets"],
+        serde_json::json!([]),
+        "partial exact-target coverage must widen to package scope"
+    );
+    fs::write(&plan_path, mixed.stdout).unwrap();
+    let targets = select("target-args", Some("cargo.test"));
+    assert_eq!(targets.status.code(), Some(0), "{targets:?}");
+    assert!(
+        targets.stdout.is_empty(),
+        "mixed target selection narrowed work: {targets:?}"
+    );
     fs::write(workspace.join("linux.txt"), "after\n").unwrap();
     let changed = Command::new(&binary)
         .current_dir(&workspace)
@@ -166,7 +215,7 @@ fn source_plan_selectors_validate_identity_and_reject_checkout_drift() {
         serde_json::from_slice::<serde_json::Value>(&matrix.stdout).unwrap(),
         serde_json::json!({"include": [{"id": "linux", "runner": "ubuntu-latest"}]})
     );
-    fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 8 }\n").unwrap();
+    fs::write(workspace.join("lib.rs"), "pub fn value() -> u8 { 9 }\n").unwrap();
     let rejected = select("required", None);
     assert_eq!(rejected.status.code(), Some(2), "{rejected:?}");
     assert!(rejected.stdout.is_empty(), "{rejected:?}");
