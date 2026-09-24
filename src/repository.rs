@@ -10,7 +10,8 @@ use serde_json::Value;
 
 use crate::github::{Publication, publish};
 use crate::install::{self, ComponentSet};
-use crate::plan::{MAX_PLAN_BYTES, ValidatedPlan, parse_unique_json};
+use crate::plan::{MAX_PLAN_BYTES, ValidatedPlan};
+use crate::validation::parse_unique_json;
 use crate::{ActionError, Result, env_string, optional_env};
 
 const MAX_EVENT_BYTES: u64 = 4 * 1024 * 1024;
@@ -297,7 +298,11 @@ fn ensure_history(workspace: &Path, reference: &str, merge_base: bool, token: &s
         } else {
             resolved = format!("refs/remotes/origin/{reference}");
             let branch_spec = format!("refs/heads/{reference}:{resolved}");
-            if fetch(workspace, token, ["--no-tags", "--depth=1", "origin", &branch_spec]).is_err() {
+            let branch = fetch_output(workspace, token, ["--no-tags", "--depth=1", "origin", &branch_spec])?;
+            if !branch.status.success() {
+                if !missing_remote_ref(&branch) {
+                    return Err(history_fetch_failure(&branch, token));
+                }
                 resolved = format!("refs/tags/{reference}");
                 let tag_spec = format!("{resolved}:{resolved}");
                 fetch(workspace, token, ["--depth=1", "origin", &tag_spec])?;
@@ -344,6 +349,19 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    let output = fetch_output(workspace, token, arguments)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(history_fetch_failure(&output, token))
+    }
+}
+
+fn fetch_output<I, S>(workspace: &Path, token: &str, arguments: I) -> Result<BoundedOutput>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let mut command = Command::new("git");
     command.current_dir(workspace).arg("fetch").args(arguments);
     command.env("GIT_TERMINAL_PROMPT", "0");
@@ -364,26 +382,80 @@ where
                 "origin disagrees with the GitHub repository context; repository-token was not transmitted",
             ));
         }
+        // Git accumulates extra headers, including credentials persisted by checkout.
         command
-            .env("GIT_CONFIG_COUNT", "1")
-            .env("GIT_CONFIG_KEY_0", format!("http.{expected}/.extraHeader"))
+            .env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", format!("http.{origin}/.extraHeader"))
+            .env("GIT_CONFIG_VALUE_0", "")
+            .env("GIT_CONFIG_KEY_1", format!("http.{origin}/.extraHeader"))
             .env(
-                "GIT_CONFIG_VALUE_0",
+                "GIT_CONFIG_VALUE_1",
                 format!(
                     "AUTHORIZATION: basic {}",
                     base64(format!("x-access-token:{token}").as_bytes())
                 ),
             );
     }
-    let output = run_bounded(&mut command, MAX_SUBPROCESS_BYTES, MAX_SUBPROCESS_BYTES)?;
-    if output.status.success() {
-        Ok(())
+    run_bounded(&mut command, MAX_SUBPROCESS_BYTES, MAX_SUBPROCESS_BYTES)
+}
+
+fn missing_remote_ref(output: &BoundedOutput) -> bool {
+    String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .any(|line| line.starts_with("fatal: couldn't find remote ref "))
+}
+
+fn history_fetch_failure(output: &BoundedOutput, token: &str) -> ActionError {
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    let authentication_recovery = if token.is_empty() {
+        "Check checkout credentials for this repository, then retry."
     } else {
-        Err(ActionError::operational(format!(
-            "Git history fetch failed with exit code {}; verify the same-repository history authority and retry",
-            output.status.code().unwrap_or(1)
-        )))
-    }
+        "Check repository-token access to this repository, then retry."
+    };
+    let (cause, recovery) = if stderr.contains("requested url returned error: 401")
+        || stderr.contains("requested url returned error: 403")
+        || stderr.contains("authentication failed")
+        || stderr.contains("could not read username")
+    {
+        ("repository authentication failed", authentication_recovery)
+    } else if stderr.contains("requested url returned error: 503")
+        || stderr.contains("requested url returned error: 502")
+        || stderr.contains("requested url returned error: 500")
+        || stderr.contains("requested url returned error: 429")
+    {
+        (
+            "the remote Git service is unavailable",
+            "Retry after the remote Git service is available.",
+        )
+    } else if stderr.contains("couldn't find remote ref") || stderr.contains("requested url returned error: 404") {
+        (
+            "the comparison ref or repository is missing on origin",
+            "Check the comparison ref and repository URL, then retry.",
+        )
+    } else if stderr.contains("ssl certificate problem") || stderr.contains("server certificate verification failed") {
+        (
+            "TLS certificate verification failed",
+            "Check the repository host certificate trust, then retry.",
+        )
+    } else if stderr.contains("could not resolve host")
+        || stderr.contains("failed to connect")
+        || stderr.contains("connection refused")
+        || stderr.contains("timed out")
+    {
+        (
+            "the repository host could not be reached",
+            "Check network access to the repository host, then retry.",
+        )
+    } else {
+        (
+            "Git reported an unrecognized fetch failure",
+            "Inspect the Git error in the checkout and retry.",
+        )
+    };
+    ActionError::operational(format!(
+        "Git history fetch failed (exit code {}): {cause}.\nNext: {recovery}",
+        output.status.code().unwrap_or(1)
+    ))
 }
 
 fn github_repository_authority() -> Result<(String, String)> {
@@ -801,6 +873,54 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn history_fetch_uses_one_authentication_authority() {
+        if let Some(workspace) = std::env::var_os("HISTORY_FIXTURE_WORKSPACE") {
+            let workspace = PathBuf::from(workspace);
+            let all = optional_env("INPUT_ALL").unwrap() == "true";
+            let comparison = select_comparison(&workspace, &optional_env("INPUT_SINCE").unwrap(), all).unwrap();
+            let Comparison::Since { reference, merge_base } = comparison else {
+                assert!(all, "history fixture must compare commits unless --all is selected");
+                return;
+            };
+            let result = ensure_history(
+                &workspace,
+                &reference,
+                merge_base,
+                &optional_env("INPUT_REPOSITORY_TOKEN").unwrap(),
+            );
+            let cause = optional_env("HISTORY_FIXTURE_CAUSE").unwrap();
+            if !cause.is_empty() {
+                let error = result.expect_err("history fetch must fail").to_string();
+                assert!(error.contains(&cause), "{error}");
+                assert!(
+                    error.contains(&optional_env("HISTORY_FIXTURE_RECOVERY").unwrap()),
+                    "{error}"
+                );
+                assert_eq!(error.matches("Next: ").count(), 1, "{error}");
+                for secret in ["history-token-fixture", "history-checkout-fixture"] {
+                    assert!(!error.contains(secret), "{error}");
+                }
+            } else if optional_env("HISTORY_FIXTURE_REJECT").unwrap() == "true" {
+                assert!(result.unwrap_err().to_string().contains("origin disagrees"));
+            } else {
+                assert_eq!(result.unwrap(), env_string("HISTORY_FIXTURE_BASE").unwrap());
+            }
+            return;
+        }
+        let output = Command::new(if cfg!(windows) { "python" } else { "python3" })
+            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/history.py"))
+            .arg(std::env::current_exe().unwrap())
+            .output()
+            .expect("run HTTPS Git history fixture");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     #[test]
     fn machine_errors_preserve_cause_and_recovery() {
