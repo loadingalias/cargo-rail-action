@@ -10,8 +10,8 @@ description = "Native runtime for the Cargo-Rail GitHub Action"
 repository = "https://github.com/loadingalias/cargo-rail-action"
 
 [dependencies]
-jsonschema = { version = "0.54.0", default-features = false }
-clap = { version = "4.6.5", default-features = false, features = [
+jsonschema = { version = "0.57.0", default-features = false }
+clap = { version = "4.6.7", default-features = false, features = [
   "derive",
   "error-context",
   "help",
@@ -26,7 +26,7 @@ semver = "1.0.28"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
-serde-saphyr = { version = "1.2.0", default-features = false, features = ["deserialize"] }
+serde-saphyr = { version = "1.3.0", default-features = false, features = ["deserialize"] }
 
 [lints.rust]
 unsafe_code = "forbid"
