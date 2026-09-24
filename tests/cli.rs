@@ -104,6 +104,12 @@ fn source_plan_selectors_preserve_target_coverage_and_reject_checkout_drift() {
     .unwrap();
     fs::write(workspace.join("linux.txt"), "before\n").unwrap();
     fs::write(workspace.join("windows.txt"), "before\n").unwrap();
+    let lockfile = Command::new("cargo")
+        .current_dir(&workspace)
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(lockfile.status.success(), "{lockfile:?}");
     for arguments in [
         vec!["init", "--initial-branch=main"],
         vec!["add", "."],
@@ -200,6 +206,31 @@ fn source_plan_selectors_preserve_target_coverage_and_reject_checkout_drift() {
     assert!(
         targets.stdout.is_empty(),
         "mixed target selection narrowed work: {targets:?}"
+    );
+    // Ordinary Cargo runs the emitted selection with every compiler wrapper disabled.
+    let cargo_args = select("cargo-args", Some("cargo.test"));
+    assert_eq!(cargo_args.status.code(), Some(0), "{cargo_args:?}");
+    let tested = Command::new("cargo")
+        .current_dir(&workspace)
+        .env("RUSTC_WRAPPER", "")
+        .env("RUSTC_WORKSPACE_WRAPPER", "")
+        .env("CARGO_TARGET_DIR", directory.join("target"))
+        .arg("test")
+        .args(
+            cargo_args
+                .stdout
+                .split(|byte| *byte == 0)
+                .filter(|argument| !argument.is_empty())
+                .map(|argument| std::str::from_utf8(argument).expect("UTF-8 Cargo argument")),
+        )
+        .arg("--locked")
+        .output()
+        .expect("ordinary Cargo test");
+    let tested_stdout = String::from_utf8_lossy(&tested.stdout);
+    assert!(tested.status.success(), "{tested:?}");
+    assert!(
+        tested_stdout.contains("test integration ... ok"),
+        "selected integration test did not run: {tested_stdout}"
     );
     fs::write(workspace.join("linux.txt"), "after\n").unwrap();
     let changed = Command::new(&binary)

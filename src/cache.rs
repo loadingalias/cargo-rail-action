@@ -347,31 +347,23 @@ fn validate_status_contract(
     )?;
     require(object["scope"] == "local", "cache status scope is not local")?;
     let status = object_field(object, "status", "cache status")?;
-    let status_version = status["schema_version"]
-        .as_u64()
-        .ok_or_else(|| ActionError::rejected("cache status schema_version is invalid"))?;
-    match status_version {
-        16 => exact_keys(
-            status,
-            &["schema_version", "installation", "local", "remote"],
-            &[],
-            "cache status",
-        )?,
-        18 => exact_keys(
-            status,
-            &[
-                "schema_version",
-                "installation",
-                "selected_toolchain_readiness",
-                "remote_authority",
-                "local",
-                "remote",
-            ],
-            &[],
-            "cache status",
-        )?,
-        _ => return Err(ActionError::rejected("cache status schema_version is unsupported")),
-    }
+    require(
+        status["schema_version"] == 18,
+        "cache status schema_version is unsupported",
+    )?;
+    exact_keys(
+        status,
+        &[
+            "schema_version",
+            "installation",
+            "selected_toolchain_readiness",
+            "remote_authority",
+            "local",
+            "remote",
+        ],
+        &[],
+        "cache status",
+    )?;
     let installation = object_field(status, "installation", "cache status")?;
     let installation_required = [
         "state",
@@ -382,6 +374,15 @@ fn validate_status_contract(
         "cargo_l0",
         "usage",
         "issues",
+        "installation_integrity",
+        "component_authentication",
+        "workspace_enrollment",
+        "observed_reuse",
+        "receipt_version",
+        "owned_bytes",
+        "required_bytes",
+        "reclaimable_bytes",
+        "quarantined_receipts",
     ];
     let installation_optional = [
         "wrapper_path",
@@ -395,33 +396,12 @@ fn validate_status_contract(
         "distributed_policy",
         "distributed_placement_history",
     ];
-    if status_version == 16 {
-        exact_keys(
-            installation,
-            &installation_required,
-            &installation_optional,
-            "cache status installation",
-        )?;
-    } else {
-        let mut required = installation_required.to_vec();
-        required.extend([
-            "installation_integrity",
-            "component_authentication",
-            "workspace_enrollment",
-            "observed_reuse",
-            "receipt_version",
-            "owned_bytes",
-            "required_bytes",
-            "reclaimable_bytes",
-            "quarantined_receipts",
-        ]);
-        exact_keys(
-            installation,
-            &required,
-            &installation_optional,
-            "cache status installation",
-        )?;
-    }
+    exact_keys(
+        installation,
+        &installation_required,
+        &installation_optional,
+        "cache status installation",
+    )?;
     require(
         installation["state"] == "installed",
         "Cargo-Rail cache integration is not installed",
@@ -474,62 +454,60 @@ fn validate_status_contract(
         validate_placement_history,
         "cache status distributed placement history",
     )?;
-    if status_version == 18 {
-        require(
-            installation["installation_integrity"] == "verified",
-            "cache status installation integrity is not verified",
-        )?;
-        require(
-            installation["component_authentication"] == "authenticated",
-            "cache status components are not authenticated",
-        )?;
-        require(
-            installation["workspace_enrollment"] == "enrolled",
-            "cache status workspace is not enrolled",
-        )?;
-        require_enum(
-            &installation["observed_reuse"],
-            &[
-                "not_observed",
-                "verified_hit_observed",
-                "misses_only",
-                "bypasses_only",
-                "failures_only",
-            ],
-            "cache status observed reuse",
-        )?;
-        require(
-            installation["receipt_version"] == 5,
-            "cache status receipt version is unsupported",
-        )?;
-        let owned_bytes = installation["owned_bytes"]
-            .as_u64()
-            .ok_or_else(|| ActionError::rejected("cache status owned bytes are invalid"))?;
-        let required_bytes = installation["required_bytes"]
-            .as_u64()
-            .ok_or_else(|| ActionError::rejected("cache status required bytes are invalid"))?;
-        let reclaimable_bytes = installation["reclaimable_bytes"]
-            .as_u64()
-            .ok_or_else(|| ActionError::rejected("cache status reclaimable bytes are invalid"))?;
-        require(
-            required_bytes.checked_add(reclaimable_bytes) == Some(owned_bytes),
-            "cache status installation byte accounting is inconsistent",
-        )?;
-        require(
-            installation["quarantined_receipts"].as_u64().is_some(),
-            "cache status quarantined receipt count is invalid",
-        )?;
-        require_enum(
-            &status["selected_toolchain_readiness"],
-            &["ready", "stale", "not_probed", "unavailable"],
-            "cache status selected toolchain readiness",
-        )?;
-        require(
-            status.get("remote_authority").and_then(Value::as_str) == Some(mode),
-            "cache status remote authority disagrees with input",
-        )?;
-    }
-    validate_local(object_field(status, "local", "cache status")?, status_version)?;
+    require(
+        installation["installation_integrity"] == "verified",
+        "cache status installation integrity is not verified",
+    )?;
+    require(
+        installation["component_authentication"] == "authenticated",
+        "cache status components are not authenticated",
+    )?;
+    require(
+        installation["workspace_enrollment"] == "enrolled",
+        "cache status workspace is not enrolled",
+    )?;
+    require_enum(
+        &installation["observed_reuse"],
+        &[
+            "not_observed",
+            "verified_hit_observed",
+            "misses_only",
+            "bypasses_only",
+            "failures_only",
+        ],
+        "cache status observed reuse",
+    )?;
+    require(
+        installation["receipt_version"] == 5,
+        "cache status receipt version is unsupported",
+    )?;
+    let owned_bytes = installation["owned_bytes"]
+        .as_u64()
+        .ok_or_else(|| ActionError::rejected("cache status owned bytes are invalid"))?;
+    let required_bytes = installation["required_bytes"]
+        .as_u64()
+        .ok_or_else(|| ActionError::rejected("cache status required bytes are invalid"))?;
+    let reclaimable_bytes = installation["reclaimable_bytes"]
+        .as_u64()
+        .ok_or_else(|| ActionError::rejected("cache status reclaimable bytes are invalid"))?;
+    require(
+        required_bytes.checked_add(reclaimable_bytes) == Some(owned_bytes),
+        "cache status installation byte accounting is inconsistent",
+    )?;
+    require(
+        installation["quarantined_receipts"].as_u64().is_some(),
+        "cache status quarantined receipt count is invalid",
+    )?;
+    require_enum(
+        &status["selected_toolchain_readiness"],
+        &["ready", "stale", "not_probed", "unavailable"],
+        "cache status selected toolchain readiness",
+    )?;
+    require(
+        status.get("remote_authority").and_then(Value::as_str) == Some(mode),
+        "cache status remote authority disagrees with input",
+    )?;
+    validate_local(object_field(status, "local", "cache status")?)?;
     let remote = remote_state(status.get("remote"), "cache status remote")?;
     require(remote.mode == mode, "cache status remote mode disagrees with input")?;
     require(
@@ -707,7 +685,7 @@ fn validate_usage(usage: &Map<String, Value>) -> Result<()> {
     Ok(())
 }
 
-fn validate_local(local: &Map<String, Value>, status_version: u64) -> Result<()> {
+fn validate_local(local: &Map<String, Value>) -> Result<()> {
     exact_keys(local, &["present", "profile_scoped"], &["cache"], "cache status local")?;
     require(
         local["present"].is_boolean() && local["profile_scoped"].is_boolean(),
@@ -717,7 +695,7 @@ fn validate_local(local: &Map<String, Value>, status_version: u64) -> Result<()>
         let cache = cache
             .as_object()
             .ok_or_else(|| ActionError::rejected("cache status local.cache is invalid"))?;
-        let mut required = vec![
+        let required = [
             "root",
             "trust_domain",
             "bytes",
@@ -742,10 +720,8 @@ fn validate_local(local: &Map<String, Value>, status_version: u64) -> Result<()>
             "staging_bytes",
             "index_files",
             "reclaimable_bytes",
+            "over_capacity_bytes",
         ];
-        if status_version == 18 {
-            required.push("over_capacity_bytes");
-        }
         exact_keys(
             cache,
             &required,
@@ -787,16 +763,14 @@ fn validate_local(local: &Map<String, Value>, status_version: u64) -> Result<()>
             cache["native_ledger_disabled"].is_boolean(),
             "cache status local CAS.native_ledger_disabled is invalid",
         )?;
-        if status_version == 18 {
-            let bytes = cache["bytes"].as_u64().expect("cache bytes were validated above");
-            let max_bytes = cache["max_bytes"]
-                .as_u64()
-                .expect("cache max bytes were validated above");
-            require(
-                cache["over_capacity_bytes"].as_u64() == Some(bytes.saturating_sub(max_bytes)),
-                "cache status local CAS.over_capacity_bytes is inconsistent",
-            )?;
-        }
+        let bytes = cache["bytes"].as_u64().expect("cache bytes were validated above");
+        let max_bytes = cache["max_bytes"]
+            .as_u64()
+            .expect("cache max bytes were validated above");
+        require(
+            cache["over_capacity_bytes"].as_u64() == Some(bytes.saturating_sub(max_bytes)),
+            "cache status local CAS.over_capacity_bytes is inconsistent",
+        )?;
         for field in ["oldest_used_unix_ms", "newest_used_unix_ms"] {
             require_optional_u64(cache.get(field), &format!("cache status local CAS.{field}"))?;
         }
@@ -1112,6 +1086,47 @@ mod tests {
     }
 
     fn status(remote: Value, portability: &str) -> Value {
+        let mode = remote["mode"].clone();
+        let usage = serde_json::json!({
+            "recorded_events": 0,
+            "hits": 0,
+            "misses": 0,
+            "bypasses": 0,
+            "failures": 0,
+            "ledger_full": false,
+            "early_bypasses": 0,
+            "early_bypass_reasons": {},
+            "early_bypass_ledger_full": false,
+            "early_bypass_incomplete_tail": false,
+            "failure_reason_counts_available": true,
+            "failure_reasons": {},
+        });
+        let installation = serde_json::json!({
+            "state": "installed",
+            "healthy": true,
+            "cargo_home": "/cargo",
+            "config_path": "/cargo/config.toml",
+            "wrapper_path": "/cargo/wrapper",
+            "profile_id": "profile",
+            "bound_workspace_root": "/workspace",
+            "trust_domain": "trust",
+            "selection_source": "installed_profile",
+            "cache_base": "/cargo",
+            "max_bytes": 10_737_418_240_u64,
+            "root_portability": portability,
+            "cargo_l0": "owned_by_cargo_not_observable_when_rustc_is_not_launched",
+            "usage": usage,
+            "issues": [],
+            "installation_integrity": "verified",
+            "component_authentication": "authenticated",
+            "workspace_enrollment": "enrolled",
+            "observed_reuse": "not_observed",
+            "receipt_version": 5,
+            "owned_bytes": 768,
+            "required_bytes": 512,
+            "reclaimable_bytes": 256,
+            "quarantined_receipts": 1,
+        });
         serde_json::json!({
             "schema_version": 1,
             "command": "cache",
@@ -1120,59 +1135,14 @@ mod tests {
             "exit_code": 0,
             "scope": "local",
             "status": {
-                "schema_version": 16,
-                "installation": {
-                    "state": "installed",
-                    "healthy": true,
-                    "cargo_home": "/cargo",
-                    "config_path": "/cargo/config.toml",
-                    "wrapper_path": "/cargo/wrapper",
-                    "profile_id": "profile",
-                    "bound_workspace_root": "/workspace",
-                    "trust_domain": "trust",
-                    "selection_source": "installed_profile",
-                    "cache_base": "/cargo",
-                    "max_bytes": 10_737_418_240_u64,
-                    "root_portability": portability,
-                    "cargo_l0": "owned_by_cargo_not_observable_when_rustc_is_not_launched",
-                    "usage": {
-                        "recorded_events": 0,
-                        "hits": 0,
-                        "misses": 0,
-                        "bypasses": 0,
-                        "failures": 0,
-                        "ledger_full": false,
-                        "early_bypasses": 0,
-                        "early_bypass_reasons": {},
-                        "early_bypass_ledger_full": false,
-                        "early_bypass_incomplete_tail": false,
-                        "failure_reason_counts_available": true,
-                        "failure_reasons": {},
-                    },
-                    "issues": [],
-                },
+                "schema_version": 18,
+                "selected_toolchain_readiness": "not_probed",
+                "remote_authority": mode,
+                "installation": installation,
                 "local": {"present": false, "profile_scoped": true},
                 "remote": remote,
             },
         })
-    }
-
-    fn status_v18(remote: Value, portability: &str) -> Value {
-        let mut value = status(remote, portability);
-        value["status"]["schema_version"] = Value::from(18);
-        value["status"]["selected_toolchain_readiness"] = Value::String("not_probed".into());
-        value["status"]["remote_authority"] = Value::String("read".into());
-        let installation = value["status"]["installation"].as_object_mut().unwrap();
-        installation.insert("installation_integrity".into(), Value::String("verified".into()));
-        installation.insert("component_authentication".into(), Value::String("authenticated".into()));
-        installation.insert("workspace_enrollment".into(), Value::String("enrolled".into()));
-        installation.insert("observed_reuse".into(), Value::String("not_observed".into()));
-        installation.insert("receipt_version".into(), Value::from(5));
-        installation.insert("owned_bytes".into(), Value::from(768));
-        installation.insert("required_bytes".into(), Value::from(512));
-        installation.insert("reclaimable_bytes".into(), Value::from(256));
-        installation.insert("quarantined_receipts".into(), Value::from(1));
-        value
     }
 
     fn probe(remote: Value, marker: &str) -> Value {
@@ -1239,14 +1209,11 @@ mod tests {
                 validate_setup(&setup(setup_remote, "remap"), &inputs).expect("setup contract");
             let (from_status, status_bytes) =
                 validate_status(&status(status_remote, "remap"), &inputs).expect("status contract");
-            let (_, status_v18_bytes) =
-                validate_status(&status_v18(remote(provider, "read"), "remap"), &inputs).expect("status v18 contract");
             let from_probe = validate_probe(&probe(probe_remote, "initialized")).expect("probe contract");
             require_remote_match(&from_setup, &from_status, "setup/status").expect("setup/status authority");
             require_remote_match(&from_status, &from_probe, "status/probe").expect("status/probe authority");
             assert_eq!(setup_bytes, 10_737_418_240);
             assert_eq!(status_bytes, 10_737_418_240);
-            assert_eq!(status_v18_bytes, 10_737_418_240);
             assert_eq!(from_setup.provider, provider);
             assert_eq!(from_setup.mode, "read");
             assert_eq!(
@@ -1271,6 +1238,31 @@ mod tests {
         let mut wrong_schema = status(remote("aws-s3", "read"), "physical");
         wrong_schema["status"]["schema_version"] = Value::from(15);
         assert!(validate_status(&wrong_schema, &inputs).is_err());
+
+        // Cargo-Rail has emitted schema 18 since v0.28.0; the retired v16 shape is rejected.
+        let mut retired_schema = status(remote("aws-s3", "read"), "physical");
+        let retired_status = retired_schema["status"].as_object_mut().unwrap();
+        retired_status.insert("schema_version".into(), Value::from(16));
+        retired_status.remove("selected_toolchain_readiness");
+        retired_status.remove("remote_authority");
+        let retired_installation = retired_status["installation"].as_object_mut().unwrap();
+        for field in [
+            "installation_integrity",
+            "component_authentication",
+            "workspace_enrollment",
+            "observed_reuse",
+            "receipt_version",
+            "owned_bytes",
+            "required_bytes",
+            "reclaimable_bytes",
+            "quarantined_receipts",
+        ] {
+            retired_installation.remove(field);
+        }
+        assert!(
+            validate_status(&retired_schema, &inputs)
+                .is_err_and(|error| error.to_string().contains("schema_version is unsupported"))
+        );
 
         let mut retired_field = status(remote("aws-s3", "read"), "physical");
         retired_field["status"]["installation"]["unbound_pre_profile_state"] = serde_json::json!({});

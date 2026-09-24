@@ -300,6 +300,24 @@ By default, the Action installs the exact Cargo-Rail release recorded in `.githu
 Set `version` to another exact stable release only when the workflow needs a different compatible version.
 The Action validates the installed binary, plan, cache, and component contracts before use.
 
+### Supported version pairs
+
+Each Action release is qualified with exactly one Cargo-Rail release: the version in its lock.
+Only that pair is supported.
+The Action checks contracts, not version numbers.
+Another exact version, or `latest`, installs only when its archive, component manifest,
+and license validate.
+Every later step then fails closed on a contract version this Action does not accept.
+It accepts plan v9, release record v10, cache status schema 18, and component manifest v1.
+`latest` can therefore select a Cargo-Rail release that this Action rejects.
+
+The Action runs these `cargo rail` commands: `plan`, `surface --prepare`, `cache`, and `release`.
+Cargo-Rail treats their arguments and machine output as compatibility contracts.
+
+Repository configuration belongs to Cargo-Rail; the Action never reads it.
+Before you change `version`, run `cargo rail config validate --strict` with the new Cargo-Rail release,
+because a newer release can reject retired configuration fields.
+
 The planner accepts plan contract v9, including identity-bound impact attribution.
 Regenerate plans from older contracts.
 
