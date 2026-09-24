@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -7,8 +6,8 @@ use serde_json::{Map, Value};
 
 use crate::github::{Publication, publish};
 use crate::install::{self, ComponentSet};
-use crate::plan::parse_unique_json;
 use crate::repository::{run_bounded, subprocess_failure};
+use crate::validation::{exact_keys, object_field, parse_unique_json, require};
 use crate::{ActionError, Result, env_string, optional_env};
 
 const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
@@ -908,27 +907,6 @@ fn human_bytes(value: u64) -> String {
     format!("{value} B")
 }
 
-fn exact_keys(object: &Map<String, Value>, required: &[&str], optional: &[&str], subject: &str) -> Result<()> {
-    let required = required.iter().copied().collect::<BTreeSet<_>>();
-    let optional = optional.iter().copied().collect::<BTreeSet<_>>();
-    let actual = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
-    let missing = required.difference(&actual).copied().collect::<Vec<_>>();
-    let unknown = actual
-        .difference(&required)
-        .filter(|field| !optional.contains(**field))
-        .copied()
-        .collect::<Vec<_>>();
-    require(missing.is_empty(), format!("{subject} is missing {missing:?}"))?;
-    require(unknown.is_empty(), format!("{subject} has unknown fields {unknown:?}"))
-}
-
-fn object_field<'a>(object: &'a Map<String, Value>, field: &str, subject: &str) -> Result<&'a Map<String, Value>> {
-    object
-        .get(field)
-        .and_then(Value::as_object)
-        .ok_or_else(|| ActionError::rejected(format!("{subject}.{field} is missing or invalid")))
-}
-
 fn string_field<'a>(object: &'a Map<String, Value>, field: &str, subject: &str) -> Result<&'a str> {
     object
         .get(field)
@@ -944,14 +922,6 @@ fn valid_authority(value: &str) -> bool {
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     })
-}
-
-fn require(condition: bool, message: impl Into<String>) -> Result<()> {
-    if condition {
-        Ok(())
-    } else {
-        Err(ActionError::rejected(message))
-    }
 }
 
 fn canonical_directory(path: &Path, subject: &str) -> Result<PathBuf> {

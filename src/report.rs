@@ -635,7 +635,7 @@ fn decode<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     if bytes.len() as u64 > MAX_RECORD_BYTES {
         return Err(ActionError::rejected("cache record exceeds its byte bound"));
     }
-    let value = crate::plan::parse_unique_json(&bytes, "cache record")?;
+    let value = crate::validation::parse_unique_json(&bytes, "cache record")?;
     serde_json::from_value(value).map_err(|error| ActionError::rejected(format!("invalid cache record: {error}")))
 }
 

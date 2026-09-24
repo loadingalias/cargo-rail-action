@@ -4,8 +4,8 @@ use crate::{
     ActionError, Result, env_string,
     github::{Publication, publish},
     install::{self, ComponentSet},
-    plan::parse_unique_json,
     repository::{run_bounded, subprocess_failure},
+    validation::parse_unique_json,
 };
 use clap::Args;
 use serde_json::Value;

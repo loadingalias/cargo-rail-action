@@ -1,7 +1,7 @@
 //! Product runtime manifest generation; release policy belongs to Cargo-Rail.
+use crate::digest::sha256_hex as digest_bytes;
 use crate::{ActionError, MAX_RUNTIME_BYTES, QUALIFIED_TARGETS, Result, VERSION};
 use clap::Args;
-use rscrypto::Sha256;
 use std::{
     collections::BTreeMap,
     fs::File,
@@ -128,15 +128,4 @@ fn valid_asset_name(value: &str) -> bool {
         && !value.starts_with('.')
         && !value.contains(['/', '\\', '\r', '\n'])
         && value.as_bytes().iter().all(|byte| byte.is_ascii_graphic())
-}
-
-fn digest_bytes(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
 }

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod cache;
+mod digest;
 mod github;
 mod install;
 mod package;
@@ -9,6 +10,7 @@ mod release;
 mod release_record;
 mod report;
 mod repository;
+mod validation;
 
 use std::ffi::OsString;
 use std::fmt;
@@ -138,7 +140,7 @@ enum PlanOperation {
     CargoScope(PlanWork),
     /// Emit NUL-delimited package names; skipped or workspace scope emits nothing.
     PackageNames(PlanWork),
-    /// Emit NUL-delimited target arguments; no target restriction emits nothing.
+    /// Emit NUL-delimited --test arguments only when every selected target is an integration test.
     TargetArgs(PlanWork),
     /// Print a JSON include matrix, or all when every declared variant is required.
     Matrix(MatrixArgs),

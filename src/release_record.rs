@@ -4,10 +4,10 @@ use std::io::Read as _;
 use std::path::PathBuf;
 
 use clap::Args;
-use rscrypto::Sha256;
 use serde_json::Value;
 
-use crate::{ActionError, Result, plan::parse_unique_json, write_stdout};
+use crate::digest::sha256_hex as digest;
+use crate::{ActionError, Result, validation::parse_unique_json, write_stdout};
 
 const MAX_RECORD_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -425,10 +425,6 @@ fn matches_content(value: &Value) -> bool {
     value["content"]
         .as_str()
         .is_some_and(|content| value["after_digest"] == digest(content.as_bytes()))
-}
-
-fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn require_integers(value: &Value) -> Result<()> {

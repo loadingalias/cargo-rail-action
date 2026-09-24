@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use rscrypto::Sha256;
 
+use crate::digest::{hex_bytes, sha256_hex as hex_digest};
 use crate::github::{Publication, publish};
 use crate::repository::{create_private_directory, run_bounded, subprocess_failure};
 use crate::{ActionError, MAX_RUNTIME_BYTES, QUALIFIED_TARGETS, Result, build_target, env_string};
@@ -1019,20 +1020,6 @@ fn read_bounded_file(path: &Path, maximum: u64, subject: &str) -> Result<Vec<u8>
         return Err(ActionError::rejected(format!("{subject} exceeds its byte bound")));
     }
     Ok(bytes)
-}
-
-fn hex_digest(bytes: &[u8]) -> String {
-    hex_bytes(&Sha256::digest(bytes))
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
 }
 
 fn valid_digest(value: &str) -> bool {
