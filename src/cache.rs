@@ -725,7 +725,7 @@ fn validate_local(local: &Map<String, Value>) -> Result<()> {
         exact_keys(
             cache,
             &required,
-            &["oldest_used_unix_ms", "newest_used_unix_ms"],
+            &["oldest_used_unix_ms", "newest_used_unix_ms", "recent_evictions"],
             "cache status local CAS",
         )?;
         for field in ["root", "trust_domain"] {
@@ -774,8 +774,30 @@ fn validate_local(local: &Map<String, Value>) -> Result<()> {
         for field in ["oldest_used_unix_ms", "newest_used_unix_ms"] {
             require_optional_u64(cache.get(field), &format!("cache status local CAS.{field}"))?;
         }
+        if let Some(recent) = cache.get("recent_evictions") {
+            validate_recent_evictions(recent)?;
+        }
     }
     Ok(())
+}
+
+/// Validate the local store's record of results evicted within a day of their last use.
+fn validate_recent_evictions(value: &Value) -> Result<()> {
+    let recent = value
+        .as_object()
+        .ok_or_else(|| ActionError::rejected("cache status local CAS.recent_evictions is invalid"))?;
+    exact_keys(
+        recent,
+        &["results", "bytes", "last_unix_ms"],
+        &[],
+        "cache status local CAS.recent_evictions",
+    )?;
+    require(
+        recent["results"].as_u64().is_some_and(|results| results > 0)
+            && recent["bytes"].as_u64().is_some()
+            && recent["last_unix_ms"].as_u64().is_some(),
+        "cache status local CAS.recent_evictions is invalid",
+    )
 }
 
 fn validate_placement_history(value: &Map<String, Value>) -> Result<()> {
@@ -960,6 +982,21 @@ mod tests {
             verify_remote: false,
             version: "0.27.1".to_string(),
             workspace: PathBuf::from("/workspace"),
+        }
+    }
+
+    #[test]
+    fn recent_evictions_are_optional_and_exact() {
+        let valid = serde_json::json!({"results": 3, "bytes": 4096, "last_unix_ms": 1_790_000_000_000_u64});
+        validate_recent_evictions(&valid).expect("a complete eviction record is accepted");
+        for invalid in [
+            serde_json::json!({"results": 3, "bytes": 4096, "last_unix_ms": 1, "extra": 1}),
+            serde_json::json!({"results": 0, "bytes": 0, "last_unix_ms": 1}),
+            serde_json::json!({"results": 3, "bytes": 4096}),
+            serde_json::json!([3, 4096, 1]),
+        ] {
+            let error = validate_recent_evictions(&invalid).expect_err("malformed eviction record");
+            assert_eq!(error.kind, crate::ErrorKind::Rejected, "{invalid}");
         }
     }
 
