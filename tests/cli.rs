@@ -255,6 +255,173 @@ fn source_plan_selectors_preserve_target_coverage_and_reject_checkout_drift() {
 }
 
 #[test]
+#[ignore = "requires the current Cargo-Rail source binary"]
+fn source_plan_selectors_qualify_empty_precise_widened_and_drifted_plans() {
+    let binary = PathBuf::from(std::env::var_os("CARGO_RAIL_TEST_BINARY").expect("source binary"));
+    let directory = temporary_directory();
+    let workspace = directory.join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[workspace]\nmembers = ['alpha', 'leaf']\nresolver = '2'\n",
+    )
+    .unwrap();
+    for (name, dependency) in [("alpha", ""), ("leaf", "alpha = { path = '../alpha' }\n")] {
+        fs::create_dir_all(workspace.join(name).join("src")).unwrap();
+        fs::write(
+            workspace.join(name).join("Cargo.toml"),
+            format!("[package]\nname = '{name}'\nversion = '0.1.0'\nedition = '2024'\n[dependencies]\n{dependency}"),
+        )
+        .unwrap();
+        fs::write(workspace.join(name).join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
+    }
+    fs::write(workspace.join("README.md"), "# Fixture\n").unwrap();
+    fs::write(workspace.join(".gitignore"), "target/\n").unwrap();
+    let lockfile = Command::new("cargo")
+        .current_dir(&workspace)
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(lockfile.status.success(), "{lockfile:?}");
+    for arguments in [
+        vec!["init", "--initial-branch=main"],
+        vec!["add", "."],
+        vec![
+            "-c",
+            "user.name=Contract Test",
+            "-c",
+            "user.email=contract@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "Initial fixture",
+        ],
+    ] {
+        let output = Command::new("git")
+            .current_dir(&workspace)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let path = std::env::join_paths(
+        std::iter::once(binary.parent().unwrap().to_path_buf())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+    )
+    .unwrap();
+    // The runner-local plan lives outside every checkout that reads it.
+    let plan_path = directory.join("plan.json");
+    let create_plan = || {
+        let output = Command::new(&binary)
+            .current_dir(&workspace)
+            .args(["rail", "plan", "--since", "HEAD", "--json"])
+            .output()
+            .expect("source plan");
+        assert!(output.status.success(), "{output:?}");
+        fs::write(&plan_path, &output.stdout).unwrap();
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let select_in = |checkout: &std::path::Path, environment: &[(&str, &std::ffi::OsStr)], arguments: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cargo-rail-action"));
+        command.current_dir(checkout).env("PATH", &path).arg("plan");
+        command.arg(arguments[0]).arg(&plan_path).args(&arguments[1..]);
+        for (name, value) in environment {
+            command.env(name, value);
+        }
+        command.output().expect("source plan selector")
+    };
+    let select = |arguments: &[&str]| select_in(&workspace, &[], arguments);
+    let accepted = |arguments: &[&str]| {
+        let output = select(arguments);
+        assert_eq!(output.status.code(), Some(0), "{arguments:?}: {output:?}");
+        output.stdout
+    };
+    let rejected = |output: std::process::Output, subject: &str| {
+        assert_eq!(output.status.code(), Some(2), "{subject} was accepted: {output:?}");
+        assert!(output.stdout.is_empty(), "{subject} emitted stdout: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("create a new plan"),
+            "{subject}: {output:?}"
+        );
+    };
+
+    // Empty work: nothing is required and Cargo selectors emit nothing.
+    let empty = create_plan();
+    assert_eq!(empty["required"], serde_json::json!([]));
+    assert_eq!(accepted(&["required"]), b"[]\n");
+    assert_eq!(accepted(&["is-required", "cargo.test"]), b"false\n");
+    assert_eq!(accepted(&["cargo-scope", "cargo.test"]), b"skipped\n");
+    assert_eq!(accepted(&["cargo-args", "cargo.test"]), b"");
+    assert!(
+        String::from_utf8(accepted(&["summary"]))
+            .unwrap()
+            .contains("No work required.")
+    );
+
+    // Precise scope: a leaf change selects only the leaf package.
+    fs::write(workspace.join("leaf/src/lib.rs"), "pub fn value() -> u8 { 2 }\n").unwrap();
+    let precise = create_plan();
+    assert_eq!(precise["work"]["cargo.test"]["cause"], "changed_input");
+    assert_eq!(accepted(&["cargo-scope", "cargo.test"]), b"packages\n");
+    assert_eq!(accepted(&["cargo-args", "cargo.test"]), b"-p\0leaf\0");
+    assert_eq!(accepted(&["package-names", "cargo.test"]), b"leaf\0");
+
+    // Untracked drift after planning rejects the saved plan.
+    fs::write(workspace.join("leaf/src/extra.rs"), "pub fn extra() {}\n").unwrap();
+    rejected(select(&["cargo-args", "cargo.test"]), "untracked drift");
+    fs::remove_file(workspace.join("leaf/src/extra.rs")).unwrap();
+    assert_eq!(accepted(&["cargo-args", "cargo.test"]), b"-p\0leaf\0");
+
+    // A different compiler rejects the saved plan.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let sysroot = Command::new("rustc").args(["--print", "sysroot"]).output().unwrap();
+        assert!(sysroot.status.success(), "{sysroot:?}");
+        let rustc = PathBuf::from(String::from_utf8(sysroot.stdout).unwrap().trim()).join("bin/rustc");
+        let wrapper = directory.join("rustc-wrapper");
+        fs::write(&wrapper, format!("#!/bin/sh\nexec '{}' \"$@\"\n", rustc.display())).unwrap();
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+        rejected(
+            select_in(
+                &workspace,
+                &[("RUSTC", wrapper.as_os_str())],
+                &["cargo-args", "cargo.test"],
+            ),
+            "compiler drift",
+        );
+    }
+
+    // Relocation: the same commit and worktree at another path verifies.
+    fs::write(workspace.join("leaf/src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
+    create_plan();
+    let clone = directory.join("relocated");
+    let cloned = Command::new("git")
+        .arg("clone")
+        .arg("--quiet")
+        .arg(&workspace)
+        .arg(&clone)
+        .output()
+        .unwrap();
+    assert!(cloned.status.success(), "{cloned:?}");
+    let relocated = select_in(&clone, &[], &["required"]);
+    assert_eq!(relocated.status.code(), Some(0), "{relocated:?}");
+    assert_eq!(relocated.stdout, b"[]\n");
+
+    // Without compatible evidence, an unrelated file widens Cargo work explicitly.
+    fs::write(workspace.join("README.md"), "# Changed fixture\n").unwrap();
+    let widened = create_plan();
+    assert_eq!(widened["work"]["cargo.test"]["cause"], "incomplete_evidence");
+    assert_eq!(accepted(&["is-required", "cargo.test"]), b"true\n");
+    assert_eq!(accepted(&["cargo-scope", "cargo.test"]), b"workspace\n");
+    assert_eq!(accepted(&["cargo-args", "cargo.test"]), b"");
+    let summary = String::from_utf8(accepted(&["summary"])).unwrap();
+    assert!(summary.contains("**Scope expanded:**"), "{summary}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn documented_selectors_stop_before_execution_or_publication_on_rejection() {
     fn scripts(value: &serde_json::Value, found: &mut Vec<String>) {
         match value {
@@ -289,7 +456,7 @@ fn documented_selectors_stop_before_execution_or_publication_on_rejection() {
         let value: serde_json::Value = serde_saphyr::from_str(yaml).expect("README YAML");
         scripts(&value, &mut examples);
     }
-    assert_eq!(examples.len(), 2, "both documented Cargo selector examples");
+    assert_eq!(examples.len(), 4, "every documented Cargo selector example");
     for example in examples {
         let script = format!(
             "cargo-rail-action() {{ \"$RUNTIME\" \"$@\"; }}\ncargo() {{ printf invoked > \"$EXECUTED\"; }}\n{example}"
@@ -309,6 +476,60 @@ fn documented_selectors_stop_before_execution_or_publication_on_rejection() {
         assert!(fs::read(&published).expect("output file").is_empty());
     }
     fs::remove_dir_all(directory).expect("remove fixture");
+}
+
+#[test]
+fn documented_grouped_jobs_guard_each_selector_with_its_own_work() {
+    fn jobs<'a>(value: &'a serde_json::Value, found: &mut Vec<&'a serde_json::Map<String, serde_json::Value>>) {
+        match value {
+            serde_json::Value::Object(object) => {
+                if object.get("steps").is_some_and(serde_json::Value::is_array) {
+                    found.push(object);
+                }
+                object.values().for_each(|child| jobs(child, found));
+            }
+            serde_json::Value::Array(array) => array.iter().for_each(|child| jobs(child, found)),
+            _ => {}
+        }
+    }
+    fn work_ids(condition: &str) -> Vec<&str> {
+        condition.split('\'').skip(1).step_by(2).collect()
+    }
+    let blocks = include_str!("../README.md")
+        .split("```yaml")
+        .skip(1)
+        .map(|block| serde_saphyr::from_str::<serde_json::Value>(block.split("```").next().unwrap()).unwrap())
+        .collect::<Vec<_>>();
+    let mut found = Vec::new();
+    blocks.iter().for_each(|block| jobs(block, &mut found));
+    let mut grouped = 0;
+    for job in found {
+        let job_condition = job.get("if").and_then(serde_json::Value::as_str).unwrap_or("");
+        let owned = work_ids(job_condition);
+        grouped += usize::from(owned.len() > 1);
+        for step in job["steps"].as_array().unwrap() {
+            let step_condition = step.get("if").and_then(serde_json::Value::as_str).unwrap_or("");
+            for guarded in work_ids(step_condition) {
+                assert!(
+                    job_condition.is_empty() || owned.contains(&guarded),
+                    "job condition omits {guarded}: {job_condition}"
+                );
+            }
+            let Some(run) = step.get("run").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            for line in run.lines().filter(|line| line.contains("cargo-rail-action plan ")) {
+                let words = line.split_whitespace().collect::<Vec<_>>();
+                let plan = words.iter().position(|word| *word == "\"$PLAN_FILE\"").unwrap();
+                let work = words[plan + 1];
+                assert!(
+                    work_ids(step_condition).contains(&work) || owned == [work],
+                    "selector for {work} is not guarded by its own work: {step_condition:?} in job {job_condition:?}"
+                );
+            }
+        }
+    }
+    assert!(grouped > 0, "README documents a grouped job");
 }
 
 #[test]
@@ -1071,5 +1292,234 @@ print(json.dumps(result))
         git(&remote, &["rev-parse", "refs/tags/adapter-fixture-v0.1.1^{commit}"],),
         prepared
     );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "downloads the locked Cargo-Rail release"]
+fn release_setup_installs_the_locked_version_without_a_rust_toolchain() {
+    let directory = temporary_directory();
+    let runner_temp = directory.join("runner");
+    let cache = directory.join("cache");
+    for path in [&runner_temp, &cache] {
+        fs::create_dir(path).unwrap();
+    }
+    let github_path = directory.join("github-path");
+    let github_output = directory.join("github-output");
+    fs::write(&github_path, "").unwrap();
+    fs::write(&github_output, "").unwrap();
+    let (runner_os, runner_arch, target) = if cfg!(target_os = "macos") {
+        ("macOS", "ARM64", "aarch64-apple-darwin")
+    } else if cfg!(target_arch = "aarch64") {
+        ("Linux", "ARM64", "aarch64-unknown-linux-gnu")
+    } else {
+        ("Linux", "X64", "x86_64-unknown-linux-gnu")
+    };
+    // Building the Action runtime from source is the only step that uses Rust.
+    let bootstrap = Command::new("bash")
+        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/bootstrap.sh"))
+        .args([
+            "self-check",
+            "--expect-version",
+            env!("CARGO_PKG_VERSION"),
+            "--expect-target",
+            target,
+        ])
+        .env("RUNNER_OS", runner_os)
+        .env("RUNNER_ARCH", runner_arch)
+        .env("RUNNER_TEMP", &runner_temp)
+        .env("RUNNER_TOOL_CACHE", &cache)
+        .env("GITHUB_PATH", &github_path)
+        .env("CARGO_RAIL_ACTION_RUNTIME_SOURCE", "source")
+        .output()
+        .unwrap();
+    assert!(bootstrap.status.success(), "{bootstrap:?}");
+    let launcher = PathBuf::from(fs::read_to_string(&github_path).unwrap().trim()).join("cargo-rail-action");
+    let lock = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/.github/cargo-rail.lock")).unwrap();
+    let locked = lock.lines().find_map(|line| line.strip_prefix("version=")).unwrap();
+
+    // Setup runs with system tools only: no cargo, rustc, or rustup is reachable.
+    let system_path = "/usr/bin:/bin";
+    for tool in ["cargo", "rustc", "rustup"] {
+        let found = Command::new("sh")
+            .args(["-c", &format!("command -v {tool}")])
+            .env("PATH", system_path)
+            .output()
+            .unwrap();
+        assert!(!found.status.success(), "{tool} is reachable on {system_path}");
+    }
+    fs::write(&github_path, "").unwrap();
+    let setup = Command::new(&launcher)
+        .args(["run", "setup"])
+        .env_clear()
+        .env("PATH", system_path)
+        .env("HOME", &directory)
+        .env("RUNNER_OS", runner_os)
+        .env("RUNNER_ARCH", runner_arch)
+        .env("RUNNER_TEMP", &runner_temp)
+        .env("RUNNER_TOOL_CACHE", &cache)
+        .env("GITHUB_PATH", &github_path)
+        .env("GITHUB_OUTPUT", &github_output)
+        .env("INPUT_VERSION", locked)
+        .output()
+        .unwrap();
+    assert!(setup.status.success(), "{setup:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&setup.stdout).trim(),
+        format!("Cargo-Rail setup ready: {locked}")
+    );
+    assert_eq!(
+        fs::read_to_string(&github_output).unwrap(),
+        format!("version={locked}\n")
+    );
+    let installed = fs::read_to_string(&github_path)
+        .unwrap()
+        .lines()
+        .map(|line| PathBuf::from(line).join("cargo-rail"))
+        .find(|path| path.is_file())
+        .expect("installed Cargo-Rail directory on GITHUB_PATH");
+    let version = Command::new(&installed).arg("--version").env_clear().output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("cargo-rail {locked}")
+    );
+
+    // The installed release plans a workspace pinned to an older toolchain than any Action build uses.
+    let toolchain = std::env::var("CARGO_RAIL_TEST_OLD_TOOLCHAIN").unwrap_or_else(|_| "1.91.0".to_string());
+    let workspace = directory.join("workspace");
+    fs::create_dir_all(workspace.join("src")).unwrap();
+    fs::write(
+        workspace.join("Cargo.toml"),
+        format!(
+            "[package]\nname = 'old-toolchain'\nversion = '0.1.0'\nedition = '2021'\nrust-version = '{}'\n",
+            toolchain
+                .rsplit_once('.')
+                .map_or(toolchain.as_str(), |(minor, _)| minor)
+        ),
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("rust-toolchain.toml"),
+        format!("[toolchain]\nchannel = '{toolchain}'\n"),
+    )
+    .unwrap();
+    fs::write(workspace.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
+    fs::write(workspace.join(".gitignore"), "target/\n").unwrap();
+    let git = |arguments: &[&str]| {
+        let output = Command::new("git")
+            .current_dir(&workspace)
+            .args([
+                "-c",
+                "user.name=Setup Test",
+                "-c",
+                "user.email=setup@invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    };
+    // The fixture's own rust-toolchain.toml must select its toolchain, not the test runner's.
+    let lockfile = Command::new("cargo")
+        .current_dir(&workspace)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .args(["generate-lockfile", "--offline"])
+        .output()
+        .unwrap();
+    assert!(lockfile.status.success(), "{lockfile:?}");
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "."]);
+    git(&["commit", "-qm", "base"]);
+    fs::write(workspace.join("src/lib.rs"), "pub fn value() -> u8 { 2 }\n").unwrap();
+    git(&["commit", "-qam", "change"]);
+    let rustc = Command::new("rustc")
+        .current_dir(&workspace)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&rustc.stdout).contains(&format!("rustc {toolchain}")),
+        "{rustc:?}"
+    );
+    let plan = Command::new(&installed)
+        .current_dir(&workspace)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("CARGO")
+        .env_remove("RUSTC_WRAPPER")
+        .env_remove("RUSTC_WORKSPACE_WRAPPER")
+        .args(["rail", "plan", "--since", "HEAD~1", "--json"])
+        .output()
+        .unwrap();
+    assert!(plan.status.success(), "{plan:?}");
+    let plan: serde_json::Value = serde_json::from_slice(&plan.stdout).unwrap();
+    assert_eq!(plan["work"]["cargo.test"]["state"], "required");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn planner_stops_on_a_legacy_output_consumer_before_installing() {
+    let directory = temporary_directory();
+    let workspace = directory.join("workspace");
+    fs::create_dir_all(workspace.join(".github/workflows")).unwrap();
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[package]\nname = 'audit'\nversion = '0.1.0'\nedition = '2021'\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.join(".github/workflows/ci.yml"),
+        "jobs:\n  plan:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: loadingalias/cargo-rail-action@v10\n        id: rail\n      - if: steps.rail.outputs.test == 'true'\n        run: cargo test\n",
+    )
+    .unwrap();
+    let git = Command::new("git")
+        .current_dir(&workspace)
+        .args(["init", "-q", "-b", "main"])
+        .output()
+        .unwrap();
+    assert!(git.status.success(), "{git:?}");
+    let runner_temp = directory.join("runner");
+    fs::create_dir(&runner_temp).unwrap();
+    // A reachable curl would record that installation started.
+    let bin = directory.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let curl_called = directory.join("curl-called");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let curl = bin.join("curl");
+        fs::write(&curl, "#!/bin/sh\nprintf called > \"$CURL_CALLED\"\nexit 99\n").unwrap();
+        fs::set_permissions(&curl, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())))
+            .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-rail-action"))
+        .args(["run", "planner"])
+        .env("PATH", path)
+        .env("CURL_CALLED", &curl_called)
+        .env("RUNNER_TEMP", &runner_temp)
+        .env("RUNNER_TOOL_CACHE", &runner_temp)
+        .env("GITHUB_WORKSPACE", &workspace)
+        .env("INPUT_VERSION", "0.29.0")
+        .env("INPUT_COMPONENTS", "core")
+        .env("INPUT_SINCE", "")
+        .env("INPUT_ALL", "true")
+        .env("INPUT_EVIDENCE", "")
+        .env("INPUT_WORKING_DIRECTORY", ".")
+        .env("INPUT_REPOSITORY_TOKEN", "")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("::error file=.github/workflows/ci.yml,line=7::") && stderr.contains("has no output test"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("workflow audit found 1 error"), "{stderr}");
+    assert!(!curl_called.exists(), "installation started before the audit failed");
     fs::remove_dir_all(directory).unwrap();
 }

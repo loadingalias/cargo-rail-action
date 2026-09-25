@@ -133,6 +133,149 @@ Match the planning job's source, Rust toolchain, platform, and relative workspac
 Run selectors from that workspace directory; checkout verification rejects source drift.
 Create a separate plan for each platform when the workflow spans platforms.
 
+## Group work and route other platforms
+
+These jobs extend the `plan` job above.
+A grouped job runs when any work it owns is required.
+Guard each command with its own work ID.
+Repository work such as `cargo.fmt` can route the job, but it has no Cargo selector.
+The Linux plan's `required-work` can route a macOS job.
+Only a plan created on macOS authorizes macOS selectors,
+so that job plans again with the same Cargo-Rail version:
+
+```yaml
+  validate:
+    needs: plan
+    if: >-
+      contains(fromJSON(needs.plan.outputs.required-work), 'cargo.fmt') ||
+      contains(fromJSON(needs.plan.outputs.required-work), 'cargo.test')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cargo-rail-plan
+          path: ${{ runner.temp }}/cargo-rail-plan
+      - uses: loadingalias/cargo-rail-action/setup@v10
+        with:
+          version: ${{ needs.plan.outputs.cargo-rail-version }}
+      - name: Check formatting
+        if: contains(fromJSON(needs.plan.outputs.required-work), 'cargo.fmt')
+        run: cargo fmt --all --check
+      - name: Run selected tests
+        if: contains(fromJSON(needs.plan.outputs.required-work), 'cargo.test')
+        shell: bash
+        env:
+          PLAN_FILE: ${{ runner.temp }}/cargo-rail-plan/plan.json
+        run: |
+          ARGS_FILE="$(mktemp "$RUNNER_TEMP/cargo-rail-args.XXXXXX")"
+          cargo-rail-action plan cargo-args "$PLAN_FILE" cargo.test > "$ARGS_FILE" || exit "$?"
+          CARGO_ARGS=()
+          while IFS= read -r -d '' argument; do CARGO_ARGS+=("$argument"); done < "$ARGS_FILE"
+          rm -- "$ARGS_FILE"
+          cargo nextest run "${CARGO_ARGS[@]}" --locked
+
+  macos-test:
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.required-work), 'cargo.test')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: loadingalias/cargo-rail-action@v10
+        id: rail
+        with:
+          version: ${{ needs.plan.outputs.cargo-rail-version }}
+      - name: Run selected tests
+        if: contains(fromJSON(steps.rail.outputs.required-work), 'cargo.test')
+        shell: bash
+        env:
+          PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
+        run: |
+          ARGS_FILE="$(mktemp "$RUNNER_TEMP/cargo-rail-args.XXXXXX")"
+          cargo-rail-action plan cargo-args "$PLAN_FILE" cargo.test > "$ARGS_FILE" || exit "$?"
+          CARGO_ARGS=()
+          while IFS= read -r -d '' argument; do CARGO_ARGS+=("$argument"); done < "$ARGS_FILE"
+          rm -- "$ARGS_FILE"
+          cargo nextest run "${CARGO_ARGS[@]}" --locked
+```
+
+The macOS step routes on its own plan because its decision can differ from the Linux plan.
+A reader rejects a plan from another platform before checkout verification.
+Split a grouped job when its commands have different inputs, setup cost, or failure ownership.
+
+## Run Cargo-Rail checks with setup only
+
+Use `setup` when a job runs Cargo-Rail commands without the planner:
+
+```yaml
+- uses: loadingalias/cargo-rail-action/setup@v10
+  id: cargo-rail
+- run: cargo rail unify --check
+```
+
+Setup installs authenticated prebuilt components.
+It compiles no Rust, so your workspace toolchain
+and MSRV stay independent of Cargo-Rail's build version.
+The `version` input defaults to the release in this Action's `.github/cargo-rail.lock`; the action metadata and the lock always agree.
+The step logs `Cargo-Rail setup ready: VERSION` and publishes the same value as its `version` output.
+
+Reproduce that version locally with one command, then check it:
+
+```bash
+cargo install cargo-rail --locked --version VERSION
+cargo rail --version
+```
+
+A source install needs Cargo-Rail's `rust-version`, not your workspace toolchain.
+See [Cargo-Rail installation paths](https://github.com/loadingalias/cargo-rail#installation-paths) for archives and compiler components.
+
+A repository wrapper that skips a check when Cargo-Rail is missing keeps local runs convenient,
+but policy drift then appears first in CI.
+Install the matching version instead of relying on the skip.
+
+Before you make `cargo rail unify --check` a required check, establish a clean baseline: review the proposed edits,
+apply them in one reviewed change, and confirm that `--check` passes on the default branch.
+Do not keep an optional check that always fails; reviewers learn to ignore it.
+
+## Migrate from an earlier version
+
+Before it plans, the planner audits every tracked or unignored YAML file in the repository
+for Cargo-Rail Action references.
+It prints each reference with its version, pin, job, and inputs,
+and the job conditions that read Cargo-Rail outputs.
+These errors stop the planner before any job runs:
+
+- a reference to an earlier major version, so a partial migration cannot run;
+- an input, output, or action path that the current release does not provide,
+  such as a Boolean output from v7 or earlier;
+- a `needs.JOB.outputs.NAME` that the planning job does not export, which GitHub evaluates as empty;
+- a file that mentions the Action but is not valid YAML.
+
+Warnings annotate the file and line: `plan-file` exported as a job output
+(it is a path on one runner),
+a job that reads selectors from a plan made on another runner label,
+and a pin whose release cannot be read (add a `# vX.Y.Z` comment to a commit pin).
+
+Run the same audit locally from the release you migrate to:
+
+```bash
+cargo install --locked --git https://github.com/loadingalias/cargo-rail-action --tag vX.Y.Z cargo-rail-action
+cargo-rail-action audit
+```
+
+Migrate in this order; each step proves one claim:
+
+1. `cargo rail config validate --strict` proves the policy is valid for the workspace's Cargo graph.
+1. `cargo-rail-action audit` proves every workflow reference and output consumer matches this release.
+1. `cargo rail plan --cases routes.toml` proves reviewed path changes route as expected, before you remove the previous selector.
+   See [route parity](https://github.com/loadingalias/cargo-rail/blob/main/docs/planning.md#check-route-parity-before-a-migration).
+1. `cargo rail plan --all --json` proves every work item has valid full scope.
+   It proves no routing decision.
+
 ## Read selectors
 
 The direct consumer surface is intentionally small:
@@ -284,6 +427,13 @@ Missing-evidence warnings and `--all` remain visible.
 No fixed number of directly affected items is silently hidden.
 Attribution comes from Cargo-Rail's captured plan;
 the Action does not infer impact from filenames or explanation prose.
+
+The summary states whether portable evidence was supplied.
+The Action does not create portable evidence.
+Without the `evidence` input, Cargo work widens when a changed file could be read by a compiler, build script,
+or procedural macro, even a README.
+Each widened item names the changed files that lack negative evidence.
+That widening is conservative, not a routing error; do not replace it with path filters.
 
 ## Runtime and compatibility
 

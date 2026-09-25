@@ -56,6 +56,19 @@ impl ValidatedPlan {
         &self.bytes
     }
 
+    /// Reject a plan created on another platform before checkout verification.
+    ///
+    /// Another platform's required-work list can route a job, but its selectors
+    /// never authorize execution on this runner.
+    pub(crate) fn require_host_platform(&self) -> Result<()> {
+        let platform = self.value["inputs"]["platform"].as_str().expect("validated platform");
+        let host = host_platform();
+        require(
+            platform == host,
+            format!("plan was created on {platform}, not this {host} runner; create a plan on this platform"),
+        )
+    }
+
     pub(crate) fn required(&self) -> &[Value] {
         self.value["required"].as_array().expect("validated required array")
     }
@@ -275,6 +288,17 @@ impl ValidatedPlan {
                 if changed == 1 { "" } else { "s" }
             ),
             String::new(),
+            match self.value["inputs"]["evidence"].as_array().map_or(0, Vec::len) {
+                0 => {
+                    "Portable evidence: none supplied. Cargo work widens when a changed file could be a compiler input."
+                        .to_string()
+                }
+                count => format!(
+                    "Portable evidence: {count} manifest{} supplied.",
+                    if count == 1 { "" } else { "s" }
+                ),
+            },
+            String::new(),
         ];
         let mut dependent_work = Vec::new();
         for id in &required {
@@ -300,8 +324,9 @@ impl ValidatedPlan {
                     let evidence = &self.value["evidence"][reference.as_str().expect("reference")];
                     if evidence["complete"] == false {
                         lines.push(format!(
-                            "  **Scope expanded:** {}",
-                            github::markdown_inline(evidence["description"].as_str().expect("description"))
+                            "  **Scope expanded:** {}{}",
+                            github::markdown_inline(evidence["description"].as_str().expect("description")),
+                            expansion_inputs(&evidence["input"])
                         ));
                     }
                 }
@@ -363,9 +388,53 @@ impl ValidatedPlan {
             }
             lines.push("\n</details>".to_string());
         }
+        let inputs = &self.value["inputs"];
+        let source = if inputs["head"] == "WORKTREE" {
+            "worktree"
+        } else {
+            "commit"
+        };
+        lines.push("\n<details><summary>Plan bindings — verified before every selector</summary>\n".to_string());
+        for (name, value) in [
+            ("Platform", &inputs["platform"]),
+            ("Base", &inputs["base"]),
+            ("Head commit", &inputs["head_commit"]),
+            ("Worktree capture", &inputs["capture"]),
+            ("Cargo workspace", &inputs["cargo"]),
+            ("Cargo configuration", &inputs["configuration"]),
+            ("Toolchain", &inputs["toolchain"]),
+            ("Target", &inputs["target"]),
+        ] {
+            let value = value.as_str().unwrap_or("none");
+            lines.push(format!("- {name}: `{}`", github::markdown_inline(value)));
+        }
+        lines.push(format!("- Source: {source}"));
+        lines.push("\n</details>".to_string());
         lines.push(String::new());
         lines.join("\n")
     }
+}
+
+/// Name the changed inputs behind one expansion, bounded for display.
+fn expansion_inputs(input: &Value) -> String {
+    const SHOWN: usize = 5;
+    let Some(input) = input.as_str().filter(|input| !input.is_empty()) else {
+        return String::new();
+    };
+    let items = input
+        .split(',')
+        .map(|item| item.strip_prefix("path:").unwrap_or(item))
+        .collect::<Vec<_>>();
+    let mut shown = items
+        .iter()
+        .take(SHOWN)
+        .map(|item| github::markdown_inline(item))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if items.len() > SHOWN {
+        shown.push_str(&format!(", and {} more", items.len() - SHOWN));
+    }
+    format!(" — changed: {shown}")
 }
 
 pub(crate) fn run_command(operation: PlanOperation) -> Result<()> {
@@ -380,8 +449,13 @@ pub(crate) fn run_command(operation: PlanOperation) -> Result<()> {
     };
     let plan = ValidatedPlan::load(path)?;
     let output = plan.selector_output(&operation)?;
+    plan.require_host_platform()?;
     verify_checkout(plan.bytes())?;
     write_stdout(&output)
+}
+
+fn host_platform() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
 pub(crate) fn verify_checkout(plan: &[u8]) -> Result<()> {
@@ -1368,6 +1442,40 @@ mod tests {
                 .unwrap()
                 .contains("Scope expanded:** Build-script input evidence is unavailable")
         );
+        assert!(summary.contains("Portable evidence: none supplied."), "{summary}");
+    }
+
+    #[test]
+    fn expansions_name_their_changed_inputs_within_a_bound() {
+        assert_eq!(expansion_inputs(&Value::Null), "");
+        assert_eq!(
+            expansion_inputs(&"path:justfile,cargo:cargo.test".into()),
+            " — changed: justfile, cargo:cargo.test"
+        );
+        assert_eq!(
+            expansion_inputs(&"a,b,c,d,e,f,g".into()),
+            " — changed: a, b, c, d, e, and 2 more"
+        );
+        assert_eq!(expansion_inputs(&"docs/a_b.md".into()), " — changed: docs/a&#95;b.md");
+    }
+
+    #[test]
+    fn summary_names_every_execution_binding() {
+        let plan = ValidatedPlan::from_bytes(serde_json::to_vec(&fixture()).unwrap()).unwrap();
+        let summary = plan.render_summary();
+        let bindings = summary.split("Plan bindings").nth(1).expect("bindings section");
+        for expected in [
+            "Platform: `linux-x86&#95;64`",
+            "Head commit: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`",
+            "Worktree capture: `none`",
+            "Cargo workspace: `resolution-universe-v1:sha256:",
+            "Cargo configuration: `cargo-configuration-v1:sha256:",
+            "Toolchain: `toolchain-v1`",
+            "Target: `planning-target-v1:sha256:",
+            "Source: commit",
+        ] {
+            assert!(bindings.contains(expected), "{expected}: {bindings}");
+        }
     }
 
     #[test]
@@ -1526,6 +1634,27 @@ mod tests {
                 .to_string()
                 .contains("option-like")
         );
+    }
+
+    #[test]
+    fn plans_from_another_platform_cannot_authorize_selectors() {
+        let mut value = fixture();
+        value["inputs"]["platform"] = host_platform().into();
+        set_identity(&mut value);
+        let plan = ValidatedPlan::from_bytes(serde_json::to_vec(&value).unwrap()).unwrap();
+        plan.require_host_platform().expect("host plan");
+
+        value["inputs"]["platform"] = "foreign-os-foreign-arch".into();
+        set_identity(&mut value);
+        let plan = ValidatedPlan::from_bytes(serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(
+            plan.required_strings(),
+            ["cargo.test", "miri"],
+            "routing stays readable"
+        );
+        let error = plan.require_host_platform().unwrap_err().to_string();
+        assert!(error.contains("created on foreign-os-foreign-arch"), "{error}");
+        assert!(error.contains("create a plan on this platform"), "{error}");
     }
 
     #[cfg(unix)]

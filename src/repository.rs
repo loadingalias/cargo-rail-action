@@ -47,6 +47,7 @@ enum Comparison {
 
 pub(crate) fn run_planner() -> Result<()> {
     let inputs = PlannerInputs::load()?;
+    crate::audit::audit_before_planning(&inputs.workspace)?;
     let installed = install::install_cargo_rail(&inputs.version, inputs.components)?;
     let base = match select_comparison(&inputs.workspace, &inputs.since, inputs.force_all)? {
         Comparison::All => None,
@@ -90,6 +91,7 @@ pub(crate) fn run_planner() -> Result<()> {
     })?;
     set_private_file(&plan_path)?;
 
+    plan.require_host_platform()?;
     crate::plan::verify_checkout_with(plan.bytes(), installed.binary(), Some(&inputs.workspace))?;
     let required = serde_json::to_string(&plan.required_strings())
         .map_err(|error| ActionError::operational(format!("cannot encode required work: {error}")))?;

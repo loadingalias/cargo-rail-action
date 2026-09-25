@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod audit;
 mod cache;
 mod digest;
 mod github;
@@ -95,6 +96,12 @@ enum Command {
     Run {
         #[command(subcommand)]
         operation: RunOperation,
+    },
+    /// Audit every Cargo-Rail Action reference in the repository's YAML files.
+    Audit {
+        /// Repository root; defaults to the Git root of the current directory.
+        #[arg(long)]
+        root: Option<PathBuf>,
     },
     /// Read a validated Cargo-Rail plan.
     Plan {
@@ -225,6 +232,7 @@ fn run() -> Result<()> {
             RunOperation::CacheCollect => report::collect_action(),
             RunOperation::CacheReport => report::report_action(),
         },
+        Command::Audit { root } => audit::run_command(root.as_deref()),
         Command::Plan { operation } => plan::run_command(operation),
         Command::Release { operation } => match operation {
             ReleaseOperation::ValidateRecord(arguments) => release_record::validate(&arguments),

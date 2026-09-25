@@ -22,11 +22,9 @@ rscrypto = { version = "0.9.0", default-features = false, features = ["sha2"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
 semver = "1.0.28"
+serde-saphyr = { version = "1.3.0", default-features = false, features = ["deserialize"] }
 # Keep one standard ZIP compression path backed by Rust code and no native library.
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-
-[dev-dependencies]
-serde-saphyr = { version = "1.3.0", default-features = false, features = ["deserialize"] }
 
 [lints.rust]
 unsafe_code = "forbid"
