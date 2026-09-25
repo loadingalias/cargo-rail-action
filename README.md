@@ -428,12 +428,61 @@ No fixed number of directly affected items is silently hidden.
 Attribution comes from Cargo-Rail's captured plan;
 the Action does not infer impact from filenames or explanation prose.
 
-The summary states whether portable evidence was supplied.
-The Action does not create portable evidence.
-Without the `evidence` input, Cargo work widens when a changed file could be read by a compiler, build script,
-or procedural macro, even a README.
+The summary states how many portable evidence manifests the plan used.
+Without compatible evidence, Cargo work widens when a changed file could be read by a compiler,
+build script, or procedural macro, even a README.
 Each widened item names the changed files that lack negative evidence.
 That widening is conservative, not a routing error; do not replace it with path filters.
+To skip unrelated files exactly, [record and transfer planning evidence](#skip-unrelated-files-with-planning-evidence).
+
+## Skip unrelated files with planning evidence
+
+Cargo-Rail records which workspace files each compiled unit read during an ordinary build.
+Record it in the jobs that already build on the default branch, one file per work item,
+and save it under the commit it describes:
+
+```yaml
+- uses: loadingalias/cargo-rail-action/setup@v10
+- name: Build tests and record planning evidence
+  run: >
+    cargo rail plan evidence --work cargo.test
+    --output target/planning-evidence/cargo.test.json
+    -- test --workspace --locked --no-run
+- run: cargo test --workspace --locked
+- uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+  if: github.event_name == 'push'
+  with:
+    path: target/planning-evidence/cargo.test.json
+    key: cargo-rail-evidence-${{ runner.os }}-${{ runner.arch }}-cargo.test-${{ github.sha }}
+```
+
+Record the command the job runs, with the same packages, targets, features, and profile.
+Recording adds no compilation: the later test run finds every unit fresh.
+Record `cargo.build` and `cargo.clippy` the same way in their jobs.
+
+Before planning, restore the evidence of the commit the planner compares against,
+then pass the directory:
+
+```yaml
+- uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+  with:
+    path: target/planning-evidence/cargo.test.json
+    key: cargo-rail-evidence-${{ runner.os }}-${{ runner.arch }}-cargo.test-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+- uses: loadingalias/cargo-rail-action@v10
+  id: rail
+  with:
+    evidence: target/planning-evidence
+```
+
+For the default pull-request checkout, a merge commit,
+the planner compares against the pull request's base commit.
+`evidence` accepts one file or a directory; the Action passes each `*.json` file in the directory to Cargo-Rail,
+which validates each one independently.
+A cache miss, evidence from another commit, platform, or toolchain,
+or evidence that recorded an incomplete build only widens the affected work item.
+Keep the directory ignored by Git, because an unignored file is a changed path.
+The Action transfers evidence; it does not create or interpret it.
+See [observed-input evidence](https://github.com/loadingalias/cargo-rail/blob/main/docs/planning.md#observed-input-evidence) for what the evidence covers.
 
 ## Runtime and compatibility
 

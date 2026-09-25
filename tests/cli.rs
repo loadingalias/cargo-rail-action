@@ -409,6 +409,17 @@ fn source_plan_selectors_qualify_empty_precise_widened_and_drifted_plans() {
     assert_eq!(relocated.status.code(), Some(0), "{relocated:?}");
     assert_eq!(relocated.stdout, b"[]\n");
 
+    // Evidence recorded from the ordinary test build of HEAD.
+    let evidence = workspace.join("target/planning-evidence/cargo.test.json");
+    let recorded = Command::new(&binary)
+        .current_dir(&workspace)
+        .args(["rail", "plan", "evidence", "--work", "cargo.test", "--output"])
+        .arg(&evidence)
+        .args(["--", "test", "--workspace", "--no-run", "--offline"])
+        .output()
+        .expect("record planning evidence");
+    assert!(recorded.status.success(), "{recorded:?}");
+
     // Without compatible evidence, an unrelated file widens Cargo work explicitly.
     fs::write(workspace.join("README.md"), "# Changed fixture\n").unwrap();
     let widened = create_plan();
@@ -418,6 +429,21 @@ fn source_plan_selectors_qualify_empty_precise_widened_and_drifted_plans() {
     assert_eq!(accepted(&["cargo-args", "cargo.test"]), b"");
     let summary = String::from_utf8(accepted(&["summary"])).unwrap();
     assert!(summary.contains("**Scope expanded:**"), "{summary}");
+
+    // The recorded evidence proves the same change unrelated, and the reader accepts its identity.
+    let output = Command::new(&binary)
+        .current_dir(&workspace)
+        .args(["rail", "plan", "--since", "HEAD", "--json", "--evidence"])
+        .arg(&evidence)
+        .output()
+        .expect("plan with evidence");
+    assert!(output.status.success(), "{output:?}");
+    fs::write(&plan_path, &output.stdout).unwrap();
+    let skipped = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    assert_eq!(skipped["work"]["cargo.test"]["state"], "skipped");
+    assert_eq!(accepted(&["is-required", "cargo.test"]), b"false\n");
+    let summary = String::from_utf8(accepted(&["summary"])).unwrap();
+    assert!(summary.contains("Portable evidence: 1 manifest used."), "{summary}");
     fs::remove_dir_all(directory).unwrap();
 }
 

@@ -289,12 +289,10 @@ impl ValidatedPlan {
             ),
             String::new(),
             match self.value["inputs"]["evidence"].as_array().map_or(0, Vec::len) {
-                0 => {
-                    "Portable evidence: none supplied. Cargo work widens when a changed file could be a compiler input."
-                        .to_string()
-                }
+                0 => "Portable evidence: none used. Cargo work widens when a changed file could be a compiler input."
+                    .to_string(),
                 count => format!(
-                    "Portable evidence: {count} manifest{} supplied.",
+                    "Portable evidence: {count} manifest{} used.",
                     if count == 1 { "" } else { "s" }
                 ),
             },
@@ -684,7 +682,7 @@ fn validate_inputs(inputs: &Map<String, Value>) -> Result<()> {
     require(
         evidence
             .iter()
-            .all(|identity| valid_hash_id(identity, "planning-evidence-v1:sha256:")),
+            .all(|identity| valid_hash_id(identity, "planning-evidence-v2:sha256:")),
         "plan evidence identities are malformed",
     )?;
     require(
@@ -1442,7 +1440,7 @@ mod tests {
                 .unwrap()
                 .contains("Scope expanded:** Build-script input evidence is unavailable")
         );
-        assert!(summary.contains("Portable evidence: none supplied."), "{summary}");
+        assert!(summary.contains("Portable evidence: none used."), "{summary}");
     }
 
     #[test]

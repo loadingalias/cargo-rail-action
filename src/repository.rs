@@ -17,6 +17,7 @@ use crate::{ActionError, Result, env_string, optional_env};
 const MAX_EVENT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 4 * 1024;
 const MAX_TOKEN_BYTES: usize = 4 * 1024;
+const MAX_EVIDENCE_FILES: usize = 64;
 const MAX_SUBPROCESS_BYTES: usize = 1024 * 1024;
 
 static PRIVATE_DIRECTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -34,7 +35,7 @@ struct PlannerInputs {
     components: ComponentSet,
     since: String,
     force_all: bool,
-    evidence: Option<PathBuf>,
+    evidence: Vec<PathBuf>,
     workspace: PathBuf,
     repository_token: String,
 }
@@ -78,7 +79,7 @@ pub(crate) fn run_planner() -> Result<()> {
     } else {
         command.arg("--all");
     }
-    if let Some(evidence) = &inputs.evidence {
+    for evidence in &inputs.evidence {
         command.arg("--evidence").arg(evidence);
     }
     let output = run_bounded(&mut command, MAX_PLAN_BYTES, MAX_SUBPROCESS_BYTES)?;
@@ -138,31 +139,10 @@ impl PlannerInputs {
         }
         let evidence_input = optional_env("INPUT_EVIDENCE")?;
         let evidence = if evidence_input.is_empty() {
-            None
+            Vec::new()
         } else {
             validate_path_input(&evidence_input, "evidence")?;
-            let candidate = workspace.join(evidence_input);
-            let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
-                ActionError::rejected(format!(
-                    "evidence file '{}' is unavailable: {error}",
-                    candidate.display()
-                ))
-            })?;
-            if !canonical.starts_with(&workspace) {
-                return Err(ActionError::rejected("evidence file escapes working-directory"));
-            }
-            let metadata = std::fs::symlink_metadata(&canonical).map_err(|error| {
-                ActionError::operational(format!(
-                    "cannot inspect evidence file '{}': {error}",
-                    canonical.display()
-                ))
-            })?;
-            if !metadata.is_file() || metadata.file_type().is_symlink() {
-                return Err(ActionError::rejected(
-                    "evidence must resolve to an in-workspace regular file",
-                ));
-            }
-            Some(canonical)
+            evidence_files(&workspace, &workspace.join(evidence_input))?
         };
         Ok(Self {
             version,
@@ -786,6 +766,57 @@ fn base64(bytes: &[u8]) -> String {
     encoded
 }
 
+/// Resolve the evidence input: one file, or every `*.json` file directly inside a directory.
+///
+/// A directory lets a workflow restore one file per recorded work item and tolerate a
+/// cache miss; Cargo-Rail validates each file independently.
+fn evidence_files(workspace: &Path, candidate: &Path) -> Result<Vec<PathBuf>> {
+    let canonical = std::fs::canonicalize(candidate).map_err(|error| {
+        ActionError::rejected(format!("evidence '{}' is unavailable: {error}", candidate.display()))
+    })?;
+    if !canonical.starts_with(workspace) {
+        return Err(ActionError::rejected("evidence escapes working-directory"));
+    }
+    if canonical.is_dir() {
+        let mut files = Vec::new();
+        let entries = std::fs::read_dir(&canonical).map_err(|error| {
+            ActionError::operational(format!(
+                "cannot list evidence directory '{}': {error}",
+                canonical.display()
+            ))
+        })?;
+        for entry in entries {
+            let path = entry
+                .map_err(|error| ActionError::operational(format!("cannot list evidence directory: {error}")))?
+                .path();
+            if path.extension().is_some_and(|extension| extension == "json") {
+                files.push(evidence_file(&path)?);
+            }
+        }
+        if files.len() > MAX_EVIDENCE_FILES {
+            return Err(ActionError::rejected(format!(
+                "evidence directory holds more than {MAX_EVIDENCE_FILES} JSON files"
+            )));
+        }
+        files.sort();
+        return Ok(files);
+    }
+    Ok(vec![evidence_file(&canonical)?])
+}
+
+fn evidence_file(path: &Path) -> Result<PathBuf> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        ActionError::operational(format!("cannot inspect evidence file '{}': {error}", path.display()))
+    })?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(ActionError::rejected(format!(
+            "evidence '{}' must be an in-workspace regular file",
+            path.display()
+        )));
+    }
+    Ok(path.to_path_buf())
+}
+
 fn validate_path_input(value: &str, subject: &str) -> Result<()> {
     if value.is_empty() || value.len() > MAX_PATH_BYTES || value.contains(['\r', '\n']) || value.as_bytes().contains(&0)
     {
@@ -875,6 +906,44 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn evidence_directory_passes_each_regular_json_file_and_tolerates_none() {
+        let workspace = create_private_directory(&std::env::temp_dir(), "rail-evidence-input").unwrap();
+        let workspace = std::fs::canonicalize(workspace).unwrap();
+        let directory = workspace.join("target/planning-evidence");
+        std::fs::create_dir_all(&directory).unwrap();
+        assert!(
+            evidence_files(&workspace, &directory).unwrap().is_empty(),
+            "every cache missed"
+        );
+
+        std::fs::write(directory.join("cargo.test.json"), "{}").unwrap();
+        std::fs::write(directory.join("cargo.clippy.json"), "{}").unwrap();
+        std::fs::write(directory.join("notes.txt"), "not evidence").unwrap();
+        assert_eq!(
+            evidence_files(&workspace, &directory).unwrap(),
+            [directory.join("cargo.clippy.json"), directory.join("cargo.test.json")]
+        );
+        assert_eq!(
+            evidence_files(&workspace, &directory.join("cargo.test.json")).unwrap(),
+            [directory.join("cargo.test.json")]
+        );
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(directory.join("cargo.test.json"), directory.join("linked.json")).unwrap();
+            let rejected = evidence_files(&workspace, &directory).unwrap_err();
+            assert_eq!(rejected.kind, crate::ErrorKind::Rejected);
+            std::fs::remove_file(directory.join("linked.json")).unwrap();
+        }
+        let outside = create_private_directory(&std::env::temp_dir(), "rail-evidence-outside").unwrap();
+        std::fs::write(outside.join("cargo.test.json"), "{}").unwrap();
+        let escaped = evidence_files(&workspace, &outside).unwrap_err();
+        assert_eq!(escaped.kind, crate::ErrorKind::Rejected);
+        std::fs::remove_dir_all(outside).unwrap();
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
 
     #[test]
     fn history_fetch_uses_one_authentication_authority() {

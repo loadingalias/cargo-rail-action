@@ -28,7 +28,7 @@ inputs:
     required: false
     default: "false"
   evidence:
-    description: "Optional planning-evidence-v1 JSON file inside the workspace"
+    description: "Optional planning-evidence-v2 file, or a directory of such *.json files, inside the workspace"
     required: false
     default: ""
   working-directory:
