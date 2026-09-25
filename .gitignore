@@ -9,3 +9,4 @@ docs/tasks/
 .ignore
 .ruff_cache/
 __pycache__/
+.claude/skills/
