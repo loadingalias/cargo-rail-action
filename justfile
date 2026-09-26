@@ -1,11 +1,15 @@
+# Automated checks; CI runs this recipe on every native host.
 check:
     cargo fmt --all --check
-    rumdl check .
     cargo clippy --all-targets --all-features --locked -- -D warnings
     cargo nextest run --all-targets --all-features --locked
     bash -n scripts/bootstrap.sh scripts/read-cargo-rail-lock.sh
     bash scripts/read-cargo-rail-lock.sh
     git diff --check
+
+# Markdown lint runs on the workstation, where the pinned rumdl is installed.
+check-markdown:
+    rumdl check .
 
 fix:
     cargo fmt --all

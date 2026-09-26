@@ -604,7 +604,8 @@ The bootstrap derives the Action runtime release from the package version in `Ca
 
 ## Validate changes
 
-Run `just check` for formatting, Clippy, unit and CLI tests, metadata contracts, and bootstrap syntax.
+Run `just check` for formatting, Clippy, unit and CLI tests, metadata contracts, and bootstrap syntax,
+and `just check-markdown` for Markdown lint.
 When changing Cargo-Rail alongside the Action,
 run `just package-release OUTPUT_DIRECTORY` in the Cargo-Rail checkout to build and package its authenticated components.
 Then run `just check-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH VERSION` here.
