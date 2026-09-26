@@ -15,6 +15,9 @@ import threading
 import urllib.parse
 from pathlib import Path
 
+# The installer's runtime bound (`MAX_RUNTIME_BYTES` in src/main.rs and scripts/bootstrap.sh).
+MAX_RUNTIME_BYTES = 32 * 1024 * 1024
+
 TOKEN = "history-action-fixture"
 CHECKOUT = (
     "Basic " + base64.b64encode(b"x-access-token:history-checkout-fixture").decode()
@@ -78,13 +81,17 @@ def install_source_fixture(root, env, executable, core):
     (installation / "cargo-rail-action-install-v1.tsv").write_bytes(
         f"cargo-rail-action-installed-v1\t{version}\t{target}\tcore\t{digest}\n{rows}".encode()
     )
-    runtime = (
-        root / f"{target}-{hashlib.sha256(Path(executable).read_bytes()).hexdigest()}"
-    )
+    # Release runtimes fit the installer's bound. A Linux debug build embeds its debug information and
+    # exceeds it, so the fixture installs that build without debug information.
+    staged = root / f"runtime-staging{suffix}"
+    shutil.copy2(executable, staged)
+    if sys.platform.startswith("linux") and staged.stat().st_size > MAX_RUNTIME_BYTES:
+        subprocess.run(["strip", "--strip-debug", str(staged)], check=True)
+    runtime = root / f"{target}-{hashlib.sha256(staged.read_bytes()).hexdigest()}"
     runtime.mkdir()
     shutil.copy2(license_path, runtime / "LICENSE")
     installed_runtime = runtime / f"cargo-rail-action-{target}{suffix}"
-    shutil.copy2(executable, installed_runtime)
+    staged.replace(installed_runtime)
     return str(installed_runtime), version
 
 
