@@ -20,7 +20,8 @@ jobs:
   check:
     name: Check / ${{ matrix.target }}
     strategy:
-      fail-fast: true
+      # Every target reports, so one platform's failure cannot hide another's.
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-24.04
