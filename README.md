@@ -329,7 +329,12 @@ Cache setup changes Cargo configuration, and plan verification binds that config
 Capturing the plan first causes later selectors to reject the changed execution authority.
 
 `mode` is always explicit.
-Use `read` for pull requests and other untrusted jobs.
+Give remote credentials only to trusted jobs.
+A job that runs untrusted code, such as a pull request from a fork,
+gets no credentials and does not run this action, which always selects a remote.
+Read access does not protect confidentiality:
+any job that can read the remote cache can read every result in it.
+Use `read` for trusted jobs that must not publish, and `read-write` only for trusted jobs that seed the cache.
 `verify-remote: true` authenticates to the selected provider and requires the protocol marker
 before publishing Action outputs.
 See the [cache inputs](cache/action.yaml) for local cache location and workspace selection.
@@ -534,7 +539,7 @@ after verifying the immutable release.
 
 ## Supported runners
 
-V10.0 advertises exactly:
+Version 10 advertises exactly:
 
 | Runner              | Native target               | Requirement |
 | ------------------- | --------------------------- | ----------- |
@@ -562,7 +567,7 @@ That checksum detects inconsistent bytes but is not an independent publisher sig
 The installer verifies checksums, component manifests, and the installed license,
 but it does not verify GitHub artifact attestations.
 Verify the exact release's immutability and every release-asset attestation
-before trusting its publication authority.
+before trusting its publication authority, for example with `gh attestation verify cargo-rail-action-x86_64-unknown-linux-gnu -R loadingalias/cargo-rail-action`.
 
 The planner's `repository-token` is used only for a same-repository Git fetch when required history is absent.
 It is never placed in a URL, argv, repository configuration, output, summary,
