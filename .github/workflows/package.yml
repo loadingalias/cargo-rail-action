@@ -69,10 +69,15 @@ jobs:
         if: runner.os == 'Linux'
         env:
           PLATFORM: ${{ matrix.tooling }}
+          # cargo-binstall resolves pinned release assets through the GitHub API; anonymous hosted-runner requests are throttled.
+          GITHUB_TOKEN: ${{ github.token }}
         run: ../.ci-tooling/scripts/tooling/"$PLATFORM".sh ci
       - name: Install Windows tooling
         if: runner.os == 'Windows'
         shell: powershell
+        env:
+          # cargo-binstall resolves pinned release assets through the GitHub API; anonymous hosted-runner requests are throttled.
+          GITHUB_TOKEN: ${{ github.token }}
         run: ../.ci-tooling/scripts/tooling/x86_64-win.ps1 -Operation ci
       - name: Install macOS tooling
         if: runner.os == 'macOS'

@@ -1530,7 +1530,7 @@ fn planner_stops_on_a_legacy_output_consumer_before_installing() {
         .env("RUNNER_TEMP", &runner_temp)
         .env("RUNNER_TOOL_CACHE", &runner_temp)
         .env("GITHUB_WORKSPACE", &workspace)
-        .env("INPUT_VERSION", "0.29.0")
+        .env("INPUT_VERSION", "0.30.0")
         .env("INPUT_COMPONENTS", "core")
         .env("INPUT_SINCE", "")
         .env("INPUT_ALL", "true")
