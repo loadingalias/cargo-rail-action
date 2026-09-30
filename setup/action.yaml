@@ -10,7 +10,7 @@ inputs:
   version:
     description: "Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock"
     required: false
-    default: "0.30.0"
+    default: "0.30.1"
 
 outputs:
   version:
