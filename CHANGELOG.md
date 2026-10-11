@@ -1,5 +1,13 @@
 # Changelog
 
+## [11.0.0] - 2026-10-11
+- Qualify Cargo-Rail 0.31.0 and its release execution record v11.
+  Validate each frozen Cargo write independently, including its contained path,
+  before and after digests, exact content, and portable ordering.
+  Release records from older contracts must be completed with their originating executable.
+  
+  Promote the new major line through `v11` after verifying the immutable release.
+  Keep workflow-audit fixtures and unsupported-host diagnostics tied to the runtime version.
 ## [10.1.1] - 2026-09-30
 - Every public action now installs Cargo-Rail 0.30.1 by default.
   It resolves programs found on PATH to one spelling per file,
