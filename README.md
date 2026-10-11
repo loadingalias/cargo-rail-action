@@ -530,7 +530,7 @@ The runtime accepts Cargo-Rail [release execution records](schemas/release-recor
 and fails closed on other versions.
 It validates intent identity, expected source and repository, required workflow evidence,
 and upload attempt identities.
-The locked Cargo-Rail 0.31.0 release writes v11 records and is qualified against this reader.
+The locked Cargo-Rail 0.31.1 release writes v11 records and is qualified against this reader.
 
 The release Action validates hosted requests and reviewed merges
 before invoking the same Cargo-Rail transaction.
