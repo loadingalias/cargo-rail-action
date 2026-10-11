@@ -1,5 +1,10 @@
 # Changelog
 
+## [11.0.1] - 2026-10-11
+- Qualify the planner, setup, cache, and release Actions with Cargo-Rail 0.31.1.
+  Pin its verified release source and tooling, and install that version by default.
+  This adopts corrected release status
+  and undeclared independent lockfile diagnostics without changing the stored contracts.
 ## [11.0.0] - 2026-10-11
 - Qualify Cargo-Rail 0.31.0 and its release execution record v11.
   Validate each frozen Cargo write independently, including its contained path,
