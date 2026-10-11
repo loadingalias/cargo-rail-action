@@ -54,7 +54,7 @@ pub(crate) fn read(bytes: &[u8], expected_intent: &str, expected_source: &str, r
     }
     let value = parse_unique_json(bytes, "release record")?;
     require_integers(&value)?;
-    let schema: Value = serde_json::from_str(include_str!("../schemas/release-record-v10.schema.json"))
+    let schema: Value = serde_json::from_str(include_str!("../schemas/release-record-v11.schema.json"))
         .map_err(|error| ActionError::operational(format!("invalid built-in release schema: {error}")))?;
     let validator = jsonschema::validator_for(&schema)
         .map_err(|error| ActionError::operational(format!("invalid built-in release schema: {error}")))?;
@@ -164,15 +164,33 @@ pub(crate) fn read(bytes: &[u8], expected_intent: &str, expected_source: &str, r
             return Err(ActionError::rejected("release record has inconsistent changelog bytes"));
         }
     }
-    for write in plan["auxiliary_lockfiles"]
-        .as_array()
-        .expect("schema-validated lockfiles")
+    let writes = plan["cargo_writes"].as_array().expect("schema-validated Cargo writes");
+    if writes
+        .windows(2)
+        .any(|writes| writes[0]["path"].as_str() >= writes[1]["path"].as_str())
     {
+        return Err(ActionError::rejected("release Cargo writes are not unique and sorted"));
+    }
+    for write in plan["cargo_writes"].as_array().expect("schema-validated Cargo writes") {
+        let name = write["path"]
+            .as_str()
+            .expect("schema-validated path")
+            .rsplit('/')
+            .next();
+        if !matches!(name, Some("Cargo.toml" | "Cargo.lock"))
+            || (write["before_digest"].is_null() && name != Some("Cargo.lock"))
+        {
+            return Err(ActionError::rejected(
+                "release Cargo write has invalid creation authority",
+            ));
+        }
         if write["content"]
             .as_str()
             .is_none_or(|content| write["after_digest"] != format!("sha256:{}", digest(content.as_bytes())))
         {
-            return Err(ActionError::rejected("release record has inconsistent lockfile bytes"));
+            return Err(ActionError::rejected(
+                "release record has inconsistent Cargo file bytes",
+            ));
         }
     }
     let seal = &value["package_seal"];

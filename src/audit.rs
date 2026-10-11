@@ -673,7 +673,8 @@ mod tests {
         let interfaces = interfaces();
         let mut audit = Audit::default();
         for (path, text) in files {
-            audit_file(path, text, &interfaces, &mut audit);
+            let text = text.replace("@current", &format!("@v{}", VERSION.split('.').next().unwrap()));
+            audit_file(path, &text, &interfaces, &mut audit);
         }
         audit.findings.sort();
         audit
@@ -687,7 +688,7 @@ jobs:
     outputs:
       required-work: ${{ steps.rail.outputs.required-work }}
     steps:
-      - uses: loadingalias/cargo-rail-action@v10
+      - uses: loadingalias/cargo-rail-action@current
         id: rail
         with:
           since: origin/main
@@ -706,7 +707,10 @@ jobs:
         assert_eq!(audit.references.len(), 1);
         assert_eq!(audit.conditions.len(), 1);
         let rendered = audit.render();
-        assert!(rendered.contains(".github/workflows/ci.yml:8  loadingalias/cargo-rail-action@v10 (v10, mutable)"));
+        let current = VERSION.split('.').next().unwrap();
+        assert!(rendered.contains(&format!(
+            ".github/workflows/ci.yml:8  loadingalias/cargo-rail-action@v{current} (v{current}, mutable)"
+        )));
         assert!(rendered.contains("inputs: since"));
         assert!(rendered.contains("job test: contains(fromJSON(needs.plan.outputs.required-work), 'cargo.test')"));
     }
@@ -717,7 +721,7 @@ jobs:
 runs:
   using: composite
   steps:
-    - uses: loadingalias/cargo-rail-action@v10
+    - uses: loadingalias/cargo-rail-action@current
       id: rail
 ";
         let audit = audit(&[
@@ -747,11 +751,10 @@ jobs:
         assert_eq!(audit.errors(), 1, "{:?}", audit.findings);
         let finding = &audit.findings[0];
         assert_eq!((finding.file.as_str(), finding.line), (".github/workflows/old.yml", 5));
-        assert!(
-            finding
-                .message
-                .contains("is v6; migrate every Cargo-Rail Action reference to v10 together")
-        );
+        assert!(finding.message.contains(&format!(
+            "is v6; migrate every Cargo-Rail Action reference to v{} together",
+            VERSION.split('.').next().unwrap()
+        )));
         assert!(audit.render().contains("(v6, immutable)"));
     }
 
@@ -765,7 +768,7 @@ jobs:
       test: ${{ steps.rail.outputs.test }}
       required-work: ${{ steps.rail.outputs.required-work }}
     steps:
-      - uses: loadingalias/cargo-rail-action@v10
+      - uses: loadingalias/cargo-rail-action@current
         id: rail
       - if: steps.rail.outputs.docs == 'true'
         run: cargo doc
@@ -806,7 +809,7 @@ jobs:
     outputs:
       host-tests: ${{ steps.scope.outputs.required }}
     steps:
-      - uses: loadingalias/cargo-rail-action@v10
+      - uses: loadingalias/cargo-rail-action@current
         id: rail
       - id: scope
         run: echo required=true >> \"$GITHUB_OUTPUT\"
@@ -828,10 +831,10 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     steps:
-      - uses: loadingalias/cargo-rail-action@v10
+      - uses: loadingalias/cargo-rail-action@current
         with:
           confidence-profile: strict
-      - uses: loadingalias/cargo-rail-action/removed@v10
+      - uses: loadingalias/cargo-rail-action/removed@current
 ";
         let audit = audit(&[(".github/workflows/ci.yml", workflow)]);
         let messages = audit
@@ -862,13 +865,13 @@ jobs:
       plan: ${{ steps.rail.outputs.plan-file }}
       required-work: ${{ steps.rail.outputs.required-work }}
     steps:
-      - uses: loadingalias/cargo-rail-action@v10
+      - uses: loadingalias/cargo-rail-action@current
         id: rail
   macos:
     needs: plan
     runs-on: macos-latest
     steps:
-      - uses: loadingalias/cargo-rail-action/setup@v10
+      - uses: loadingalias/cargo-rail-action/setup@current
       - run: cargo-rail-action plan cargo-args \"$PLAN_FILE\" cargo.test
   linux:
     needs: plan
@@ -879,7 +882,7 @@ jobs:
     needs: plan
     runs-on: windows-latest
     steps:
-      - uses: loadingalias/cargo-rail-action@v10
+      - uses: loadingalias/cargo-rail-action@current
       - run: cargo-rail-action plan cargo-args \"$PLAN_FILE\" cargo.test
 ";
         let audit = audit(&[(".github/workflows/ci.yml", workflow)]);
@@ -903,7 +906,7 @@ jobs:
     fn unparseable_references_are_never_skipped_silently() {
         let audit = audit(&[(
             ".github/workflows/broken.yml",
-            "jobs: [\n  uses: loadingalias/cargo-rail-action@v10\n",
+            "jobs: [\n  uses: loadingalias/cargo-rail-action@current\n",
         )]);
         assert_eq!(audit.errors(), 1);
         assert!(audit.findings[0].message.contains("is not valid YAML"));

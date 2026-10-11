@@ -37,7 +37,7 @@ Install your Rust toolchain and command runners, such as nextest, before these s
   with:
     persist-credentials: false
 
-- uses: loadingalias/cargo-rail-action@v10
+- uses: loadingalias/cargo-rail-action@v11
   id: rail
 
 - name: Run selected tests
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: loadingalias/cargo-rail-action@v10
+      - uses: loadingalias/cargo-rail-action@v11
         id: rail
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -112,7 +112,7 @@ jobs:
         with:
           name: cargo-rail-plan
           path: ${{ runner.temp }}/cargo-rail-plan
-      - uses: loadingalias/cargo-rail-action/setup@v10
+      - uses: loadingalias/cargo-rail-action/setup@v11
         with:
           version: ${{ needs.plan.outputs.cargo-rail-version }}
       - name: Run selected tests
@@ -158,7 +158,7 @@ so that job plans again with the same Cargo-Rail version:
         with:
           name: cargo-rail-plan
           path: ${{ runner.temp }}/cargo-rail-plan
-      - uses: loadingalias/cargo-rail-action/setup@v10
+      - uses: loadingalias/cargo-rail-action/setup@v11
         with:
           version: ${{ needs.plan.outputs.cargo-rail-version }}
       - name: Check formatting
@@ -185,7 +185,7 @@ so that job plans again with the same Cargo-Rail version:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: loadingalias/cargo-rail-action@v10
+      - uses: loadingalias/cargo-rail-action@v11
         id: rail
         with:
           version: ${{ needs.plan.outputs.cargo-rail-version }}
@@ -212,7 +212,7 @@ Split a grouped job when its commands have different inputs, setup cost, or fail
 Use `setup` when a job runs Cargo-Rail commands without the planner:
 
 ```yaml
-- uses: loadingalias/cargo-rail-action/setup@v10
+- uses: loadingalias/cargo-rail-action/setup@v11
   id: cargo-rail
 - run: cargo rail unify --check
 ```
@@ -314,7 +314,7 @@ Operational failures, including I/O and failed subprocesses, exit `1`.
   with:
     persist-credentials: false
 
-- uses: loadingalias/cargo-rail-action/cache@v10
+- uses: loadingalias/cargo-rail-action/cache@v11
   id: cache
   with:
     remote: s3://cargo-rail-cache/team?region=us-east-1&owner=123456789012
@@ -361,7 +361,7 @@ The final report combines all jobs into one summary.
 
 ```yaml
 # Append these steps to each cache-enabled job.
-- uses: loadingalias/cargo-rail-action/cache/collect@v10
+- uses: loadingalias/cargo-rail-action/cache/collect@v11
   if: always()
   id: cache-record
   with:
@@ -400,7 +400,7 @@ cache-report:
         pattern: cache-record-*
         merge-multiple: true
         path: ${{ runner.temp }}/cache-records
-    - uses: loadingalias/cargo-rail-action/cache/report@v10
+    - uses: loadingalias/cargo-rail-action/cache/report@v11
       if: always()
       with:
         records-directory: ${{ runner.temp }}/cache-records
@@ -447,7 +447,7 @@ Record it in the jobs that already build on the default branch, one file per wor
 and save it under the commit it describes:
 
 ```yaml
-- uses: loadingalias/cargo-rail-action/setup@v10
+- uses: loadingalias/cargo-rail-action/setup@v11
 - name: Build tests and record planning evidence
   run: >
     cargo rail plan evidence --work cargo.test
@@ -473,7 +473,7 @@ then pass the directory:
   with:
     path: target/planning-evidence/cargo.test.json
     key: cargo-rail-evidence-${{ runner.os }}-${{ runner.arch }}-cargo.test-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-- uses: loadingalias/cargo-rail-action@v10
+- uses: loadingalias/cargo-rail-action@v11
   id: rail
   with:
     evidence: target/planning-evidence
@@ -491,7 +491,7 @@ See [observed-input evidence](https://github.com/loadingalias/cargo-rail/blob/ma
 
 ## Runtime and compatibility
 
-Version 10 uses one prebuilt Rust runtime with verified release checksums.
+Version 11 uses one prebuilt Rust runtime with verified release checksums.
 Bootstrap keeps the Action checkout's MIT `LICENSE` beside the runtime and rejects modified
 or missing installed license text.
 
@@ -512,7 +512,7 @@ The Action checks contracts, not version numbers.
 Another exact version, or `latest`, installs only when its archive, component manifest,
 and license validate.
 Every later step then fails closed on a contract version this Action does not accept.
-It accepts plan v9, release record v10, cache status schema 18, and component manifest v1.
+It accepts plan v9, release record v11, cache status schema 18, and component manifest v1.
 `latest` can therefore select a Cargo-Rail release that this Action rejects.
 
 The Action runs these `cargo rail` commands: `plan`, `surface --prepare`, `cache`, and `release`.
@@ -526,20 +526,20 @@ The planner accepts plan contract v9, including identity-bound impact attributio
 Regenerate plans from older contracts.
 
 Release-record compatibility is separate from plan compatibility.
-The runtime accepts Cargo-Rail [release execution records](schemas/release-record-v10.schema.json) at v10
+The runtime accepts Cargo-Rail [release execution records](schemas/release-record-v11.schema.json) at v11
 and fails closed on other versions.
 It validates intent identity, expected source and repository, required workflow evidence,
 and upload attempt identities.
-The locked Cargo-Rail release writes that contract.
+The locked Cargo-Rail 0.31.0 release writes v11 records and is qualified against this reader.
 
 The release Action validates hosted requests and reviewed merges
 before invoking the same Cargo-Rail transaction.
-This repository uses that engine for its own releases and promotes `v10` only
+This repository uses that engine for its own releases and promotes `v11` only
 after verifying the immutable release.
 
 ## Supported runners
 
-Version 10 advertises exactly:
+Version 11 advertises exactly:
 
 | Runner              | Native target               | Requirement |
 | ------------------- | --------------------------- | ----------- |
@@ -604,7 +604,7 @@ bump policy, registry publication, and review mode.
 Leave its recovery inputs empty for a new release.
 Supply all three retained values only when Cargo-Rail continues an existing transaction.
 
-Cargo-Rail owns publication and the configured `v10` alias promotion.
+Cargo-Rail owns publication and the configured `v11` alias promotion.
 The bootstrap derives the Action runtime release from the package version in `Cargo.toml`.
 
 ## Validate changes

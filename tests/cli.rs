@@ -837,9 +837,21 @@ fn source_release_record_is_independently_validated() {
     fs::write(workspace.join(".gitignore"), "target/\n").unwrap();
     fs::write(
         workspace.join(".config/rail.toml"),
-        "[release]\nremote_effects = 'push'\nsemver_check = 'off'\nsign_tags = false\n",
+        "[release]\nremote_effects = 'push'\nsemver_check = 'off'\nsign_tags = false\nauxiliary_cargo_manifests = ['auxiliary/Cargo.toml', 'auxiliary-extra/Cargo.toml']\n",
     )
     .unwrap();
+    for name in ["auxiliary", "auxiliary-extra"] {
+        let root = workspace.join(name);
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("Cargo.toml"), format!("[workspace]\n[package]\nname = '{name}'\nversion = '0.1.0'\npublish = false\nedition = '2024'\n[lib]\npath = 'lib.rs'\n[dependencies]\nrelease-contract = {{ path = '..' }}\n")).unwrap();
+        fs::write(root.join("lib.rs"), "pub fn value() -> u8 { 1 }\n").unwrap();
+        let lock = Command::new("cargo")
+            .current_dir(root)
+            .args(["generate-lockfile", "--offline"])
+            .output()
+            .unwrap();
+        assert!(lock.status.success(), "{lock:?}");
+    }
     fs::write(
         workspace.join(".changes/release.md"),
         "---\nrelease-contract = 'patch'\n---\n\nPreserve release authority between runners.\n",
@@ -897,6 +909,21 @@ fn source_release_record_is_independently_validated() {
         .join(format!("{}.json", summary["transaction_id"].as_str().unwrap()));
     let original = fs::read(&record_path).unwrap();
     let record: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    let paths = record["intent"]["plan"]["cargo_writes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|write| write["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        [
+            "Cargo.lock",
+            "Cargo.toml",
+            "auxiliary-extra/Cargo.lock",
+            "auxiliary/Cargo.lock"
+        ]
+    );
     let intent = record["intent"]["identity"].as_str().unwrap();
     let source = record["preparation"]["commit"].as_str().unwrap();
     let validate = |expected_intent: &str, expected_source: &str, repository: &str| {
@@ -933,6 +960,19 @@ fn source_release_record_is_independently_validated() {
         ("/schema_version", serde_json::json!(9)),
         ("/intent/plan/summary/total_crates", serde_json::json!(2)),
         (
+            "/intent/plan/cargo_writes/0/content",
+            serde_json::json!("unbound Cargo bytes"),
+        ),
+        ("/intent/plan/cargo_writes/0/path", serde_json::json!("../Cargo.toml")),
+        ("/intent/plan/cargo_writes/1/before_digest", serde_json::Value::Null),
+        (
+            "/intent/plan/cargo_writes",
+            serde_json::json!([
+                record["intent"]["plan"]["cargo_writes"][0],
+                record["intent"]["plan"]["cargo_writes"][0]
+            ]),
+        ),
+        (
             "/intent/plan/crates/0/manifest_path",
             serde_json::json!("../Cargo.toml"),
         ),
@@ -967,13 +1007,13 @@ fn source_release_record_is_independently_validated() {
     }
     for changed in [
         String::from_utf8(original.clone()).unwrap().replacen(
-            "\"schema_version\": 10",
-            "\"schema_version\": 10, \"schema_version\": 10",
+            "\"schema_version\": 11",
+            "\"schema_version\": 11, \"schema_version\": 11",
             1,
         ),
         String::from_utf8(original.clone())
             .unwrap()
-            .replacen("\"schema_version\": 10", "\"schema_version\": 10.0", 1),
+            .replacen("\"schema_version\": 11", "\"schema_version\": 11.0", 1),
     ] {
         assert_ne!(changed.as_bytes(), original);
         fs::write(&record_path, changed).unwrap();
@@ -1498,7 +1538,8 @@ fn planner_stops_on_a_legacy_output_consumer_before_installing() {
     .unwrap();
     fs::write(
         workspace.join(".github/workflows/ci.yml"),
-        "jobs:\n  plan:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: loadingalias/cargo-rail-action@v10\n        id: rail\n      - if: steps.rail.outputs.test == 'true'\n        run: cargo test\n",
+        "jobs:\n  plan:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: loadingalias/cargo-rail-action@current\n        id: rail\n      - if: steps.rail.outputs.test == 'true'\n        run: cargo test\n"
+            .replace("@current", &format!("@v{}", env!("CARGO_PKG_VERSION").split('.').next().unwrap())),
     )
     .unwrap();
     let git = Command::new("git")
