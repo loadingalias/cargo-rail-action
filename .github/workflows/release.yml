@@ -3,15 +3,10 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      transaction:
-        description: Recovery only; retained transaction ID
+      bump:
+        description: auto, major, minor, patch, prerelease, release, or an exact version
         type: string
-      intent:
-        description: Recovery only; retained intent identity
-        type: string
-      source:
-        description: Recovery only; retained source commit
-        type: string
+        default: auto
 
 permissions: {}
 
@@ -28,11 +23,13 @@ jobs:
     name: Release
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 60
     environment: release
     permissions:
-      contents: write # Publish the release commit, tag, assets, and major alias.
-      actions: write # Dispatch and inspect the exact package workflow run.
+      contents: write # Push the release commit and tag, and create the draft release.
+    outputs:
+      state: ${{ steps.release.outputs.state }}
+      tags: ${{ steps.release.outputs.tags }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,16 +43,58 @@ jobs:
           channel="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
           rustup toolchain install "$channel" --profile minimal
           cargo build --locked
-      - name: Execute the shared release engine
+      - name: Run cargo rail release
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ steps.cargo-rail.outputs.version }}
-          INPUT_PACKAGES: "[]"
-          INPUT_BUMP: auto
-          INPUT_PUBLISH: "false"
-          INPUT_REVIEW: "false"
+          INPUT_CRATES: ''
+          INPUT_BUMP: ${{ inputs.bump }}
+          INPUT_PULL_REQUEST: 'false'
+          INPUT_DRY_RUN: 'false'
+        run: target/debug/cargo-rail-action run release
+
+  assets:
+    name: Assets
+    needs: release
+    if: needs.release.outputs.state == 'awaiting_assets'
+    permissions:
+      contents: write # Attach the runtimes to the draft release.
+      id-token: write # Mint the Sigstore signing certificate.
+      attestations: write # Persist the signed provenance.
+      artifact-metadata: write # Record the attested artifact subjects.
+    uses: ./.github/workflows/package.yml # zizmor: ignore[self-repository]
+    with:
+      release-tag: ${{ fromJSON(needs.release.outputs.tags)[0] }}
+
+  publish:
+    name: Publish
+    needs: [release, assets]
+    if: needs.assets.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write # Publish the release and move its major alias.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read the Cargo-Rail lock
+        id: cargo-rail
+        run: bash scripts/read-cargo-rail-lock.sh >> "$GITHUB_OUTPUT"
+      - name: Build this Action runtime
         run: |
-          gh auth setup-git
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          target/debug/cargo-rail-action run release
+          channel="$(sed -n 's/^channel = "\([^" ]*\)"$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal
+          cargo build --locked
+      - name: Finish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ steps.cargo-rail.outputs.version }}
+          INPUT_CRATES: ''
+          INPUT_BUMP: auto
+          INPUT_PULL_REQUEST: 'false'
+          INPUT_DRY_RUN: 'false'
+        run: target/debug/cargo-rail-action run release

@@ -8,7 +8,6 @@ mod install;
 mod package;
 mod plan;
 mod release;
-mod release_record;
 mod report;
 mod repository;
 mod validation;
@@ -180,7 +179,6 @@ struct MatrixArgs {
 
 #[derive(Debug, Subcommand)]
 enum ReleaseOperation {
-    ValidateRecord(release_record::ValidateArgs),
     Execute(release::ExecuteArgs),
     Package(package::PackageArgs),
 }
@@ -235,7 +233,6 @@ fn run() -> Result<()> {
         Command::Audit { root } => audit::run_command(root.as_deref()),
         Command::Plan { operation } => plan::run_command(operation),
         Command::Release { operation } => match operation {
-            ReleaseOperation::ValidateRecord(arguments) => release_record::validate(&arguments),
             ReleaseOperation::Execute(arguments) => release::execute(&arguments),
             ReleaseOperation::Package(arguments) => package::package(&arguments),
         },

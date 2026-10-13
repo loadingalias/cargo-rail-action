@@ -1,18 +1,32 @@
-//! Independent invocation validation and execution of the Cargo-Rail release engine.
+//! Run `cargo rail release` for a workflow and publish its result.
+//!
+//! Releases keep no records: Cargo-Rail reads progress from Git, the registry, and GitHub,
+//! and a rerun finishes an interrupted release. This runner validates only what it hands
+//! the engine and what it publishes: the inputs, the installed engine, and the result's shape.
+//! Push credentials reach the engine process alone, through process-scoped Git configuration.
 
 use crate::{
     ActionError, Result, env_string,
     github::{Publication, publish},
     install::{self, ComponentSet},
-    repository::{run_bounded, subprocess_failure},
-    validation::parse_unique_json,
+    optional_env,
 };
 use clap::Args;
 use serde_json::Value;
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+const MAX_RESULT_BYTES: u64 = 4 * 1024 * 1024;
+const STATES: [&str; 7] = [
+    "nothing_to_release",
+    "planned",
+    "cancelled",
+    "pull_request",
+    "awaiting_checks",
+    "awaiting_assets",
+    "released",
+];
 
 #[derive(Debug, Args)]
 pub(crate) struct ExecuteArgs {
@@ -21,24 +35,25 @@ pub(crate) struct ExecuteArgs {
     cargo_rail: Option<PathBuf>,
     #[arg(long, default_value = "latest")]
     version: String,
-    #[arg(long, default_value = "[]")]
-    packages: String,
+    /// Crates to release, separated by whitespace; empty selects every crate with release-worthy changes.
+    #[arg(long, default_value = "")]
+    crates: String,
     #[arg(long, default_value = "auto")]
     bump: String,
     #[arg(long)]
-    publish: bool,
+    pull_request: bool,
     #[arg(long)]
-    review: bool,
+    dry_run: bool,
 }
 
 pub(crate) fn run_action() -> Result<()> {
     execute(&ExecuteArgs {
         cargo_rail: None,
         version: env_string("INPUT_VERSION")?,
-        packages: env_string("INPUT_PACKAGES")?,
+        crates: optional_env("INPUT_CRATES")?,
         bump: env_string("INPUT_BUMP")?,
-        publish: boolean("INPUT_PUBLISH")?,
-        review: boolean("INPUT_REVIEW")?,
+        pull_request: boolean("INPUT_PULL_REQUEST")?,
+        dry_run: boolean("INPUT_DRY_RUN")?,
     })
 }
 
@@ -50,31 +65,120 @@ fn boolean(name: &str) -> Result<bool> {
     }
 }
 
-pub(crate) fn execute(args: &ExecuteArgs) -> Result<()> {
-    let root = std::fs::canonicalize(env_string("GITHUB_WORKSPACE")?)?;
-    let repository = env_string("GITHUB_REPOSITORY")?;
-    let event_name = env_string("GITHUB_EVENT_NAME")?;
-    let workflow = env_string("GITHUB_WORKFLOW_REF")?;
-    if env_string("GITHUB_ACTIONS")? != "true"
-        || !matches!(event_name.as_str(), "workflow_dispatch" | "pull_request_target")
-        || repository.split('/').count() != 2
-        || !workflow.starts_with(&format!("{repository}/.github/workflows/"))
-        || !workflow.contains("@refs/heads/")
+/// The release command line for these inputs, rejecting anything Cargo-Rail could read as an option.
+fn release_arguments(args: &ExecuteArgs) -> Result<Vec<String>> {
+    let crates = args.crates.split_whitespace().collect::<Vec<_>>();
+    if crates.len() > 256
+        || crates.iter().any(|name| {
+            name.len() > 64
+                || !name.starts_with(|first: char| first.is_ascii_alphanumeric())
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        })
     {
         return Err(ActionError::rejected(
-            "release requires a same-repository trusted workflow invocation",
+            "crates must be Cargo package names separated by whitespace",
         ));
     }
-    let event_path = PathBuf::from(env_string("GITHUB_EVENT_PATH")?);
-    if std::fs::metadata(&event_path)?.len() > 16 * 1024 * 1024 {
-        return Err(ActionError::rejected("release event exceeds its bound"));
-    }
-    let event = parse_unique_json(&std::fs::read(event_path)?, "release event")?;
-    if event["repository"]["full_name"] != repository {
+    if args.bump.is_empty()
+        || args.bump.len() > 64
+        || args.bump.starts_with('-')
+        || !args
+            .bump
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
+    {
         return Err(ActionError::rejected(
-            "release event repository differs from invocation",
+            "bump must be auto, major, minor, patch, prerelease, release, or a version",
         ));
     }
+    let mut arguments = vec!["rail", "release", "--format", "json", "--bump", &args.bump];
+    arguments.push(if args.dry_run { "--dry-run" } else { "--yes" });
+    if args.pull_request {
+        arguments.push("--pr");
+    }
+    arguments.push("--");
+    arguments.extend(crates);
+    Ok(arguments.into_iter().map(str::to_owned).collect())
+}
+
+/// Process-scoped Git configuration that pushes to `server` with `token` and nothing else.
+fn push_credentials(server: &str, token: &str) -> Result<Vec<(String, String)>> {
+    let server = server.trim_end_matches('/');
+    if !server.starts_with("https://") || server.contains(['\r', '\n', ' ']) {
+        return Err(ActionError::rejected("GITHUB_SERVER_URL must be an HTTPS URL"));
+    }
+    if token.is_empty() || token.contains(['\r', '\n']) {
+        return Err(ActionError::rejected("token must be a single-line value"));
+    }
+    let header = format!(
+        "AUTHORIZATION: basic {}",
+        base64(format!("x-access-token:{token}").as_bytes())
+    );
+    Ok(vec![
+        ("GIT_CONFIG_COUNT".into(), "1".into()),
+        ("GIT_CONFIG_KEY_0".into(), format!("http.{server}/.extraheader")),
+        ("GIT_CONFIG_VALUE_0".into(), header),
+    ])
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let value = chunk.iter().enumerate().fold(0_u32, |value, (index, byte)| {
+            value | (u32::from(*byte) << (16 - 8 * index))
+        });
+        for index in 0..4 {
+            if index <= chunk.len() {
+                encoded.push(char::from(ALPHABET[((value >> (18 - 6 * index)) & 63) as usize]));
+            } else {
+                encoded.push('=');
+            }
+        }
+    }
+    encoded
+}
+
+/// A commit identity for the release commit when the checkout configures none.
+fn identity(root: &Path) -> Vec<(String, String)> {
+    let configured = Command::new("git")
+        .current_dir(root)
+        .args(["config", "user.email"])
+        .output()
+        .is_ok_and(|output| output.status.success() && !output.stdout.is_empty());
+    if configured {
+        return Vec::new();
+    }
+    let (name, email) = (
+        "github-actions[bot]",
+        "41898282+github-actions[bot]@users.noreply.github.com",
+    );
+    ["AUTHOR", "COMMITTER"]
+        .into_iter()
+        .flat_map(|role| {
+            [
+                (format!("GIT_{role}_NAME"), name.to_owned()),
+                (format!("GIT_{role}_EMAIL"), email.to_owned()),
+            ]
+        })
+        .collect()
+}
+
+pub(crate) fn execute(args: &ExecuteArgs) -> Result<()> {
+    let root = std::fs::canonicalize(env_string("GITHUB_WORKSPACE")?)?;
+    if env_string("GITHUB_ACTIONS")? != "true" {
+        return Err(ActionError::rejected("release runs inside GitHub Actions"));
+    }
+    let token = env_string("GH_TOKEN")?;
+    let server = optional_env("GITHUB_SERVER_URL")?;
+    let server = if server.is_empty() {
+        "https://github.com".to_owned()
+    } else {
+        server
+    };
+    let arguments = release_arguments(args)?;
     install::validate_cargo_rail_selection(&args.version)?;
     let installed = if args.cargo_rail.is_none() {
         Some(install::install_cargo_rail(&args.version, ComponentSet::Core)?)
@@ -88,256 +192,211 @@ pub(crate) fn execute(args: &ExecuteArgs) -> Result<()> {
         .as_deref()
         .or_else(|| installed.as_ref().map(|installed| installed.binary()))
         .ok_or_else(|| ActionError::operational("release core is unavailable"))?;
-    let selected_version = installed
+    let selected = installed
         .as_ref()
         .map_or(args.version.as_str(), |installed| installed.version());
-    let version = run_bounded(Command::new(binary).arg("--version"), 1024, 1024)?;
-    if !version.status.success()
-        || String::from_utf8_lossy(&version.stdout).trim() != format!("cargo-rail {selected_version}")
+    let version = Command::new(binary).arg("--version").output()?;
+    if !version.status.success() || String::from_utf8_lossy(&version.stdout).trim() != format!("cargo-rail {selected}")
     {
         return Err(ActionError::rejected(
             "release core version does not match the selected component",
         ));
     }
-    let transaction = event["inputs"]["transaction"].as_str().unwrap_or("");
-    let continuing = !transaction.is_empty() || event_name == "pull_request_target";
-    let transaction = if continuing {
-        let mut fetch = vec!["rail", "release", "record", "fetch"];
-        if !transaction.is_empty() {
-            fetch.push(transaction);
-        }
-        let fetched = core_json(binary, &root, &fetch)?;
-        let transaction = fetched["transaction_id"]
-            .as_str()
-            .ok_or_else(|| ActionError::rejected("record fetch returned no transaction"))?;
-        let record = core_json(binary, &root, &["rail", "release", "record", "inspect", transaction])?;
-        authorize_record(&root, &record, &event, &event_name, &repository, &workflow)?;
-        execute_core(binary, &root, &["rail", "release", "resume", transaction, "--executor"])?;
-        transaction.to_owned()
-    } else {
-        if event_name != "workflow_dispatch" || event["inputs"]["intent"].as_str().is_some_and(|s| !s.is_empty()) {
-            return Err(ActionError::rejected(
-                "a new release request requires a manual dispatch without retained authority",
-            ));
-        }
-        if String::from_utf8_lossy(&git(&root, &["rev-parse", "HEAD"])?).trim() != env_string("GITHUB_SHA")? {
-            return Err(ActionError::rejected(
-                "new release checkout differs from its dispatch source",
-            ));
-        }
-        let packages: Vec<String> =
-            serde_json::from_str(&args.packages).map_err(|_| ActionError::rejected("packages must be a JSON array"))?;
-        if packages.len() > 256
-            || packages.iter().any(|p| {
-                p.is_empty()
-                    || p.len() > 64
-                    || !p.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-            })
-        {
-            return Err(ActionError::rejected(
-                "packages must contain bounded Cargo package names",
-            ));
-        }
-        let mut command = vec!["rail", "release", "run", "--executor", "--yes", "--bump", &args.bump];
-        if packages.is_empty() {
-            command.push("--all");
-        } else {
-            command.extend(packages.iter().map(String::as_str));
-        }
-        if args.publish {
-            command.push("--publish");
-        }
-        if args.review {
-            command.push("--pr");
-        }
-        execute_core(binary, &root, &command)?;
-        let fetched = core_json(binary, &root, &["rail", "release", "record", "fetch"])?;
-        fetched["transaction_id"]
-            .as_str()
-            .ok_or_else(|| ActionError::rejected("release returned no transaction"))?
-            .to_owned()
-    };
-    let record = core_json(binary, &root, &["rail", "release", "record", "inspect", &transaction])?;
-    let source = source(&record)?;
-    crate::release_record::read(
-        &serde_json::to_vec(&record).map_err(|error| ActionError::rejected(error.to_string()))?,
-        record["intent"]["identity"].as_str().unwrap_or(""),
-        source,
-        &format!("github.com/{repository}"),
-    )?;
-    publish(Publication {
-        summary: None,
-        paths: vec![],
-        outputs: vec![
-            ("transaction-id".into(), transaction),
-            ("release-sha".into(), source.into()),
-            ("state".into(), record["status"].as_str().unwrap_or("").into()),
-            (
-                "run-url".into(),
-                format!(
-                    "https://github.com/{repository}/actions/runs/{}",
-                    env_string("GITHUB_RUN_ID")?
-                ),
-            ),
-        ],
-    })
-}
 
-fn source(record: &Value) -> Result<&str> {
-    record["review"]["merge"]["commit"]
-        .as_str()
-        .or_else(|| record["preparation"]["commit"].as_str())
-        .or_else(|| record["intent"]["initial_head"].as_str())
-        .ok_or_else(|| ActionError::rejected("release record has no source"))
-}
-
-fn authorize_record(
-    root: &Path,
-    record: &Value,
-    event: &Value,
-    event_name: &str,
-    repository: &str,
-    workflow: &str,
-) -> Result<()> {
-    let source = source(record)?;
-    let intent = &record["intent"];
-    crate::release_record::read(
-        &serde_json::to_vec(record).map_err(|error| ActionError::rejected(error.to_string()))?,
-        intent["identity"].as_str().unwrap_or(""),
-        source,
-        &format!("github.com/{repository}"),
-    )?;
-    if intent["hosted"] != true
-        || workflow
-            != format!(
-                "{repository}/{}@refs/heads/{}",
-                intent["release_config"]["hosted_workflow"].as_str().unwrap_or(""),
-                intent["branch"].as_str().unwrap_or("")
-            )
-    {
-        return Err(ActionError::rejected("release record does not authorize this workflow"));
+    let mut child = Command::new(binary)
+        .current_dir(&root)
+        .args(&arguments)
+        .envs(push_credentials(&server, &token)?)
+        .envs(identity(&root))
+        .env("GH_TOKEN", &token)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+    let mut stdout = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or_else(|| ActionError::operational("release output is unavailable"))?
+        .take(MAX_RESULT_BYTES + 1)
+        .read_to_end(&mut stdout)?;
+    let status = child.wait()?;
+    if stdout.len() as u64 > MAX_RESULT_BYTES {
+        return Err(ActionError::rejected("release output exceeds its bound"));
     }
-    let observed;
-    let pull = if event_name == "pull_request_target" {
-        if event["action"] != "closed"
-            || event["pull_request"]["merged"] != true
-            || event["number"] != record["review"]["request"]
-        {
-            return Err(ActionError::rejected(
-                "merge event does not authorize this release review",
-            ));
-        }
-        Some(&event["pull_request"])
-    } else {
-        if event["inputs"]["transaction"] != record["transaction_id"]
-            || event["inputs"]["intent"] != intent["identity"]
-            || (event["inputs"]["source"] != source && event["inputs"]["source"] != intent["initial_head"])
-        {
-            return Err(ActionError::rejected(
-                "dispatch does not authorize the original release intent",
-            ));
-        }
-        if let Some(number) = record["review"]["request"].as_u64() {
-            let output = run_bounded(
-                Command::new("gh").current_dir(root).args([
-                    "api",
-                    "--hostname",
-                    "github.com",
-                    &format!("repos/{repository}/pulls/{number}"),
-                ]),
-                16 * 1024 * 1024,
-                1024 * 1024,
-            )?;
-            if !output.status.success() {
-                return Err(subprocess_failure("release review observation", &output));
-            }
-            observed = parse_unique_json(&output.stdout, "release review")?;
-            if observed["number"] != number {
-                return Err(ActionError::rejected("release review changed its request identity"));
-            }
-            Some(&observed)
-        } else {
-            None
-        }
-    };
-    if let Some(pull) = pull {
-        if pull["head"]["sha"] != record["preparation"]["commit"]
-            || pull["head"]["ref"] != format!("rail/{}", record["transaction_id"].as_str().unwrap_or(""))
-            || pull["head"]["repo"]["full_name"] != repository
-            || pull["base"]["repo"]["full_name"] != repository
-            || pull["base"]["ref"] != intent["branch"]
-        {
-            return Err(ActionError::rejected(
-                "release review changed its repository, branch, or prepared source",
-            ));
-        }
-        if pull["merged"] == false && pull["state"] == "open" && record["review"]["merge"].is_null() {
-            return Ok(());
-        }
-        if pull["merged"] != true || pull["state"] != "closed" || pull["merged_at"].as_str().is_none_or(str::is_empty) {
-            return Err(ActionError::rejected("release review has no observable merge"));
-        }
-        let merged = pull["merge_commit_sha"]
-            .as_str()
-            .filter(|s| matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit()))
-            .ok_or_else(|| ActionError::rejected("release review has no exact merged source"))?;
-        if record["review"]["merge"]["commit"]
-            .as_str()
-            .is_some_and(|retained| retained != merged)
-        {
-            return Err(ActionError::rejected(
-                "release review changed its retained merged commit",
-            ));
-        }
-        git(root, &["fetch", "--no-tags", "--no-write-fetch-head", "origin", merged])?;
-        if git(root, &["show", "-s", "--format=%T", merged])?
-            != git(
-                root,
-                &[
-                    "show",
-                    "-s",
-                    "--format=%T",
-                    record["preparation"]["commit"].as_str().unwrap_or(""),
-                ],
-            )?
-        {
-            return Err(ActionError::rejected(
-                "reviewed merge changed the prepared release tree",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn core_json(binary: &Path, root: &Path, args: &[&str]) -> Result<Value> {
-    let output = run_bounded(
-        Command::new(binary).current_dir(root).args(args),
-        16 * 1024 * 1024,
-        1024 * 1024,
-    )?;
-    if !output.status.success() {
-        return Err(subprocess_failure("release record operation", &output));
-    }
-    parse_unique_json(&output.stdout, "release record output")
-}
-
-fn execute_core(binary: &Path, root: &Path, args: &[&str]) -> Result<()> {
-    if !Command::new(binary).current_dir(root).args(args).status()?.success() {
+    let result: Value = serde_json::from_slice(&stdout)
+        .map_err(|_| ActionError::operational(format!("cargo rail release exited with {status} and no result")))?;
+    if result["error"] == true {
         return Err(ActionError::operational(
-            "release engine stopped; the original transaction remains recoverable",
+            result["message"]
+                .as_str()
+                .unwrap_or("cargo rail release failed")
+                .to_owned(),
         ));
     }
-    Ok(())
+    let outputs = outputs(&result)?;
+    let summary = summary(&result);
+    publish(Publication {
+        summary: Some(summary),
+        paths: Vec::new(),
+        outputs,
+    })?;
+    match result["state"].as_str() {
+        Some("awaiting_checks") => Err(ActionError::operational(format!(
+            "checks on the source commit have not finished: {}",
+            result["pending_checks"]
+                .as_array()
+                .map(|checks| checks.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
+                .unwrap_or_default()
+        ))),
+        _ if !status.success() => Err(ActionError::operational(format!(
+            "cargo rail release exited with {status}"
+        ))),
+        _ => Ok(()),
+    }
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = run_bounded(
-        Command::new("git").current_dir(root).args(args),
-        1024 * 1024,
-        1024 * 1024,
-    )?;
-    if !output.status.success() {
-        return Err(subprocess_failure("release Git observation", &output));
+/// The step outputs, after checking every field they come from.
+fn outputs(result: &Value) -> Result<Vec<(String, String)>> {
+    let state = result["state"]
+        .as_str()
+        .filter(|state| STATES.contains(state))
+        .ok_or_else(|| ActionError::rejected("release result has an unknown state"))?;
+    if result["command"] != "release" {
+        return Err(ActionError::rejected("release result names another command"));
     }
-    Ok(output.stdout)
+    let commit = match &result["commit"] {
+        Value::Null => String::new(),
+        Value::String(commit)
+            if matches!(commit.len(), 40 | 64) && commit.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+        {
+            commit.clone()
+        }
+        _ => return Err(ActionError::rejected("release result has an invalid commit")),
+    };
+    let tags = result["crates"]
+        .as_array()
+        .ok_or_else(|| ActionError::rejected("release result has no crates"))?
+        .iter()
+        .map(|release| {
+            release["tag"]
+                .as_str()
+                .filter(|tag| {
+                    !tag.is_empty()
+                        && tag.len() <= 128
+                        && tag
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'+'))
+                })
+                .map(str::to_owned)
+                .ok_or_else(|| ActionError::rejected("release result has an invalid tag"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let pull_request = match &result["pull_request"] {
+        Value::Null => String::new(),
+        Value::String(url) if url.starts_with("http") && !url.contains(['\r', '\n']) => url.clone(),
+        _ => return Err(ActionError::rejected("release result has an invalid pull request URL")),
+    };
+    Ok(vec![
+        ("state".into(), state.to_owned()),
+        ("commit".into(), commit),
+        ("tags".into(), serde_json::to_string(&tags).unwrap_or_default()),
+        ("pull-request".into(), pull_request),
+    ])
+}
+
+fn summary(result: &Value) -> String {
+    let mut summary = format!(
+        "### Cargo-Rail release: {}\n\n",
+        result["state"].as_str().unwrap_or("unknown").replace('_', " ")
+    );
+    let crates = result["crates"].as_array().cloned().unwrap_or_default();
+    if !crates.is_empty() {
+        summary.push_str("| Crate | Version | Tag | Registry | GitHub release |\n|---|---|---|---|---|\n");
+        for release in crates {
+            let cell = |value: &Value| value.as_str().unwrap_or("").replace(['|', '\n'], " ");
+            summary.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                cell(&release["name"]),
+                cell(&release["version"]),
+                cell(&release["tag"]),
+                cell(&release["registry"]),
+                cell(&release["github_release"]),
+            ));
+        }
+    }
+    if let Some(next) = result["next"].as_str() {
+        summary.push_str(&format!("\nNext: {}\n", next.replace('\n', " ")));
+    }
+    summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(crates: &str, bump: &str) -> ExecuteArgs {
+        ExecuteArgs {
+            cargo_rail: None,
+            version: "latest".into(),
+            crates: crates.into(),
+            bump: bump.into(),
+            pull_request: false,
+            dry_run: false,
+        }
+    }
+
+    #[test]
+    fn release_arguments_pass_names_after_a_separator_and_reject_options() {
+        assert_eq!(
+            release_arguments(&args("lib-a  app", "minor")).unwrap(),
+            [
+                "rail", "release", "--format", "json", "--bump", "minor", "--yes", "--", "lib-a", "app"
+            ]
+        );
+        for (crates, bump) in [("--publish", "auto"), ("a;b", "auto"), ("", "-x"), ("", "")] {
+            assert!(release_arguments(&args(crates, bump)).is_err(), "{crates} {bump}");
+        }
+    }
+
+    #[test]
+    fn push_credentials_are_process_scoped_basic_auth_for_the_server() {
+        let credentials = push_credentials("https://github.com/", "token").unwrap();
+        assert_eq!(credentials[1].1, "http.https://github.com/.extraheader");
+        assert_eq!(credentials[2].1, "AUTHORIZATION: basic eC1hY2Nlc3MtdG9rZW46dG9rZW4=");
+        assert!(push_credentials("http://github.com", "token").is_err());
+        assert!(push_credentials("https://github.com", "a\nb").is_err());
+        assert_eq!(base64(b"ab"), "YWI=");
+        assert_eq!(base64(b"a"), "YQ==");
+    }
+
+    #[test]
+    fn outputs_come_only_from_a_valid_result() {
+        let result = serde_json::json!({
+            "command": "release",
+            "state": "awaiting_assets",
+            "commit": "0123456789abcdef0123456789abcdef01234567",
+            "crates": [{ "name": "app", "version": "1.2.0", "tag": "v1.2.0", "registry": "pending", "github_release": "pending" }],
+        });
+        assert_eq!(
+            outputs(&result).unwrap(),
+            [
+                ("state".into(), "awaiting_assets".into()),
+                ("commit".into(), "0123456789abcdef0123456789abcdef01234567".into()),
+                ("tags".into(), "[\"v1.2.0\"]".into()),
+                ("pull-request".into(), String::new()),
+            ]
+        );
+        for (field, value) in [
+            ("state", serde_json::json!("done")),
+            ("commit", serde_json::json!("main")),
+            ("crates", serde_json::json!([{ "tag": "v1\nx" }])),
+            ("command", serde_json::json!("plan")),
+        ] {
+            let mut invalid = result.clone();
+            invalid[field] = value;
+            assert!(outputs(&invalid).is_err(), "{field}");
+        }
+        assert!(summary(&result).contains("| app | 1.2.0 | v1.2.0 | pending | pending |"));
+    }
 }

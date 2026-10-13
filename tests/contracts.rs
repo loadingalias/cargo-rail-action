@@ -89,6 +89,25 @@ fn action_metadata_matches_the_current_surface() {
         keys(mapping(field(setup, "outputs"), "setup outputs")),
         BTreeSet::from(["version".to_string()])
     );
+    assert_eq!(
+        keys(mapping(field(release, "inputs"), "release inputs")),
+        BTreeSet::from(
+            [
+                "bump",
+                "crates",
+                "dry-run",
+                "pull-request",
+                "runtime-source",
+                "token",
+                "version"
+            ]
+            .map(String::from)
+        )
+    );
+    assert_eq!(
+        keys(mapping(field(release, "outputs"), "release outputs")),
+        BTreeSet::from(["commit", "pull-request", "state", "tags"].map(String::from))
+    );
 
     for (name, action, bootstrap) in [
         ("planner", planner, "$GITHUB_ACTION_PATH/scripts/bootstrap.sh"),
@@ -137,7 +156,7 @@ fn action_metadata_matches_the_current_surface() {
 }
 
 #[test]
-fn public_schemas_reject_unknown_fields_and_bound_release_assets() {
+fn cache_status_schema_rejects_unknown_fields_and_inexact_versions() {
     let cache: Value =
         serde_json::from_slice(&fs::read(root().join("schemas/cache-status-v1.schema.json")).expect("cache schema"))
             .expect("parse cache schema");
@@ -166,11 +185,28 @@ fn public_schemas_reject_unknown_fields_and_bound_release_assets() {
             "cache schema accepted {rejected}"
         );
     }
+}
 
-    let release: Value =
-        serde_json::from_slice(&fs::read(root().join("schemas/release-record-v11.schema.json")).unwrap()).unwrap();
-    assert_eq!(release["additionalProperties"], false);
-    assert_eq!(release["$defs"]["artifact_evidence"]["additionalProperties"], false);
+#[test]
+fn release_asset_action_attests_before_it_attaches() {
+    let asset = yaml("release/asset/action.yaml");
+    let asset = mapping(&asset, "release asset");
+    assert_eq!(
+        keys(mapping(field(asset, "inputs"), "asset inputs")),
+        BTreeSet::from(["attest", "files", "tag", "token"].map(String::from))
+    );
+    let steps = asset["runs"]["steps"].as_array().expect("asset steps");
+    assert_eq!(steps.len(), 2);
+    assert_eq!(
+        steps[0]["uses"],
+        "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
+    );
+    assert_eq!(steps[0]["if"], "inputs.attest == 'true'");
+    assert_eq!(steps[0]["with"]["subject-path"], "${{ inputs.files }}");
+    let attach = steps[1]["run"].as_str().expect("attach script");
+    assert!(attach.contains("gh release upload \"$RELEASE_TAG\" \"${files[@]}\" --clobber"));
+    assert!(attach.contains("no file matches"));
+    assert_eq!(steps[1]["env"]["GH_TOKEN"], "${{ inputs.token }}");
 }
 
 #[test]
@@ -236,7 +272,7 @@ fn package_workflow_produces_every_authenticated_runtime() {
     let package = yaml(".github/workflows/package.yml");
     assert_eq!(
         keys(mapping(&package["on"], "package triggers")),
-        BTreeSet::from(["workflow_call".into(), "workflow_dispatch".into()])
+        BTreeSet::from(["workflow_call".into()])
     );
     let check = &package["jobs"]["check"];
     let rows = check["strategy"]["matrix"]["include"]
@@ -279,7 +315,7 @@ fn package_workflow_produces_every_authenticated_runtime() {
         .iter()
         .find(|step| step["name"] == "Checkout locked Cargo-Rail release source")
         .expect("locked release source checkout");
-    assert_eq!(source["if"], "github.event_name != 'workflow_dispatch'");
+    assert_eq!(source["if"], "inputs.release-tag == ''");
     assert_eq!(source["with"]["ref"], "${{ steps.cargo-rail.outputs.commit }}");
     assert_eq!(source["with"]["path"], ".cargo-rail-source");
     for (name, command) in [
@@ -315,7 +351,12 @@ fn package_workflow_produces_every_authenticated_runtime() {
     let upload = steps.last().unwrap();
     assert_eq!(upload["with"]["name"], "runtime-${{ matrix.target }}");
     assert_eq!(upload["with"]["if-no-files-found"], "error");
-    assert_eq!(upload["if"], "github.event_name == 'workflow_dispatch'");
+    assert_eq!(upload["if"], "inputs.release-tag != ''");
+    let checkout = &steps[0];
+    assert_eq!(
+        checkout["with"]["ref"], "${{ inputs.release-tag }}",
+        "a release builds its tag"
+    );
     let contract = steps
         .iter()
         .find(|step| step["name"] == "Test the authenticated Cargo-Rail contract")
@@ -349,34 +390,36 @@ fn package_workflow_produces_every_authenticated_runtime() {
     );
     let collect = &package["jobs"]["collect"];
     assert_eq!(collect["needs"], "check");
-    assert_eq!(collect["if"], "github.event_name == 'workflow_dispatch'");
-    assert_eq!(collect["permissions"]["contents"], "read");
+    assert_eq!(collect["if"], "inputs.release-tag != ''");
+    assert_eq!(collect["permissions"]["contents"], "write");
     assert_eq!(collect["permissions"]["id-token"], "write");
     assert_eq!(collect["permissions"]["attestations"], "write");
     assert_eq!(collect["permissions"]["artifact-metadata"], "write");
     let steps = collect["steps"].as_array().unwrap();
-    let attestation = steps
-        .iter()
-        .find(|step| step["name"] == "Attest release assets")
-        .expect("release asset attestation step");
-    assert_eq!(
-        attestation["uses"],
-        "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
-    );
-    assert_eq!(attestation["with"]["subject-path"], "${{ runner.temp }}/assets/*");
-    let upload = steps.last().unwrap();
-    assert_eq!(
-        upload["with"]["name"],
-        "release-cargo-rail-action-${{ github.run_id }}-${{ github.run_attempt }}"
-    );
+    assert_eq!(steps[0]["with"]["ref"], "${{ inputs.release-tag }}");
+    let attach = steps.last().unwrap();
+    assert_eq!(attach["uses"], "./release/asset");
+    assert_eq!(attach["with"]["tag"], "${{ inputs.release-tag }}");
+    assert_eq!(attach["with"]["files"], "${{ runner.temp }}/assets/*");
 
     let release_config = fs::read_to_string(root().join(".config/rail.toml")).unwrap();
-    assert!(release_config.contains("workflow = \".github/workflows/package.yml\""));
-    assert!(!release_config.contains("workflow = \".github/workflows/ci.yml\""));
+    assert!(release_config.contains("aliases = { cargo-rail-action = \"v{major}\" }"));
+    for target in [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc.exe",
+        "x86_64-unknown-linux-gnu",
+    ] {
+        assert!(
+            release_config.contains(&format!("\"cargo-rail-action-{target}\"")),
+            "{target}"
+        );
+    }
+    assert!(release_config.contains("\"cargo-rail-action-runtime-v1.tsv\""));
 }
 
 #[test]
-fn release_workflow_is_manual_exact_and_recoverable() {
+fn release_workflow_releases_then_attaches_assets_then_publishes() {
     let workflow = yaml(".github/workflows/release.yml");
     assert_eq!(
         keys(mapping(&workflow["on"], "release triggers")),
@@ -385,31 +428,39 @@ fn release_workflow_is_manual_exact_and_recoverable() {
     assert_eq!(
         keys(mapping(
             &workflow["on"]["workflow_dispatch"]["inputs"],
-            "release recovery inputs"
+            "release inputs"
         )),
-        BTreeSet::from(["intent".into(), "source".into(), "transaction".into()])
+        BTreeSet::from(["bump".into()])
     );
     assert!(mapping(&workflow["permissions"], "permissions").is_empty());
     assert_eq!(workflow["concurrency"]["cancel-in-progress"], false);
-    let job = &workflow["jobs"]["release"];
-    assert_eq!(job["if"], "github.ref == 'refs/heads/main'");
-    assert_eq!(job["environment"], "release");
-    assert_eq!(job["permissions"]["contents"], "write");
-    assert_eq!(job["permissions"]["actions"], "write");
-    assert!(job["permissions"].get("pull-requests").is_none());
-    let steps = job["steps"].as_array().unwrap();
+    let release = &workflow["jobs"]["release"];
+    assert_eq!(release["if"], "github.ref == 'refs/heads/main'");
+    assert_eq!(release["environment"], "release");
+    assert_eq!(release["permissions"], serde_json::json!({"contents": "write"}));
+    assert_eq!(release["outputs"]["state"], "${{ steps.release.outputs.state }}");
+    let steps = release["steps"].as_array().unwrap();
     assert_eq!(steps[0]["with"]["persist-credentials"], false);
-    let release = steps.last().unwrap();
+    let run = steps.last().unwrap();
+    assert_eq!(run["run"], "target/debug/cargo-rail-action run release");
+    assert_eq!(run["env"]["INPUT_VERSION"], "${{ steps.cargo-rail.outputs.version }}");
+    assert_eq!(run["env"]["INPUT_BUMP"], "${{ inputs.bump }}");
+
+    let assets = &workflow["jobs"]["assets"];
+    assert_eq!(assets["needs"], "release");
+    assert_eq!(assets["if"], "needs.release.outputs.state == 'awaiting_assets'");
+    assert_eq!(assets["uses"], "./.github/workflows/package.yml");
     assert_eq!(
-        release["env"]["INPUT_VERSION"],
-        "${{ steps.cargo-rail.outputs.version }}"
+        assets["with"]["release-tag"],
+        "${{ fromJSON(needs.release.outputs.tags)[0] }}"
     );
-    assert_eq!(release["env"]["INPUT_BUMP"], "auto");
-    assert_eq!(release["env"]["INPUT_PUBLISH"], "false");
-    assert_eq!(release["env"]["INPUT_REVIEW"], "false");
-    let command = release["run"].as_str().unwrap();
-    assert!(command.contains("gh auth setup-git"));
-    assert!(command.contains("cargo-rail-action run release"));
+
+    let publish = &workflow["jobs"]["publish"];
+    assert_eq!(publish["needs"], serde_json::json!(["release", "assets"]));
+    assert_eq!(publish["if"], "needs.assets.result == 'success'");
+    assert_eq!(publish["permissions"], serde_json::json!({"contents": "write"}));
+    let finish = publish["steps"].as_array().unwrap().last().unwrap();
+    assert_eq!(finish["run"], "target/debug/cargo-rail-action run release");
 }
 
 #[test]

@@ -1,5 +1,5 @@
 name: Cargo-Rail release
-description: Validate a GitHub release invocation and execute the durable Cargo-Rail transaction.
+description: Run `cargo rail release` with the locked Cargo-Rail release and publish its result.
 author: loadingalias
 inputs:
   runtime-source:
@@ -8,43 +8,46 @@ inputs:
   version:
     description: Exact Cargo-Rail release to install; default matches .github/cargo-rail.lock
     default: 0.31.1
-  packages:
-    description: JSON array of package names; an empty array selects the workspace
-    default: '[]'
+  crates:
+    description: Crates to release, separated by whitespace; empty releases every crate with release-worthy changes
+    default: ''
   bump:
     description: auto, major, minor, patch, prerelease, release, or an exact version
     default: auto
-  publish:
-    description: Authorize crates.io publication for a new request
+  pull-request:
+    description: Land the release commit through a pull request instead of pushing it
     default: 'false'
-  review:
-    description: Review preparation through a pull request
+  dry-run:
+    description: Preview and run every check without any effect
     default: 'false'
+  token:
+    description: Token for GitHub and for pushing the release commit and tags
+    default: ${{ github.token }}
 outputs:
-  transaction-id:
-    description: Original durable transaction identity
-    value: ${{ steps.runtime.outputs.transaction-id }}
-  release-sha:
-    description: Exact release source
-    value: ${{ steps.runtime.outputs.release-sha }}
   state:
-    description: Retained transaction status
+    description: nothing_to_release, planned, pull_request, awaiting_checks, awaiting_assets, or released
     value: ${{ steps.runtime.outputs.state }}
-  run-url:
-    description: Hosted execution URL
-    value: ${{ steps.runtime.outputs.run-url }}
+  commit:
+    description: The release commit, once it exists
+    value: ${{ steps.runtime.outputs.commit }}
+  tags:
+    description: JSON array of the release's tags
+    value: ${{ steps.runtime.outputs.tags }}
+  pull-request:
+    description: The release pull request URL, with pull-request
+    value: ${{ steps.runtime.outputs.pull-request }}
 runs:
   using: composite
   steps:
-    - name: Execute Cargo-Rail release
+    - name: Run cargo rail release
       id: runtime
       shell: bash
       env:
         CARGO_RAIL_ACTION_RUNTIME_SOURCE: ${{ inputs.runtime-source }}
         INPUT_VERSION: ${{ inputs.version }}
-        INPUT_PACKAGES: ${{ inputs.packages }}
+        INPUT_CRATES: ${{ inputs.crates }}
         INPUT_BUMP: ${{ inputs.bump }}
-        INPUT_PUBLISH: ${{ inputs.publish }}
-        INPUT_REVIEW: ${{ inputs.review }}
-        GH_TOKEN: ${{ github.token }}
+        INPUT_PULL_REQUEST: ${{ inputs.pull-request }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        GH_TOKEN: ${{ inputs.token }}
       run: bash "$GITHUB_ACTION_PATH/../scripts/bootstrap.sh" run release

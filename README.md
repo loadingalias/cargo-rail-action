@@ -1,7 +1,7 @@
 # Cargo-Rail Action
 
 Cargo-Rail Action brings Cargo-Rail planning, verified compiler reuse,
-and durable releases to GitHub Actions.
+and one-command releases to GitHub Actions.
 It installs an exact Cargo-Rail release and validates each plan, cache,
 and release boundary before use.
 Cargo and the workflow still run the work.
@@ -12,7 +12,7 @@ Cargo and the workflow still run the work.
 | ------- | --------------- |
 | Planner | Lets the workflow skip jobs that are not required and gives required jobs exact Cargo selectors. |
 | Cache   | Restores compatible compiler results inside the jobs that still run. |
-| Release | Carries reviewed Rust changesets into one durable, resumable publication transaction. |
+| Release | Releases the commit that CI already checked, without running CI again; a rerun finishes an interrupted release. |
 
 ```text
 all declared workflow jobs
@@ -37,7 +37,7 @@ Install your Rust toolchain and command runners, such as nextest, before these s
   with:
     persist-credentials: false
 
-- uses: loadingalias/cargo-rail-action@v11
+- uses: loadingalias/cargo-rail-action@v12
   id: rail
 
 - name: Run selected tests
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: loadingalias/cargo-rail-action@v11
+      - uses: loadingalias/cargo-rail-action@v12
         id: rail
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -112,7 +112,7 @@ jobs:
         with:
           name: cargo-rail-plan
           path: ${{ runner.temp }}/cargo-rail-plan
-      - uses: loadingalias/cargo-rail-action/setup@v11
+      - uses: loadingalias/cargo-rail-action/setup@v12
         with:
           version: ${{ needs.plan.outputs.cargo-rail-version }}
       - name: Run selected tests
@@ -158,7 +158,7 @@ so that job plans again with the same Cargo-Rail version:
         with:
           name: cargo-rail-plan
           path: ${{ runner.temp }}/cargo-rail-plan
-      - uses: loadingalias/cargo-rail-action/setup@v11
+      - uses: loadingalias/cargo-rail-action/setup@v12
         with:
           version: ${{ needs.plan.outputs.cargo-rail-version }}
       - name: Check formatting
@@ -185,7 +185,7 @@ so that job plans again with the same Cargo-Rail version:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: loadingalias/cargo-rail-action@v11
+      - uses: loadingalias/cargo-rail-action@v12
         id: rail
         with:
           version: ${{ needs.plan.outputs.cargo-rail-version }}
@@ -212,7 +212,7 @@ Split a grouped job when its commands have different inputs, setup cost, or fail
 Use `setup` when a job runs Cargo-Rail commands without the planner:
 
 ```yaml
-- uses: loadingalias/cargo-rail-action/setup@v11
+- uses: loadingalias/cargo-rail-action/setup@v12
   id: cargo-rail
 - run: cargo rail unify --check
 ```
@@ -314,7 +314,7 @@ Operational failures, including I/O and failed subprocesses, exit `1`.
   with:
     persist-credentials: false
 
-- uses: loadingalias/cargo-rail-action/cache@v11
+- uses: loadingalias/cargo-rail-action/cache@v12
   id: cache
   with:
     remote: s3://cargo-rail-cache/team?region=us-east-1&owner=123456789012
@@ -361,7 +361,7 @@ The final report combines all jobs into one summary.
 
 ```yaml
 # Append these steps to each cache-enabled job.
-- uses: loadingalias/cargo-rail-action/cache/collect@v11
+- uses: loadingalias/cargo-rail-action/cache/collect@v12
   if: always()
   id: cache-record
   with:
@@ -400,7 +400,7 @@ cache-report:
         pattern: cache-record-*
         merge-multiple: true
         path: ${{ runner.temp }}/cache-records
-    - uses: loadingalias/cargo-rail-action/cache/report@v11
+    - uses: loadingalias/cargo-rail-action/cache/report@v12
       if: always()
       with:
         records-directory: ${{ runner.temp }}/cache-records
@@ -447,7 +447,7 @@ Record it in the jobs that already build on the default branch, one file per wor
 and save it under the commit it describes:
 
 ```yaml
-- uses: loadingalias/cargo-rail-action/setup@v11
+- uses: loadingalias/cargo-rail-action/setup@v12
 - name: Build tests and record planning evidence
   run: >
     cargo rail plan evidence --work cargo.test
@@ -473,7 +473,7 @@ then pass the directory:
   with:
     path: target/planning-evidence/cargo.test.json
     key: cargo-rail-evidence-${{ runner.os }}-${{ runner.arch }}-cargo.test-${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-- uses: loadingalias/cargo-rail-action@v11
+- uses: loadingalias/cargo-rail-action@v12
   id: rail
   with:
     evidence: target/planning-evidence
@@ -491,7 +491,7 @@ See [observed-input evidence](https://github.com/loadingalias/cargo-rail/blob/ma
 
 ## Runtime and compatibility
 
-Version 11 uses one prebuilt Rust runtime with verified release checksums.
+Version 12 uses one prebuilt Rust runtime with verified release checksums.
 Bootstrap keeps the Action checkout's MIT `LICENSE` beside the runtime and rejects modified
 or missing installed license text.
 
@@ -512,7 +512,8 @@ The Action checks contracts, not version numbers.
 Another exact version, or `latest`, installs only when its archive, component manifest,
 and license validate.
 Every later step then fails closed on a contract version this Action does not accept.
-It accepts plan v9, release record v11, cache status schema 18, and component manifest v1.
+It accepts plan v9, cache status schema 18, component manifest v1,
+and the `cargo rail release` result of Cargo-Rail 0.32.
 `latest` can therefore select a Cargo-Rail release that this Action rejects.
 
 The Action runs these `cargo rail` commands: `plan`, `surface --prepare`, `cache`, and `release`.
@@ -525,21 +526,15 @@ because a newer release can reject retired configuration fields.
 The planner accepts plan contract v9, including identity-bound impact attribution.
 Regenerate plans from older contracts.
 
-Release-record compatibility is separate from plan compatibility.
-The runtime accepts Cargo-Rail [release execution records](schemas/release-record-v11.schema.json) at v11
-and fails closed on other versions.
-It validates intent identity, expected source and repository, required workflow evidence,
-and upload attempt identities.
-The locked Cargo-Rail 0.31.1 release writes v11 records and is qualified against this reader.
-
-The release Action validates hosted requests and reviewed merges
-before invoking the same Cargo-Rail transaction.
-This repository uses that engine for its own releases and promotes `v11` only
-after verifying the immutable release.
+The release Action reads the one JSON value that `cargo rail release --format json` prints.
+It rejects an unknown `state`, a result for another command, and any commit, tag,
+or pull request URL that is not a valid output value.
+It keeps no release state between runs.
+Cargo-Rail 0.31 and earlier have no such command.
 
 ## Supported runners
 
-Version 11 advertises exactly:
+Version 12 advertises exactly:
 
 | Runner              | Native target               | Requirement |
 | ------------------- | --------------------------- | ----------- |
@@ -575,36 +570,90 @@ or unrelated child process.
 
 ## Release integration
 
-`loadingalias/cargo-rail-action/release` runs the Cargo-Rail release engine from a caller-owned GitHub publication job.
+`loadingalias/cargo-rail-action/release` installs Cargo-Rail and runs `cargo rail release --yes` in the job.
+It is the command a maintainer runs locally, so CI adds credentials and runners,
+not another release engine.
+The [Cargo-Rail release guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md) owns its preconditions, configuration, and the complete workflow,
+including binary assets.
 Pin the Action to a reviewed immutable commit.
-Configure `release.hosted_workflow` and required validation in Cargo-Rail first.
 
-Inputs are `version`, `packages` (a JSON array; `[]` selects all), `bump`, `publish`, and `review`.
-Publication defaults to false.
-The workflow accepts `transaction`, `intent`, and `source` dispatch inputs so Cargo-Rail can continue a retained request.
-A merged same-repository release PR can invoke the same Action through `pull_request_target`.
-The adapter validates the original record, workflow, repository, event, prepared commit,
-and merged tree before invoking the core.
+```yaml
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        type: string
+        default: auto
+permissions: {}
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@<sha>
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: loadingalias/cargo-rail-action/release@<sha> # v12
+        with:
+          bump: ${{ inputs.bump }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+```
+
+| Input          | Default        | Meaning |
+| -------------- | -------------- | ------- |
+| `crates`       | empty          | Crates to release, separated by whitespace; empty releases every crate with release-worthy changes. |
+| `bump`         | `auto`         | `auto`, `major`, `minor`, `patch`, `prerelease`, `release`, or an exact version. |
+| `pull-request` | `false`        | Land the release commit through a pull request (`--pr`) for a protected branch. |
+| `dry-run`      | `false`        | Preview the release and run every check without any effect. |
+| `token`        | `github.token` | Token for the GitHub API and the release push. |
+| `version`      | the lock       | Exact Cargo-Rail release to install. |
+
+| Output         | Value |
+| -------------- | ----- |
+| `state`        | `nothing_to_release`, `planned`, `pull_request`, `awaiting_checks`, `awaiting_assets`, or `released`. |
+| `commit`       | The release commit, once it exists. |
+| `tags`         | JSON array of the release's tags. |
+| `pull-request` | The release pull request URL, with `pull-request: true`. |
+
+A pending check on the source commit fails the step before any effect;
+run the workflow again when the checks finish.
+Every other state succeeds, and the step summary lists each crate's registry
+and GitHub release state.
+Running the workflow again after any interruption finishes the release.
 
 The job owns credentials and environment approvals.
-Serialize release jobs across dispatch and review events, preserve Git push credentials,
-and use full history.
-Outputs are `transaction-id`, `release-sha`, `state`, and `run-url`.
-See the [Cargo-Rail release guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md) for the complete workflow contract.
+The `token` input reaches the GitHub API and the release push alone,
+through process-scoped Git configuration; the checkout keeps no credentials.
+When branch rules block `github.token`, pass a token that may push to the branch, or set `pull-request: true`.
+The release commit uses the `github-actions[bot]` identity unless the checkout configures one.
+Cargo reads registry credentials from the job environment,
+for example `CARGO_REGISTRY_TOKEN` minted by crates.io trusted publishing.
+
+`loadingalias/cargo-rail-action/release/asset` attests files and attaches them to the draft release that `cargo rail release` creates for a crate with `release.assets`.
+Its inputs are `tag` (from the release step's `tags` output), `files` (one path or glob per line), `attest` (default `true`), and `token`.
+The asset job needs `contents`, `id-token`, `attestations`, and `artifact-metadata` write permissions.
+Before it publishes the draft, Cargo-Rail verifies each file's digest and attestation, unless `release.asset_attestations = "off"`.
 
 The public Actions default to the exact Cargo-Rail release in `.github/cargo-rail.lock`.
 The release and package workflows read that version and its release commit from the same lock.
 The package workflow reads the independent `tooling` commit when it installs CI tools.
 Update `version` and `commit` only after publishing and verifying the selected Cargo-Rail release.
 
-Push and pull-request CI call the same package workflow used for release validation,
-but only a direct release-validation dispatch uploads runtime assets.
-The release workflow runs from `main`, uses the protected `release` environment, and fixes its package selection,
-bump policy, registry publication, and review mode.
-Leave its recovery inputs empty for a new release.
-Supply all three retained values only when Cargo-Rail continues an existing transaction.
-
-Cargo-Rail owns publication and the configured `v11` alias promotion.
+This repository releases itself with the same runner, built from the checked-out source.
+Its release workflow runs from `main` in the protected `release` environment.
+The release job runs `cargo rail release` and stops at `awaiting_assets`.
+The package workflow builds, tests, attests, and attaches every runtime from the release tag.
+The publish job then runs the release again, which verifies the assets, publishes the release,
+and moves the `v{major}` alias.
+Push and pull-request CI call the same package workflow without a tag and upload nothing.
 The bootstrap derives the Action runtime release from the package version in `Cargo.toml`.
 
 ## Validate changes
@@ -615,7 +664,7 @@ When changing Cargo-Rail alongside the Action,
 run `just package-release OUTPUT_DIRECTORY` in the Cargo-Rail checkout to build and package its authenticated components.
 Then run `just check-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH VERSION` here.
 This runs source plan and cache contracts, the real archive installer,
-strict release-record rejection, and release adapter recovery through real Git fixtures.
+and a release through the source engine against a local Git remote.
 Cache setup uses an isolated temporary Cargo home;
 the tests do not publish releases or contact remote cache storage.
 After updating `.github/cargo-rail.lock`, use `just check-locked-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH` to read the expected version from the lock.
@@ -623,7 +672,7 @@ After updating `.github/cargo-rail.lock`, use `just check-locked-cargo-rail ABSO
 Push and pull-request CI build authenticated Cargo-Rail archives from the exact release source
 pinned by `commit`.
 Tool installation uses the independently pinned `tooling` commit.
-Release-validation dispatches download the published Cargo-Rail version from the same lock.
+Release packaging downloads the published Cargo-Rail version from the same lock.
 Both paths run the same independent contract tests.
 Update the lock's version and commit together after publishing Cargo-Rail and
 before dispatching the Action release.

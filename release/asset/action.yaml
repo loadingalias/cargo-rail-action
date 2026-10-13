@@ -1,0 +1,41 @@
+name: Cargo-Rail release asset
+description: Attest files and attach them to the draft GitHub release that `cargo rail release` created.
+author: loadingalias
+inputs:
+  tag:
+    description: Release tag whose draft receives the files, from the release step's `tags` output
+    required: true
+  files:
+    description: Files to attest and attach, one path or glob per line
+    required: true
+  attest:
+    description: Attest each file before uploading; `cargo rail release` verifies attestations unless release.asset_attestations is off
+    default: 'true'
+  token:
+    description: Token with contents write permission for the release
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Attest release assets
+      if: inputs.attest == 'true'
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+      with:
+        subject-path: ${{ inputs.files }}
+    - name: Attach release assets
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        RELEASE_TAG: ${{ inputs.tag }}
+        RELEASE_FILES: ${{ inputs.files }}
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        files=()
+        while IFS= read -r pattern; do
+          [ -n "$pattern" ] || continue
+          matches=($pattern)
+          [ "${#matches[@]}" -gt 0 ] || { echo "::error::no file matches $pattern"; exit 1; }
+          files+=("${matches[@]}")
+        done <<< "$RELEASE_FILES"
+        gh release upload "$RELEASE_TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"

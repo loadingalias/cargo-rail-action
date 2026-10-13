@@ -20,13 +20,14 @@ const MAX_LISTING_BYTES: usize = 16 * 1024 * 1024;
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Bundled interfaces keyed by the path after the repository name.
-const METADATA: [(&str, &str); 6] = [
+const METADATA: [(&str, &str); 7] = [
     ("", include_str!("../action.yaml")),
     ("setup", include_str!("../setup/action.yaml")),
     ("cache", include_str!("../cache/action.yaml")),
     ("cache/collect", include_str!("../cache/collect/action.yaml")),
     ("cache/report", include_str!("../cache/report/action.yaml")),
     ("release", include_str!("../release/action.yaml")),
+    ("release/asset", include_str!("../release/asset/action.yaml")),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
