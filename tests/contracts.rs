@@ -250,21 +250,9 @@ fn ci_reuses_the_package_contract_with_bounded_permissions() {
     assert_eq!(ci["permissions"]["contents"], "read");
     assert_eq!(ci["jobs"]["validate"]["uses"], "./.github/workflows/package.yml");
     assert_eq!(
-        keys(mapping(
-            &ci["jobs"]["validate"]["permissions"],
-            "reusable package permissions"
-        )),
-        BTreeSet::from([
-            "artifact-metadata".into(),
-            "attestations".into(),
-            "contents".into(),
-            "id-token".into(),
-        ])
+        ci["jobs"]["validate"]["permissions"],
+        serde_json::json!({"contents": "read"})
     );
-    assert_eq!(ci["jobs"]["validate"]["permissions"]["contents"], "read");
-    assert_eq!(ci["jobs"]["validate"]["permissions"]["id-token"], "write");
-    assert_eq!(ci["jobs"]["validate"]["permissions"]["attestations"], "write");
-    assert_eq!(ci["jobs"]["validate"]["permissions"]["artifact-metadata"], "write");
 }
 
 #[test]
@@ -388,19 +376,12 @@ fn package_workflow_produces_every_authenticated_runtime() {
         contract["env"]["CARGO_RAIL_VERSION"],
         "${{ steps.cargo-rail.outputs.version }}"
     );
-    let collect = &package["jobs"]["collect"];
-    assert_eq!(collect["needs"], "check");
-    assert_eq!(collect["if"], "inputs.release-tag != ''");
-    assert_eq!(collect["permissions"]["contents"], "write");
-    assert_eq!(collect["permissions"]["id-token"], "write");
-    assert_eq!(collect["permissions"]["attestations"], "write");
-    assert_eq!(collect["permissions"]["artifact-metadata"], "write");
-    let steps = collect["steps"].as_array().unwrap();
-    assert_eq!(steps[0]["with"]["ref"], "${{ inputs.release-tag }}");
-    let attach = steps.last().unwrap();
-    assert_eq!(attach["uses"], "./release/asset");
-    assert_eq!(attach["with"]["tag"], "${{ inputs.release-tag }}");
-    assert_eq!(attach["with"]["files"], "${{ runner.temp }}/assets/*");
+    // GitHub checks every job of a called workflow against the caller's grant at startup, even a skipped job.
+    // A write job here would stop read-only CI from starting.
+    assert_eq!(
+        keys(mapping(&package["jobs"], "package jobs")),
+        BTreeSet::from(["check".into()])
+    );
 
     let release_config = fs::read_to_string(root().join(".config/rail.toml")).unwrap();
     assert!(release_config.contains("aliases = { cargo-rail-action = \"v{major}\" }"));
@@ -455,14 +436,38 @@ fn release_workflow_releases_then_attaches_assets_then_publishes() {
     assert_eq!(run["env"]["INPUT_VERSION"], "${{ steps.cargo-rail.outputs.version }}");
     assert_eq!(run["env"]["INPUT_BUMP"], "${{ inputs.bump }}");
 
-    let assets = &workflow["jobs"]["assets"];
-    assert_eq!(assets["needs"], "release");
-    assert_eq!(assets["if"], "needs.release.outputs.state == 'awaiting_assets'");
-    assert_eq!(assets["uses"], "./.github/workflows/package.yml");
+    let package = &workflow["jobs"]["package"];
+    assert_eq!(package["needs"], "release");
+    assert_eq!(package["if"], "needs.release.outputs.state == 'awaiting_assets'");
+    assert_eq!(package["uses"], "./.github/workflows/package.yml");
+    assert_eq!(package["permissions"], serde_json::json!({"contents": "read"}));
     assert_eq!(
-        assets["with"]["release-tag"],
+        package["with"]["release-tag"],
         "${{ fromJSON(needs.release.outputs.tags)[0] }}"
     );
+
+    let assets = &workflow["jobs"]["assets"];
+    assert_eq!(assets["needs"], serde_json::json!(["release", "package"]));
+    assert_eq!(
+        assets["permissions"],
+        serde_json::json!({
+            "contents": "write",
+            "id-token": "write",
+            "attestations": "write",
+            "artifact-metadata": "write"
+        })
+    );
+    let steps = assets["steps"].as_array().unwrap();
+    assert_eq!(
+        steps[0]["with"]["ref"],
+        "${{ fromJSON(needs.release.outputs.tags)[0] }}"
+    );
+    assert_eq!(steps[0]["with"]["persist-credentials"], false);
+    assert_eq!(steps[1]["with"]["pattern"], "runtime-*");
+    let attach = steps.last().unwrap();
+    assert_eq!(attach["uses"], "./release/asset");
+    assert_eq!(attach["with"]["tag"], "${{ fromJSON(needs.release.outputs.tags)[0] }}");
+    assert_eq!(attach["with"]["files"], "${{ runner.temp }}/assets/*");
 
     let publish = &workflow["jobs"]["publish"];
     assert_eq!(publish["needs"], serde_json::json!(["release", "assets"]));
