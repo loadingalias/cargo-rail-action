@@ -717,11 +717,12 @@ Update `version` and `commit` only after you publish and verify the selected Car
 This repository releases itself with the same runner, which it builds from the checked-out source.
 Its release workflow runs from `main` in the protected `release` environment.
 The release job runs `cargo rail release` and stops at `awaiting_assets`.
-The package workflow builds, tests, attests, and attaches every runtime from the release tag.
+The package workflow builds and tests every runtime from the release tag.
+The assets job attests the runtimes and attaches them to the draft release.
 Then the publish job runs the release again.
 This second run verifies the assets, publishes the release, and moves the `v{major}` alias.
 Push and pull-request CI call the same package workflow without a tag.
-These runs upload nothing.
+These runs need only read access and upload nothing.
 The bootstrap derives the Action runtime release from the package version in `Cargo.toml`.
 
 ## Validate changes

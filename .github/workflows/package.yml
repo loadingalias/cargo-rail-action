@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       release-tag:
-        description: Build this release tag and attach every runtime to its draft release
+        description: Build this release tag and upload every runtime as a workflow artifact
         type: string
         default: ''
 
@@ -179,43 +179,3 @@ jobs:
           path: ${{ runner.temp }}/runtime-assets/*
           if-no-files-found: error
           retention-days: 14
-
-  collect:
-    name: Attach release assets
-    needs: check
-    if: inputs.release-tag != ''
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write # Attach the files to the draft release.
-      id-token: write # Mint the Sigstore signing certificate.
-      attestations: write # Persist the signed provenance.
-      artifact-metadata: write # Record the attested artifact subjects.
-    defaults:
-      run:
-        working-directory: .
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.release-tag }}
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: runtime-*
-          path: ${{ runner.temp }}/runtimes
-      - name: Build the authenticated runtime manifest
-        run: |
-          mkdir "$RUNNER_TEMP/assets"
-          cp "$RUNNER_TEMP"/runtimes/*/cargo-rail-action-* "$RUNNER_TEMP/assets/"
-          for license in "$RUNNER_TEMP"/runtimes/*/LICENSE; do cmp LICENSE "$license"; done
-          cp LICENSE "$RUNNER_TEMP/assets/LICENSE"
-          chmod 700 "$RUNNER_TEMP/assets/cargo-rail-action-x86_64-unknown-linux-gnu"
-          args=()
-          for asset in "$RUNNER_TEMP"/assets/*; do args+=(--asset "$asset"); done
-          "$RUNNER_TEMP/assets/cargo-rail-action-x86_64-unknown-linux-gnu" release package "${args[@]}" \
-            --output "$RUNNER_TEMP/assets/cargo-rail-action-runtime-v1.tsv"
-      - name: Attest and attach release assets
-        uses: ./release/asset # zizmor: ignore[self-repository]
-        with:
-          tag: ${{ inputs.release-tag }}
-          files: ${{ runner.temp }}/assets/*

@@ -18,6 +18,3 @@ jobs:
     uses: ./.github/workflows/package.yml # zizmor: ignore[self-repository]
     permissions:
       contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
