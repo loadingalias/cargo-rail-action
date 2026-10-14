@@ -1065,22 +1065,28 @@ mod tests {
             &["rail", "cache", "status", "--scope", "local", "-f", "json"],
             Some("read-write"),
         );
-        assert_eq!(
-            conflicting_status["status"]["remote"]["selection_source"],
-            "transient_environment"
-        );
-        assert_eq!(conflicting_status["status"]["remote"]["mode"], "read-write");
-        let expected_error = match conflicting_status["status"]["schema_version"].as_u64() {
-            Some(16) => "cache status remote mode disagrees with input",
-            Some(18) => "cache status remote authority disagrees with input",
-            version => panic!("unsupported source cache status schema: {version:?}"),
-        };
-        assert_eq!(
-            validate_status(&conflicting_status, &inputs)
-                .expect_err("reject conflicting machine policy")
-                .message,
-            expected_error
-        );
+        // Cargo-Rail 0.32 and later report only the installed profile, because Cargo passes
+        // repository `[env]` to the compiler; earlier releases report the ambient selection.
+        if conflicting_status["status"]["remote"]["selection_source"] == "transient_environment" {
+            assert_eq!(conflicting_status["status"]["remote"]["mode"], "read-write");
+            let expected_error = match conflicting_status["status"]["schema_version"].as_u64() {
+                Some(16) => "cache status remote mode disagrees with input",
+                Some(18) => "cache status remote authority disagrees with input",
+                version => panic!("unsupported source cache status schema: {version:?}"),
+            };
+            assert_eq!(
+                validate_status(&conflicting_status, &inputs)
+                    .expect_err("reject conflicting machine policy")
+                    .message,
+                expected_error
+            );
+        } else {
+            assert_eq!(conflicting_status["status"]["remote"], status["status"]["remote"]);
+            let (ambient_remote, _) =
+                validate_status(&conflicting_status, &inputs).expect("installed profile ignores the environment");
+            require_remote_match(&setup_remote, &ambient_remote, "source setup/ambient status")
+                .expect("same authority");
+        }
         run(&["rail", "cache", "uninstall", "-f", "json"], None);
         std::fs::remove_dir_all(root).unwrap();
     }
