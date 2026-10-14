@@ -437,7 +437,16 @@ fn release_workflow_releases_then_attaches_assets_then_publishes() {
     let release = &workflow["jobs"]["release"];
     assert_eq!(release["if"], "github.ref == 'refs/heads/main'");
     assert_eq!(release["environment"], "release");
-    assert_eq!(release["permissions"], serde_json::json!({"contents": "write"}));
+    assert_eq!(
+        release["permissions"],
+        serde_json::json!({
+            "contents": "write",
+            "actions": "read",
+            "checks": "read",
+            "pull-requests": "read",
+            "statuses": "read"
+        })
+    );
     assert_eq!(release["outputs"]["state"], "${{ steps.release.outputs.state }}");
     let steps = release["steps"].as_array().unwrap();
     assert_eq!(steps[0]["with"]["persist-credentials"], false);
@@ -458,7 +467,16 @@ fn release_workflow_releases_then_attaches_assets_then_publishes() {
     let publish = &workflow["jobs"]["publish"];
     assert_eq!(publish["needs"], serde_json::json!(["release", "assets"]));
     assert_eq!(publish["if"], "needs.assets.result == 'success'");
-    assert_eq!(publish["permissions"], serde_json::json!({"contents": "write"}));
+    assert_eq!(
+        publish["permissions"],
+        serde_json::json!({
+            "contents": "write",
+            "actions": "read",
+            "checks": "read",
+            "pull-requests": "read",
+            "statuses": "read"
+        })
+    );
     let finish = publish["steps"].as_array().unwrap().last().unwrap();
     assert_eq!(finish["run"], "target/debug/cargo-rail-action run release");
 }

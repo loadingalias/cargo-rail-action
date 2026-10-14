@@ -595,6 +595,10 @@ jobs:
     environment: release
     permissions:
       contents: write
+      actions: read
+      checks: read
+      pull-requests: read
+      statuses: read
     steps:
       - uses: actions/checkout@<sha>
         with:
@@ -632,6 +636,8 @@ Running the workflow again after any interruption finishes the release.
 The job owns credentials and environment approvals.
 The `token` input reaches the GitHub API and the release push alone,
 through process-scoped Git configuration; the checkout keeps no credentials.
+The read permissions let the release read the source commit's checks, this workflow run,
+and release pull requests; `pull-request: true` needs `pull-requests: write`.
 When branch rules block `github.token`, pass a token that may push to the branch, or set `pull-request: true`.
 The release commit uses the `github-actions[bot]` identity unless the checkout configures one.
 Cargo reads registry credentials from the job environment,
