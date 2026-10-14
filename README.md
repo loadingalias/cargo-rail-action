@@ -1,9 +1,9 @@
 # Cargo-Rail Action
 
-Cargo-Rail Action brings Cargo-Rail planning, verified compiler reuse,
+Cargo-Rail Action adds Cargo-Rail planning, verified compiler reuse,
 and one-command releases to GitHub Actions.
-It installs an exact Cargo-Rail release and validates each plan, cache,
-and release boundary before use.
+It installs an exact Cargo-Rail release.
+It validates each plan, cache, and release boundary before use.
 Cargo and the workflow still run the work.
 
 ## Reduce work at each layer
@@ -21,16 +21,16 @@ all declared workflow jobs
       └─ Cargo runs freshness checks and the remaining misses
 ```
 
-Planning and caching solve different problems, so their reductions stack.
+Planning and caching solve different problems, so their reductions add together.
 Start with the planner alone.
 Add caching when the job has explicit remote authority and credentials.
 Add the release Action only to a protected publication job.
-Use the plan summary and cache report to see the actual result;
-the Action does not invent a time-saved estimate.
+Use the plan summary and the cache report to see the actual result.
+The Action does not estimate the time saved.
 
 ## Plan and run work in one job
 
-Install your Rust toolchain and command runners, such as nextest, before these steps.
+Before these steps, install your Rust toolchain and command runners, such as nextest.
 
 ```yaml
 - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,10 +54,11 @@ Install your Rust toolchain and command runners, such as nextest, before these s
     cargo nextest run "${CARGO_ARGS[@]}" --locked
 ```
 
-Every selector validates the complete plan, recomputes its canonical identity,
-and asks the exact installed Cargo-Rail to verify the current checkout before emitting stdout.
-Mutating the repository after selector emission and
-before the consuming command remains a caller error.
+Before a selector writes to stdout,
+it validates the complete plan and recomputes the canonical identity of the plan.
+The selector also asks the exact installed Cargo-Rail to verify the current checkout.
+A repository change after the selector output and
+before the consuming command is still a caller error.
 The planner publishes `cargo-rail` and the stable `cargo-rail-action` launcher to later steps in the same job.
 
 The planner publishes only:
@@ -68,18 +69,18 @@ The planner publishes only:
 
 See the [planner inputs](action.yaml) for comparison refs, full verification, evidence, and workspace selection.
 
-Set `components` to `surface` or `complete` when planning needs Surface.
-During explicit Surface preparation, Cargo-Rail may install `rustc-dev` and compile its authenticated,
-toolchain-bound compiler fact driver.
-Native cache preparation can also compile that driver from the authenticated source package
-when development components for the selected compiler are already installed.
+When planning needs Surface, set `components` to `surface` or `complete`.
+During explicit Surface preparation, Cargo-Rail can install `rustc-dev`.
+It can also compile its compiler fact driver, which is authenticated and bound to the toolchain.
+When the development components for the selected compiler are already installed,
+native cache preparation can also compile that driver from the authenticated source package.
 Release mode does not compile the Action runtime or Cargo-Rail itself in the workflow.
 
 ## Transfer a plan across jobs
 
 Transfer only `plan.json`.
 Install the required Rust toolchain and command runners in each job.
-Use the setup action to install the same Cargo-Rail version in the consumer:
+Use the setup action to install the same Cargo-Rail version in the consuming job:
 
 ```yaml
 jobs:
@@ -129,19 +130,21 @@ jobs:
 ```
 
 Keep the downloaded plan outside the checkout.
-Match the planning job's source, Rust toolchain, platform, and relative workspace directory.
-Run selectors from that workspace directory; checkout verification rejects source drift.
-Create a separate plan for each platform when the workflow spans platforms.
+Use the same source, Rust toolchain, platform, and relative workspace directory as the planning job.
+Run selectors from that workspace directory.
+Checkout verification rejects source drift.
+When the workflow uses more than one platform, create a separate plan for each platform.
 
 ## Group work and route other platforms
 
-These jobs extend the `plan` job above.
-A grouped job runs when any work it owns is required.
+These jobs use the `plan` job from the example above.
+A grouped job runs when any work that it owns is required.
 Guard each command with its own work ID.
-Repository work such as `cargo.fmt` can route the job, but it has no Cargo selector.
-The Linux plan's `required-work` can route a macOS job.
-Only a plan created on macOS authorizes macOS selectors,
-so that job plans again with the same Cargo-Rail version:
+Repository work, such as `cargo.fmt`, can route the job.
+However, repository work has no Cargo selector.
+The `required-work` output of the Linux plan can route a macOS job.
+Only a plan created on macOS authorizes macOS selectors.
+For this reason, the macOS job plans again with the same Cargo-Rail version:
 
 ```yaml
   validate:
@@ -203,13 +206,15 @@ so that job plans again with the same Cargo-Rail version:
           cargo nextest run "${CARGO_ARGS[@]}" --locked
 ```
 
-The macOS step routes on its own plan because its decision can differ from the Linux plan.
+The macOS step routes on its own plan,
+because its decision can be different from the decision of the Linux plan.
 A reader rejects a plan from another platform before checkout verification.
-Split a grouped job when its commands have different inputs, setup cost, or failure ownership.
+When the commands of a grouped job have different inputs, setup cost, or failure ownership,
+split the job.
 
 ## Run Cargo-Rail checks with setup only
 
-Use `setup` when a job runs Cargo-Rail commands without the planner:
+When a job runs Cargo-Rail commands without the planner, use `setup`:
 
 ```yaml
 - uses: loadingalias/cargo-rail-action/setup@v12
@@ -218,12 +223,13 @@ Use `setup` when a job runs Cargo-Rail commands without the planner:
 ```
 
 Setup installs authenticated prebuilt components.
-It compiles no Rust, so your workspace toolchain
-and MSRV stay independent of Cargo-Rail's build version.
-The `version` input defaults to the release in this Action's `.github/cargo-rail.lock`; the action metadata and the lock always agree.
+It does not compile Rust code.
+Thus, your workspace toolchain and MSRV stay independent of Cargo-Rail's build version.
+The `version` input defaults to the release in the `.github/cargo-rail.lock` file of this Action.
+The action metadata and the lock always agree.
 The step logs `Cargo-Rail setup ready: VERSION` and publishes the same value as its `version` output.
 
-Reproduce that version locally with one command, then check it:
+Install that version locally with one command, then check it:
 
 ```bash
 cargo install cargo-rail --locked --version VERSION
@@ -233,20 +239,26 @@ cargo rail --version
 A source install needs Cargo-Rail's `rust-version`, not your workspace toolchain.
 See [Cargo-Rail installation paths](https://github.com/loadingalias/cargo-rail#installation-paths) for archives and compiler components.
 
-A repository wrapper that skips a check when Cargo-Rail is missing keeps local runs convenient,
-but policy drift then appears first in CI.
-Install the matching version instead of relying on the skip.
+A repository wrapper can skip a check when Cargo-Rail is missing.
+This makes local runs easier, but policy drift then appears first in CI.
+Install the matching version.
+Do not rely on the skip.
 
-Before you make `cargo rail unify --check` a required check, establish a clean baseline: review the proposed edits,
-apply them in one reviewed change, and confirm that `--check` passes on the default branch.
-Do not keep an optional check that always fails; reviewers learn to ignore it.
+Before you make `cargo rail unify --check` a required check, get a clean baseline:
+
+1. Review the proposed edits.
+1. Apply them in one reviewed change.
+1. Make sure that `--check` passes on the default branch.
+
+Do not keep an optional check that always fails.
+Reviewers learn to ignore such a check.
 
 ## Migrate from an earlier version
 
 Before it plans, the planner audits every tracked or unignored YAML file in the repository
 for Cargo-Rail Action references.
-It prints each reference with its version, pin, job, and inputs,
-and the job conditions that read Cargo-Rail outputs.
+It prints each reference with its version, pin, job, and inputs.
+It also prints the job conditions that read Cargo-Rail outputs.
 These errors stop the planner before any job runs:
 
 - a reference to an earlier major version, so a partial migration cannot run;
@@ -255,30 +267,37 @@ These errors stop the planner before any job runs:
 - a `needs.JOB.outputs.NAME` that the planning job does not export, which GitHub evaluates as empty;
 - a file that mentions the Action but is not valid YAML.
 
-Warnings annotate the file and line: `plan-file` exported as a job output
-(it is a path on one runner),
-a job that reads selectors from a plan made on another runner label,
-and a pin whose release cannot be read (add a `# vX.Y.Z` comment to a commit pin).
+Warnings annotate the file and line for these conditions:
 
-Run the same audit locally from the release you migrate to:
+- `plan-file` exported as a job output, because it is a path on one runner;
+- a job that reads selectors from a plan made on another runner label;
+- a pin whose release the audit cannot read.
+  To prevent this warning, add a `# vX.Y.Z` comment to a commit pin.
+
+Run the same audit locally from the release that you migrate to:
 
 ```bash
 cargo install --locked --git https://github.com/loadingalias/cargo-rail-action --tag vX.Y.Z cargo-rail-action
 cargo-rail-action audit
 ```
 
-Migrate in this order; each step proves one claim:
+Migrate in this order.
+Each step proves one claim:
 
-1. `cargo rail config validate --strict` proves the policy is valid for the workspace's Cargo graph.
-1. `cargo-rail-action audit` proves every workflow reference and output consumer matches this release.
-1. `cargo rail plan --cases routes.toml` proves reviewed path changes route as expected, before you remove the previous selector.
+1. Run `cargo rail config validate --strict`.
+   It proves that the policy is valid for the Cargo graph of the workspace.
+1. Run `cargo-rail-action audit`.
+   It proves that every workflow reference and output consumer matches this release.
+1. Before you remove the previous selector, run `cargo rail plan --cases routes.toml`.
+   It proves that reviewed path changes route as expected.
    See [route parity](https://github.com/loadingalias/cargo-rail/blob/main/docs/planning.md#check-route-parity-before-a-migration).
-1. `cargo rail plan --all --json` proves every work item has valid full scope.
-   It proves no routing decision.
+1. Run `cargo rail plan --all --json`.
+   It proves that every work item has valid full scope.
+   It does not prove a routing decision.
 
 ## Read selectors
 
-The direct consumer surface is intentionally small:
+The direct consumer surface is small by design:
 
 ```text
 cargo-rail-action plan summary PLAN
@@ -292,20 +311,23 @@ cargo-rail-action plan matrix PLAN WORK [--family FAMILY]
 ```
 
 `summary` emits readable Markdown.
-Line-oriented selectors emit one compact value and newline.
+Line-oriented selectors emit one compact value and a newline.
 Argument and package selectors emit NUL-delimited values.
 `target-args` emits `--test NAME` pairs only when every selected target is an integration test.
-It emits nothing for an empty, mixed,
-or unsupported target set so Cargo runs the selected packages without unsafe narrowing.
-`matrix` emits an `include` object for selected rows, but emits the literal `all` for unrestricted variant scope.
-Handle `all` by using the work item's complete checked-in catalog before calling `fromJSON`.
+It emits nothing for an empty, mixed, or unsupported target set.
+Cargo then runs the selected packages without unsafe narrowing.
+`matrix` emits an `include` object for selected rows.
+For unrestricted variant scope, it emits the literal `all`.
+Before you call `fromJSON`, check for `all`.
+If the value is `all`, use the complete checked-in catalog of the work item.
 `--family FAMILY` filters selected rows and nests each row under that family name.
 It does not expand `all`.
 Skipped variant work emits `{"include":[]}`.
-Skip the consuming job when no rows are selected.
+When no rows are selected, skip the consuming job.
 
-Contract rejections exit `2`; rejected plan selectors emit no stdout.
-Operational failures, including I/O and failed subprocesses, exit `1`.
+Contract rejections exit with code `2`.
+A rejected plan selector writes nothing to stdout.
+Operational failures, including I/O failures and failed subprocesses, exit with code `1`.
 
 ## Configure compiler caching
 
@@ -325,37 +347,47 @@ Operational failures, including I/O and failed subprocesses, exit `1`.
 ```
 
 When one job uses both actions, configure `loadingalias/cargo-rail-action/cache` before `loadingalias/cargo-rail-action`.
-Cache setup changes Cargo configuration, and plan verification binds that configuration.
-Capturing the plan first causes later selectors to reject the changed execution authority.
+Cache setup changes the Cargo configuration.
+Plan verification binds that configuration.
+If the planner captures the plan first, later selectors reject the changed execution authority.
 
 `mode` is always explicit.
 Give remote credentials only to trusted jobs.
-A job that runs untrusted code, such as a pull request from a fork,
-gets no credentials and does not run this action, which always selects a remote.
-Read access does not protect confidentiality:
-any job that can read the remote cache can read every result in it.
-Use `read` for trusted jobs that must not publish, and `read-write` only for trusted jobs that seed the cache.
-`verify-remote: true` authenticates to the selected provider and requires the protocol marker
-before publishing Action outputs.
-See the [cache inputs](cache/action.yaml) for local cache location and workspace selection.
+A job that runs untrusted code, such as a pull request from a fork, gets no credentials.
+That job also does not run this action.
+This action always selects a remote.
+Read access does not protect confidentiality.
+Any job that can read the remote cache can read every result in it.
+Use `read` for trusted jobs that must not publish.
+Use `read-write` only for trusted jobs that seed the cache.
+With `verify-remote: true`, the action authenticates to the selected provider and requires the protocol marker
+before it publishes Action outputs.
+See the [cache inputs](cache/action.yaml) for the local cache location and workspace selection.
 
-The cache installer requires the core executable, native wrapper and worker,
-matched compiler driver, and authenticated driver source package.
-Archives or installation receipts missing either driver component are rejected.
-Every component set also requires the authenticated `LICENSE` entry and retains it in the installation.
+The cache installer requires these components:
+
+- the core executable;
+- the native wrapper and worker;
+- the matched compiler driver;
+- the authenticated driver source package.
+
+The installer rejects an archive or an installation receipt
+that does not have both driver components.
+Every component set also requires the authenticated `LICENSE` entry, and the installation keeps that entry.
 Cargo-Rail owns toolchain matching and cache preparation.
 
-The cache action publishes only `version`
-and one compact `status` value conforming to [`schemas/cache-status-v1.schema.json`](schemas/cache-status-v1.schema.json).
-It contains provider, mode, local byte bound, root portability,
+The cache action publishes only `version` and one compact `status` value.
+The `status` value conforms to [`schemas/cache-status-v1.schema.json`](schemas/cache-status-v1.schema.json).
+It contains the provider, the mode, the local byte bound, the root portability,
 and whether remote verification was requested and passed.
-It never contains the remote URL, credentials, local paths, authority identity, protocol marker,
-or component receipts.
+It never contains the remote URL, credentials, local paths, the authority identity,
+the protocol marker, or component receipts.
 
 ## One cache report for the workflow
 
 Configure caching once in each participating job.
-Collect after its final Cargo command, including failure paths.
+Collect the record after the final Cargo command of each job.
+Also collect it on failure paths.
 The setup and collection actions publish no summaries.
 The final report combines all jobs into one summary.
 
@@ -375,18 +407,20 @@ The final report combines all jobs into one summary.
     if-no-files-found: error
 ```
 
-Use a unique `job` label for each matrix row: 1–128 ASCII letters, digits, dots, hyphens, or underscores.
-Use a separate label when a runner expression contains other characters.
+Use a unique `job` label for each matrix row.
+A label contains 1–128 ASCII letters, digits, dots, hyphens, or underscores.
+When a runner expression contains other characters, use a separate label.
 For a job without a matrix, use its workflow job ID.
-Keep `output-directory` absolute and outside the checkout, without `..` components;
-symlinks into the checkout are rejected.
+Keep `output-directory` absolute and outside the checkout.
+Do not use `..` components in it.
+The collection action rejects symlinks into the checkout.
 Transfer only the collected record.
-Each record follows the [job record schema](schemas/cache-job-v1.schema.json), is bounded to 32 KiB, and contains totals,
-configuration, and measurement gaps.
+Each record follows the [job record schema](schemas/cache-job-v1.schema.json).
+A record is at most 32 KiB and contains totals, configuration, and measurement gaps.
 It contains no per-target events, paths, remote URLs, or credentials.
 
 Add one final job.
-Here, `test` has two matrix rows named `ubuntu-latest` and `macos-latest`:
+In this example, `test` has two matrix rows named `ubuntu-latest` and `macos-latest`:
 
 ```yaml
 cache-report:
@@ -408,43 +442,48 @@ cache-report:
 ```
 
 `expected-jobs` must list the rows that enabled caching.
-Missing or cancelled jobs stay visible as missing reports;
-missing measurements never become zero counts.
-Records from other runs or attempts and conflicting duplicates are rejected.
+Missing or cancelled jobs stay visible as missing reports.
+Missing measurements never become zero counts.
+The report rejects records from other runs or attempts, and it rejects conflicting duplicates.
 Exact duplicate records count once.
-Collection finishes the interval, so run it after all compiler processes exit.
+Collection finishes the interval.
+For this reason, run collection after all compiler processes exit.
 
 The report shows reuse, misses, bypasses, wrapper failures,
 measured local reads and remote transfer, and grouped failure reasons.
-Expand the job details for storage and configuration.
-Storage is kept per job because caches may share backing storage.
-The report does not estimate time saved.
-Cargo freshness can avoid compiler invocations entirely;
-zero recorded outcomes does not establish that the cache was unused or
-that every compilation was reused.
+To see storage and configuration, expand the job details.
+The report shows storage per job, because caches can share backing storage.
+The report does not estimate the time saved.
+Cargo freshness can avoid all compiler invocations.
+Thus, zero recorded outcomes do not prove that the cache was unused.
+They also do not prove that every compilation was reused.
 
 ## Read the plan summary
 
 Directly affected selections stay visible with their package or variant names.
-Dependency details are expandable;
-their counts remain visible and their execution selectors remain intact.
-Missing-evidence warnings and `--all` remain visible.
-No fixed number of directly affected items is silently hidden.
-Attribution comes from Cargo-Rail's captured plan;
-the Action does not infer impact from filenames or explanation prose.
+Dependency details are expandable.
+Their counts stay visible, and their execution selectors stay intact.
+Missing-evidence warnings and `--all` stay visible.
+The summary does not silently hide directly affected items beyond a fixed number.
+Attribution comes from Cargo-Rail's captured plan.
+The Action does not infer impact from filenames or explanation prose.
 
 The summary states how many portable evidence manifests the plan used.
-Without compatible evidence, Cargo work widens when a changed file could be read by a compiler,
-build script, or procedural macro, even a README.
-Each widened item names the changed files that lack negative evidence.
-That widening is conservative, not a routing error; do not replace it with path filters.
+Without compatible evidence, Cargo work widens when a compiler, build script,
+or procedural macro could read a changed file.
+This rule applies even to a README.
+Each widened item names the changed files that do not have negative evidence.
+This widening is conservative.
+It is not a routing error.
+Do not replace it with path filters.
 To skip unrelated files exactly, [record and transfer planning evidence](#skip-unrelated-files-with-planning-evidence).
 
 ## Skip unrelated files with planning evidence
 
 Cargo-Rail records which workspace files each compiled unit read during an ordinary build.
-Record it in the jobs that already build on the default branch, one file per work item,
-and save it under the commit it describes:
+Record this evidence in the jobs that already build on the default branch.
+Write one file for each work item.
+Save each file under the commit that it describes:
 
 ```yaml
 - uses: loadingalias/cargo-rail-action/setup@v12
@@ -461,12 +500,13 @@ and save it under the commit it describes:
     key: cargo-rail-evidence-${{ runner.os }}-${{ runner.arch }}-cargo.test-${{ github.sha }}
 ```
 
-Record the command the job runs, with the same packages, targets, features, and profile.
-Recording adds no compilation: the later test run finds every unit fresh.
+Record the command that the job runs, with the same packages, targets, features, and profile.
+Recording adds no compilation.
+The later test run finds every unit fresh.
 Record `cargo.build` and `cargo.clippy` the same way in their jobs.
 
-Before planning, restore the evidence of the commit the planner compares against,
-then pass the directory:
+Before planning, restore the evidence for the commit that the planner compares against.
+Then pass the directory:
 
 ```yaml
 - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -479,28 +519,34 @@ then pass the directory:
     evidence: target/planning-evidence
 ```
 
-For the default pull-request checkout, a merge commit,
-the planner compares against the pull request's base commit.
-`evidence` accepts one file or a directory; the Action passes each `*.json` file in the directory to Cargo-Rail,
-which validates each one independently.
-A cache miss, evidence from another commit, platform, or toolchain,
-or evidence that recorded an incomplete build only widens the affected work item.
-Keep the directory ignored by Git, because an unignored file is a changed path.
-The Action transfers evidence; it does not create or interpret it.
+The default pull-request checkout is a merge commit.
+For this checkout, the planner compares against the base commit of the pull request.
+`evidence` accepts one file or a directory.
+For a directory, the Action passes each `*.json` file in it to Cargo-Rail.
+Cargo-Rail validates each file independently.
+Each of these conditions only widens the affected work item:
+
+- a cache miss;
+- evidence from another commit, platform, or toolchain;
+- evidence that recorded an incomplete build.
+
+Make Git ignore the directory, because an unignored file is a changed path.
+The Action transfers evidence.
+It does not create or interpret evidence.
 See [observed-input evidence](https://github.com/loadingalias/cargo-rail/blob/main/docs/planning.md#observed-input-evidence) for what the evidence covers.
 
 ## Runtime and compatibility
 
 Version 12 uses one prebuilt Rust runtime with verified release checksums.
-Bootstrap keeps the Action checkout's MIT `LICENSE` beside the runtime and rejects modified
-or missing installed license text.
+Bootstrap keeps the MIT `LICENSE` of the Action checkout beside the runtime.
+It rejects installed license text that is modified or missing.
 
 The `runtime-source` input defaults to `release`.
-Use `source` only to validate an immutable Action commit before publishing its runtime release.
-Source mode requires the pinned Rust toolchain, builds the checked-out runtime with `--locked`,
-and authenticates the executable before installation.
+Use `source` only to validate an immutable Action commit before you publish its runtime release.
+Source mode requires the pinned Rust toolchain.
+It builds the checked-out runtime with `--locked` and authenticates the executable before installation.
 
-By default, the Action installs the exact Cargo-Rail release recorded in `.github/cargo-rail.lock`.
+By default, the Action installs the exact Cargo-Rail release that `.github/cargo-rail.lock` records.
 Set `version` to another exact stable release only when the workflow needs a different compatible version.
 The Action validates the installed binary, plan, cache, and component contracts before use.
 
@@ -510,18 +556,19 @@ Each Action release is qualified with exactly one Cargo-Rail release: the versio
 Only that pair is supported.
 The Action checks contracts, not version numbers.
 Another exact version, or `latest`, installs only when its archive, component manifest,
-and license validate.
-Every later step then fails closed on a contract version this Action does not accept.
-It accepts plan v9, cache status schema 18, component manifest v1,
+and license are valid.
+Then every later step fails closed on a contract version that this Action does not accept.
+This Action accepts plan v9, cache status schema 18, component manifest v1,
 and the `cargo rail release` result of Cargo-Rail 0.32.
-`latest` can therefore select a Cargo-Rail release that this Action rejects.
+Thus, `latest` can select a Cargo-Rail release that this Action rejects.
 
 The Action runs these `cargo rail` commands: `plan`, `surface --prepare`, `cache`, and `release`.
 Cargo-Rail treats their arguments and machine output as compatibility contracts.
 
-Repository configuration belongs to Cargo-Rail; the Action never reads it.
-Before you change `version`, run `cargo rail config validate --strict` with the new Cargo-Rail release,
-because a newer release can reject retired configuration fields.
+Repository configuration belongs to Cargo-Rail.
+The Action never reads it.
+Before you change `version`, run `cargo rail config validate --strict` with the new Cargo-Rail release.
+A newer release can reject retired configuration fields.
 
 The planner accepts plan contract v9, including identity-bound impact attribution.
 Regenerate plans from older contracts.
@@ -530,11 +577,11 @@ The release Action reads the one JSON value that `cargo rail release --format js
 It rejects an unknown `state`, a result for another command, and any commit, tag,
 or pull request URL that is not a valid output value.
 It keeps no release state between runs.
-Cargo-Rail 0.31 and earlier have no such command.
+Cargo-Rail 0.31 and earlier do not have this command.
 
 ## Supported runners
 
-Version 12 advertises exactly:
+Version 12 declares support for exactly these runners:
 
 | Runner              | Native target               | Requirement |
 | ------------------- | --------------------------- | ----------- |
@@ -544,37 +591,38 @@ Version 12 advertises exactly:
 | Windows x86-64      | `x86_64-pc-windows-msvc`    | the runner's Bash shell |
 
 Bootstrap requires Bash, Git, `curl`, and `sha256sum` or `shasum`.
-Unsupported hosts fail before Cargo-Rail download or workspace mutation.
-Runtime support and Cargo-Rail compiler-cache host eligibility are separate claims.
+On an unsupported host, the Action fails before it downloads Cargo-Rail or changes the workspace.
+Runtime support and host eligibility for the Cargo-Rail compiler cache are separate claims.
 
 The Action reads Cargo-Rail release ZIPs through the pure-Rust `zlib-rs` DEFLATE backend,
 without a native compression library.
 It validates the component manifest and every archive entry
-before installing any selected component.
+before it installs any selected component.
 
 ## Security boundary
 
-Use ephemeral hosted runners or equivalently isolated single-tenant runners.
+Use ephemeral hosted runners, or single-tenant runners with equivalent isolation.
 The runtime validates bounded manifests, checksums, complete archives, component receipts, plans,
 GitHub environment files, and exact versions.
 The runtime downloads each checksum from the same release as its executable or archive.
-That checksum detects inconsistent bytes but is not an independent publisher signature.
-The installer verifies checksums, component manifests, and the installed license,
-but it does not verify GitHub artifact attestations.
-Verify the exact release's immutability and every release-asset attestation
-before trusting its publication authority, for example with `gh attestation verify cargo-rail-action-x86_64-unknown-linux-gnu -R loadingalias/cargo-rail-action`.
+That checksum detects inconsistent bytes.
+It is not an independent publisher signature.
+The installer verifies checksums, component manifests, and the installed license.
+It does not verify GitHub artifact attestations.
+Before you trust the publication authority of a release, verify that the exact release is immutable.
+Also verify every release-asset attestation, for example with `gh attestation verify cargo-rail-action-x86_64-unknown-linux-gnu -R loadingalias/cargo-rail-action`.
 
-The planner's `repository-token` is used only for a same-repository Git fetch when required history is absent.
-It is never placed in a URL, argv, repository configuration, output, summary,
+The planner uses its `repository-token` only for a Git fetch from the same repository when required history is absent.
+The planner never puts the token in a URL, argv, repository configuration, output, summary,
 or unrelated child process.
 
 ## Release integration
 
 `loadingalias/cargo-rail-action/release` installs Cargo-Rail and runs `cargo rail release --yes` in the job.
-It is the command a maintainer runs locally, so CI adds credentials and runners,
-not another release engine.
-The [Cargo-Rail release guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md) owns its preconditions, configuration, and the complete workflow,
-including binary assets.
+This is the same command that a maintainer runs locally.
+Thus, CI adds credentials and runners, but not a different release engine.
+The [Cargo-Rail release guide](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md) is the authority for its preconditions, configuration,
+and complete workflow, including binary assets.
 Pin the Action to a reviewed immutable commit.
 
 ```yaml
@@ -627,63 +675,84 @@ jobs:
 | `tags`         | JSON array of the release's tags. |
 | `pull-request` | The release pull request URL, with `pull-request: true`. |
 
-A pending check on the source commit fails the step before any effect;
-run the workflow again when the checks finish.
-Every other state succeeds, and the step summary lists each crate's registry
-and GitHub release state.
-Running the workflow again after any interruption finishes the release.
+A pending check on the source commit fails the step before any effect.
+When the checks finish, run the workflow again.
+Every other state succeeds.
+The step summary lists the registry state and the GitHub release state of each crate.
+When you run the workflow again after any interruption, it finishes the release.
 
 The job owns credentials and environment approvals.
-The `token` input reaches the GitHub API and the release push alone,
-through process-scoped Git configuration; the checkout keeps no credentials.
-The read permissions let the release read the source commit's checks, this workflow run,
-and release pull requests; `pull-request: true` needs `pull-requests: write`.
-When branch rules block `github.token`, pass a token that may push to the branch, or set `pull-request: true`.
+The `token` input reaches only the GitHub API and the release push,
+through process-scoped Git configuration.
+The checkout keeps no credentials.
+The read permissions let the release read the checks of the source commit, this workflow run,
+and release pull requests.
+`pull-request: true` needs `pull-requests: write`.
+When branch rules block `github.token`, do one of these steps:
+
+- Pass a token that has permission to push to the branch.
+- Set `pull-request: true`.
+
 The release commit uses the `github-actions[bot]` identity unless the checkout configures one.
-Cargo reads registry credentials from the job environment,
-for example `CARGO_REGISTRY_TOKEN` minted by crates.io trusted publishing.
+Cargo reads registry credentials from the job environment.
+An example is a `CARGO_REGISTRY_TOKEN` that crates.io trusted publishing issues.
 
 `loadingalias/cargo-rail-action/release/asset` attests files and attaches them to the draft release that `cargo rail release` creates for a crate with `release.assets`.
-Its inputs are `tag` (from the release step's `tags` output), `files` (one path or glob per line), `attest` (default `true`), and `token`.
+Its inputs are:
+
+- `tag`, from the `tags` output of the release step;
+- `files`, with one path or glob on each line;
+- `attest`, with the default `true`;
+- `token`.
+
 The asset job needs `contents`, `id-token`, `attestations`, and `artifact-metadata` write permissions.
-Before it publishes the draft, Cargo-Rail verifies each file's digest and attestation, unless `release.asset_attestations = "off"`.
+Before Cargo-Rail publishes the draft, it verifies the digest of each file.
+It also verifies the attestation of each file, unless `release.asset_attestations = "off"`.
 
 The public Actions default to the exact Cargo-Rail release in `.github/cargo-rail.lock`.
 The release and package workflows read that version and its release commit from the same lock.
 The package workflow reads the independent `tooling` commit when it installs CI tools.
-Update `version` and `commit` only after publishing and verifying the selected Cargo-Rail release.
+Update `version` and `commit` only after you publish and verify the selected Cargo-Rail release.
 
-This repository releases itself with the same runner, built from the checked-out source.
+This repository releases itself with the same runner, which it builds from the checked-out source.
 Its release workflow runs from `main` in the protected `release` environment.
 The release job runs `cargo rail release` and stops at `awaiting_assets`.
 The package workflow builds, tests, attests, and attaches every runtime from the release tag.
-The publish job then runs the release again, which verifies the assets, publishes the release,
-and moves the `v{major}` alias.
-Push and pull-request CI call the same package workflow without a tag and upload nothing.
+Then the publish job runs the release again.
+This second run verifies the assets, publishes the release, and moves the `v{major}` alias.
+Push and pull-request CI call the same package workflow without a tag.
+These runs upload nothing.
 The bootstrap derives the Action runtime release from the package version in `Cargo.toml`.
 
 ## Validate changes
 
-Run `just check` for formatting, Clippy, unit and CLI tests, metadata contracts, and bootstrap syntax,
-and `just check-markdown` for Markdown lint.
-When changing Cargo-Rail alongside the Action,
-run `just package-release OUTPUT_DIRECTORY` in the Cargo-Rail checkout to build and package its authenticated components.
-Then run `just check-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH VERSION` here.
-This runs source plan and cache contracts, the real archive installer,
-and a release through the source engine against a local Git remote.
-Cache setup uses an isolated temporary Cargo home;
-the tests do not publish releases or contact remote cache storage.
-After updating `.github/cargo-rail.lock`, use `just check-locked-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH` to read the expected version from the lock.
+Run `just check` for formatting, Clippy, unit and CLI tests, metadata contracts, and bootstrap syntax.
+Run `just check-markdown` for Markdown lint.
+
+When you change Cargo-Rail together with the Action, do these steps:
+
+1. In the Cargo-Rail checkout, run `just package-release OUTPUT_DIRECTORY`.
+   This command builds and packages the authenticated components of Cargo-Rail.
+1. In this repository, run `just check-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH VERSION`.
+   This command runs the source plan and cache contracts, the real archive installer,
+   and a release through the source engine against a local Git remote.
+
+Cache setup uses an isolated temporary Cargo home.
+The tests do not publish releases or contact remote cache storage.
+After you update `.github/cargo-rail.lock`, use `just check-locked-cargo-rail ABSOLUTE_BINARY_PATH ABSOLUTE_ARCHIVE_PATH`.
+This command reads the expected version from the lock.
 
 Push and pull-request CI build authenticated Cargo-Rail archives from the exact release source
-pinned by `commit`.
+that `commit` pins.
 Tool installation uses the independently pinned `tooling` commit.
 Release packaging downloads the published Cargo-Rail version from the same lock.
 Both paths run the same independent contract tests.
-Update the lock's version and commit together after publishing Cargo-Rail and
-before dispatching the Action release.
-The event selects the archive source; failed downloads never fall back to a source build.
-The current archive contract requires `LICENSE`; older archives without it are rejected.
+Update the version and the commit in the lock together.
+Do this after you publish Cargo-Rail and before you dispatch the Action release.
+The event selects the archive source.
+If a download fails, CI does not build from source instead.
+The current archive contract requires `LICENSE`.
+Older archives without it are rejected.
 Release lookup and download errors fail CI.
 
 ## Support
@@ -692,5 +761,5 @@ Release lookup and download errors fail CI.
 - [Cargo-Rail issues](https://github.com/loadingalias/cargo-rail/issues)
 
 Cargo-Rail Action is licensed under [MIT](LICENSE).
-Report vulnerabilities privately using the [Cargo-Rail security policy](https://github.com/loadingalias/cargo-rail/blob/main/SECURITY.md);
-include the Action version and installed Cargo-Rail version.
+Report vulnerabilities privately through the [Cargo-Rail security policy](https://github.com/loadingalias/cargo-rail/blob/main/SECURITY.md).
+Include the Action version and the installed Cargo-Rail version.
