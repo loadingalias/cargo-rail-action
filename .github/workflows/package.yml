@@ -172,7 +172,7 @@ jobs:
           just check-cargo-rail \
             "$temporary/cargo-rail/cargo-rail$suffix" "$temporary/$archive" "$CARGO_RAIL_VERSION"
           git diff --exit-code HEAD
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: inputs.release-tag != ''
         with:
           name: runtime-${{ matrix.target }}
