@@ -745,9 +745,13 @@ A release with assets runs the release step two times, with an asset job between
    When more than one crate releases, pass the tag of each crate that has `release.assets`.
 1. After the asset job succeeds, run the release step again in a later job.
    This run verifies the assets and publishes the release.
+1. To fail the workflow when the release did not finish, require the `state` output of that step to be `released`.
+   The step succeeds in every state except `awaiting_checks`.
 
 The [CI example](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md#ci) of the Cargo-Rail release guide shows these jobs.
 The asset job needs `contents`, `id-token`, `attestations`, and `artifact-metadata` write permissions.
+The two release jobs also need `attestations: read`.
+The run that finishes the release verifies each attestation.
 Before Cargo-Rail publishes the draft, it verifies the digest of each file.
 It also verifies the attestation of each file, unless `release.asset_attestations = "off"`.
 
