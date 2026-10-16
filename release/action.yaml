@@ -25,7 +25,7 @@ inputs:
     default: ${{ github.token }}
 outputs:
   state:
-    description: nothing_to_release, planned, pull_request, awaiting_checks, awaiting_assets, or released
+    description: nothing_to_release, planned, pull_request, awaiting_checks, awaiting_assets, or released; never cancelled, because the Action passes --yes or --dry-run
     value: ${{ steps.runtime.outputs.state }}
   commit:
     description: The release commit, once it exists
@@ -34,7 +34,7 @@ outputs:
     description: JSON array of the release's tags
     value: ${{ steps.runtime.outputs.tags }}
   pull-request:
-    description: The release pull request URL, with pull-request
+    description: URL of the open release pull request when state is pull_request, whichever run opened it
     value: ${{ steps.runtime.outputs.pull-request }}
 runs:
   using: composite

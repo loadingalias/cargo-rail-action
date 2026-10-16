@@ -74,7 +74,7 @@ During explicit Surface preparation, Cargo-Rail can install `rustc-dev`.
 It can also compile its compiler fact driver, which is authenticated and bound to the toolchain.
 When the development components for the selected compiler are already installed,
 native cache preparation can also compile that driver from the authenticated source package.
-Release mode does not compile the Action runtime or Cargo-Rail itself in the workflow.
+With `runtime-source: release` (the default), the Action compiles neither its runtime nor Cargo-Rail itself.
 
 ## Transfer a plan across jobs
 
@@ -280,6 +280,10 @@ Run the same audit locally from the release that you migrate to:
 cargo install --locked --git https://github.com/loadingalias/cargo-rail-action --tag vX.Y.Z cargo-rail-action
 cargo-rail-action audit
 ```
+
+When `.config/rail.toml` has a `[release]` table, first follow [Upgrade from Cargo-Rail 0.31](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md#upgrade-from-cargo-rail-031).
+Cargo-Rail 0.32 rejects the retired `[release]` keys,
+and `cargo rail config migrate` replaces each one with a successor that keeps its behavior.
 
 Migrate in this order.
 Each step proves one claim:
@@ -541,7 +545,7 @@ Version 12 uses one prebuilt Rust runtime with verified release checksums.
 Bootstrap keeps the MIT `LICENSE` of the Action checkout beside the runtime.
 It rejects installed license text that is modified or missing.
 
-The `runtime-source` input defaults to `release`.
+Every action except `release/asset` accepts the `runtime-source` input, which defaults to `release`.
 Use `source` only to validate an immutable Action commit before you publish its runtime release.
 Source mode requires the pinned Rust toolchain.
 It builds the checked-out runtime with `--locked` and authenticates the executable before installation.
@@ -557,10 +561,17 @@ Only that pair is supported.
 The Action checks contracts, not version numbers.
 Another exact version, or `latest`, installs only when its archive, component manifest,
 and license are valid.
-Then every later step fails closed on a contract version that this Action does not accept.
-This Action accepts plan v9, cache status schema 18, component manifest v1,
-and the `cargo rail release` result of Cargo-Rail 0.32.
+Then every later step fails closed on a contract that this Action does not accept.
+This Action accepts these Cargo-Rail contracts:
+
+- plan contract v9;
+- `cargo rail cache status` output with `schema_version` 18;
+- component manifest v1;
+- the `cargo rail release` result of Cargo-Rail 0.32.
+  This result has no schema version, so the release Action checks each field that it reads.
+
 Thus, `latest` can select a Cargo-Rail release that this Action rejects.
+The `status` output of the cache action is a separate Action contract: [cache status v1](schemas/cache-status-v1.schema.json).
 
 The Action runs these `cargo rail` commands: `plan`, `surface --prepare`, `cache`, and `release`.
 Cargo-Rail treats their arguments and machine output as compatibility contracts.
@@ -577,7 +588,8 @@ The release Action reads the one JSON value that `cargo rail release --format js
 It rejects an unknown `state`, a result for another command, and any commit, tag,
 or pull request URL that is not a valid output value.
 It keeps no release state between runs.
-Cargo-Rail 0.31 and earlier do not have this command.
+In Cargo-Rail 0.31 and earlier, `cargo rail release` is a group of subcommands, such as `release run`, and it prints no such result.
+The release Action fails with those versions.
 
 ## Supported runners
 
@@ -659,39 +671,58 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 ```
 
-| Input          | Default        | Meaning |
-| -------------- | -------------- | ------- |
-| `crates`       | empty          | Crates to release, separated by whitespace; empty releases every crate with release-worthy changes. |
-| `bump`         | `auto`         | `auto`, `major`, `minor`, `patch`, `prerelease`, `release`, or an exact version. |
-| `pull-request` | `false`        | Land the release commit through a pull request (`--pr`) for a protected branch. |
-| `dry-run`      | `false`        | Preview the release and run every check without any effect. |
-| `token`        | `github.token` | Token for the GitHub API and the release push. |
-| `version`      | the lock       | Exact Cargo-Rail release to install. |
+| Input            | Default        | Meaning |
+| ---------------- | -------------- | ------- |
+| `crates`         | empty          | Crates to release, separated by whitespace; empty releases every crate with release-worthy changes. |
+| `bump`           | `auto`         | `auto`, `major`, `minor`, `patch`, `prerelease`, `release`, or an exact version. |
+| `pull-request`   | `false`        | Land the release commit through a pull request (`--pr`) for a protected branch. |
+| `dry-run`        | `false`        | Preview the release and run every check without any effect. |
+| `token`          | `github.token` | Token for the GitHub API and the release push. |
+| `version`        | the lock       | Exact Cargo-Rail release to install. |
+| `runtime-source` | `release`      | Action runtime source; see [Runtime and compatibility](#runtime-and-compatibility). |
 
 | Output         | Value |
 | -------------- | ----- |
 | `state`        | `nothing_to_release`, `planned`, `pull_request`, `awaiting_checks`, `awaiting_assets`, or `released`. |
 | `commit`       | The release commit, once it exists. |
 | `tags`         | JSON array of the release's tags. |
-| `pull-request` | The release pull request URL, with `pull-request: true`. |
+| `pull-request` | The URL of the open release pull request when `state` is `pull_request`, whichever run opened it. |
 
-A pending check on the source commit fails the step before any effect.
+Cargo-Rail reports `cancelled` only when a user declines its confirmation prompt.
+The Action passes `--yes` or `--dry-run`, so Cargo-Rail does not prompt, and `state` is never `cancelled`.
+
+A pending check on the commit being released fails the step, and the run changes nothing.
+For a new release, that commit is the checked-out commit.
+After a release pull request merges, that commit is the merged release commit.
 When the checks finish, run the workflow again.
 Every other state succeeds.
 The step summary lists the registry state and the GitHub release state of each crate.
 When you run the workflow again after any interruption, it finishes the release.
 
 The job owns credentials and environment approvals.
-The `token` input reaches only the GitHub API and the release push,
-through process-scoped Git configuration.
+The Action passes the `token` input to Cargo-Rail as `GH_TOKEN` and as process-scoped Git configuration.
+Cargo-Rail uses the token for the GitHub API and for Git access to `origin`, including the release push.
+Build scripts that run during packaging or API checks receive neither this token
+nor registry tokens.
+This isolation requires Cargo-Rail 0.32.0, which v12 installs.
 The checkout keeps no credentials.
-The read permissions let the release read the checks of the source commit, this workflow run,
-and release pull requests.
+The read permissions let the release read the checks of the commit being released,
+this workflow run, and release pull requests.
 `pull-request: true` needs `pull-requests: write`.
 When branch rules block `github.token`, do one of these steps:
 
 - Pass a token that has permission to push to the branch.
 - Set `pull-request: true`.
+
+GitHub sets two limits on a release pull request that `github.token` opens:
+
+- The repository must allow GitHub Actions to create pull requests.
+- The pull request starts no workflows,
+  because GitHub does not start workflows for events that `GITHUB_TOKEN` causes.
+  Thus, its checks never run.
+
+When required checks protect the branch,
+pass a GitHub App token or a fine-grained personal access token as `token`.
 
 The release commit uses the `github-actions[bot]` identity unless the checkout configures one.
 Cargo reads registry credentials from the job environment.
@@ -700,11 +731,22 @@ An example is a `CARGO_REGISTRY_TOKEN` that crates.io trusted publishing issues.
 `loadingalias/cargo-rail-action/release/asset` attests files and attaches them to the draft release that `cargo rail release` creates for a crate with `release.assets`.
 Its inputs are:
 
-- `tag`, from the `tags` output of the release step;
+- `tag`, one tag from the JSON array in the `tags` output of the release step;
 - `files`, with one path or glob on each line;
 - `attest`, with the default `true`;
 - `token`.
 
+A release with assets runs the release step two times, with an asset job between the two runs:
+
+1. In the release job, export the `state` and `tags` outputs of the release step as job outputs.
+   The step stops at `awaiting_assets`.
+1. Run the asset job only when `needs.release.outputs.state == 'awaiting_assets'`.
+   For a release of one crate, pass `tag: ${{ fromJSON(needs.release.outputs.tags)[0] }}`.
+   When more than one crate releases, pass the tag of each crate that has `release.assets`.
+1. After the asset job succeeds, run the release step again in a later job.
+   This run verifies the assets and publishes the release.
+
+The [CI example](https://github.com/loadingalias/cargo-rail/blob/main/docs/releases.md#ci) of the Cargo-Rail release guide shows these jobs.
 The asset job needs `contents`, `id-token`, `attestations`, and `artifact-metadata` write permissions.
 Before Cargo-Rail publishes the draft, it verifies the digest of each file.
 It also verifies the attestation of each file, unless `release.asset_attestations = "off"`.

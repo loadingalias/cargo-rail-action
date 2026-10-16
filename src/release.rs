@@ -243,7 +243,7 @@ pub(crate) fn execute(args: &ExecuteArgs) -> Result<()> {
     })?;
     match result["state"].as_str() {
         Some("awaiting_checks") => Err(ActionError::operational(format!(
-            "checks on the source commit have not finished: {}",
+            "checks on the commit being released have not finished: {}",
             result["pending_checks"]
                 .as_array()
                 .map(|checks| checks.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
