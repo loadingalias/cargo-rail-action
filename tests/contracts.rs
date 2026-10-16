@@ -425,7 +425,8 @@ fn release_workflow_releases_then_attaches_assets_then_publishes() {
             "actions": "read",
             "checks": "read",
             "pull-requests": "read",
-            "statuses": "read"
+            "statuses": "read",
+            "attestations": "read"
         })
     );
     assert_eq!(release["outputs"]["state"], "${{ steps.release.outputs.state }}");
@@ -479,11 +480,17 @@ fn release_workflow_releases_then_attaches_assets_then_publishes() {
             "actions": "read",
             "checks": "read",
             "pull-requests": "read",
-            "statuses": "read"
+            "statuses": "read",
+            "attestations": "read"
         })
     );
-    let finish = publish["steps"].as_array().unwrap().last().unwrap();
+    let steps = publish["steps"].as_array().unwrap();
+    let finish = &steps[steps.len() - 2];
     assert_eq!(finish["run"], "target/debug/cargo-rail-action run release");
+    // A green finish step can still leave the release unpublished, so the job requires `released`.
+    let required = steps.last().unwrap();
+    assert_eq!(required["env"]["STATE"], "${{ steps.finish.outputs.state }}");
+    assert!(required["run"].as_str().unwrap().contains("== released"));
 }
 
 #[test]

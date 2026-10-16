@@ -31,6 +31,7 @@ jobs:
       checks: read # Read the source commit's check runs.
       pull-requests: read # Find open and merged release pull requests.
       statuses: read # Read the source commit's commit statuses.
+      attestations: read # Verify asset provenance when a rerun finishes the release.
     outputs:
       state: ${{ steps.release.outputs.state }}
       tags: ${{ steps.release.outputs.tags }}
@@ -117,6 +118,7 @@ jobs:
       checks: read # Read the source commit's check runs.
       pull-requests: read # Find merged release pull requests.
       statuses: read # Read the source commit's commit statuses.
+      attestations: read # Verify the provenance of each asset before publication.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -131,6 +133,7 @@ jobs:
           rustup toolchain install "$channel" --profile minimal
           cargo build --locked
       - name: Finish the release
+        id: finish
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ steps.cargo-rail.outputs.version }}
@@ -139,3 +142,9 @@ jobs:
           INPUT_PULL_REQUEST: 'false'
           INPUT_DRY_RUN: 'false'
         run: target/debug/cargo-rail-action run release
+      # Every state but `awaiting_checks` succeeds, so a green step alone does not prove publication.
+      - name: Require a published release
+        env:
+          STATE: ${{ steps.finish.outputs.state }}
+        run: |
+          [[ "$STATE" == released ]] || { echo "::error::the release ended in state '$STATE'"; exit 1; }
