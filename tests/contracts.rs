@@ -516,4 +516,11 @@ fn cache_collection_and_report_have_distinct_bounded_surfaces() {
         schema["$defs"]["measurements"]["properties"]["bypass_reasons"]["maxProperties"],
         128
     );
+    // A job record carries the same exact stable version that the cache status publishes.
+    let status: Value =
+        serde_json::from_slice(&fs::read(root().join("schemas/cache-status-v1.schema.json")).unwrap()).unwrap();
+    assert_eq!(
+        schema["properties"]["configuration"]["properties"]["cargo_rail"],
+        status["properties"]["cargo_rail"]
+    );
 }

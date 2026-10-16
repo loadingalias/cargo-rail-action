@@ -385,6 +385,7 @@ fn validate_status_contract(
         "quarantined_receipts",
     ];
     let installation_optional = [
+        "recovery_action",
         "wrapper_path",
         "profile_id",
         "bound_workspace_root",
@@ -1310,6 +1311,18 @@ mod tests {
         let mut retired_field = status(remote("aws-s3", "read"), "physical");
         retired_field["status"]["installation"]["unbound_pre_profile_state"] = serde_json::json!({});
         assert!(validate_status(&retired_field, &inputs).is_err());
+
+        // Cargo-Rail names a recovery action for a drifted installation; its state, not the key, rejects it.
+        let mut drifted = status(remote("aws-s3", "read"), "physical");
+        let installation = &mut drifted["status"]["installation"];
+        installation["state"] = "drifted".into();
+        installation["healthy"] = false.into();
+        installation["issues"] = serde_json::json!(["installed wrapper changed"]);
+        installation["recovery_action"] = "cargo rail cache setup".into();
+        assert!(
+            validate_status(&drifted, &inputs)
+                .is_err_and(|error| error.to_string().contains("cache integration is not installed"))
+        );
 
         let status_remote = remote_state(Some(&remote("aws-s3", "read")), "status remote").expect("status remote");
         let probe_remote = validate_probe(&probe(remote("azure-blob", "read"), "existing")).expect("probe contract");
